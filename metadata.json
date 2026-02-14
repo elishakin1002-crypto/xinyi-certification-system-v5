@@ -1,0 +1,7 @@
+{
+  "name": " 信义认证系统 V5.0 ai综合版",
+  "description": "集成CRM、项目管理、财务和AI能力的企业管理系统",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
