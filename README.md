@@ -15,7 +15,9 @@ View your app in AI Studio: https://ai.studio/apps/drive/1wY8bdE-e2b7sontNgOHzUs
 
 1. Install dependencies:
    `npm install`
-2. Set the `KIMI_API_KEY` in [.env.local](.env.local) to your Moonshot Kimi API key
+2. Set AI keys in [.env.local](.env.local):
+   - `KIMI_API_KEY` (primary)
+   - `GEMINI_API_KEY` (fallback, auto-switch when Kimi quota/balance insufficient)
 3. Start backend (Kimi server proxy):
    `npm start`
 4. Run the frontend:
@@ -93,6 +95,13 @@ KIMI_API_KEY=your_key
 # Optional: Kimi endpoint/model
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MODEL=kimi-k2.5
+
+# Optional but recommended: Gemini fallback
+GEMINI_API_KEY=your_gemini_key
+# Preferred fallback (can be adjusted to available model in your account)
+GEMINI_MODEL=gemini-3-flash
+# Secondary fallback inside Gemini chain
+GEMINI_FALLBACK_MODEL=gemini-2.5-flash
 
 # Optional: enable PostgreSQL state store
 DATABASE_URL=postgres://user:password@host:5432/dbname

@@ -27,9 +27,11 @@ const urgencyPill = (u: MarketSignal['urgency']) => {
 };
 
 const industryLabel = (value: string) => (value === '塑料编织制品制造业' ? '塑编' : value);
-const LOW_VALUE_HOST_RE = /(?:^|\.)(11467\.com|1688\.com|aiqicha\.baidu\.com|qcc\.com|tianyancha\.com|huangye88\.com|b2b\.baidu\.com|facebook\.com|douyin\.com|tiktok\.com|xiaohongshu\.com|weibo\.com|youtube\.com|bilibili\.com)$/i;
-const LOW_VALUE_TITLE_RE = /顺企网|爱企查|黄页|企业信息查询|公司详情|厂家|工厂|阿里巴巴/;
+const LOW_VALUE_HOST_RE = /(?:^|\.)(11467\.com|1688\.com|aiqicha\.baidu\.com|qcc\.com|tianyancha\.com|huangye88\.com|b2b\.baidu\.com|facebook\.com|douyin\.com|tiktok\.com|xiaohongshu\.com|weibo\.com|youtube\.com|bilibili\.com|jobui\.com|docin\.com|renrendoc\.com|wenku\.baidu\.com|made-in-china\.com)$/i;
+const LOW_VALUE_TITLE_RE = /顺企网|爱企查|黄页|企业信息查询|公司详情|厂家|工厂|阿里巴巴|排行榜|公司排名|企业排名|下载|文档|资料库|模板|百科|供应商|制造商|名录/;
 const HIGH_VALUE_KEYWORD_RE = /政策|通知|公告|公示|监管|办法|条例|标准|国标|行标|招标|招采|采购|项目申报|专项资金|行业|市场|产业|动态|新闻|趋势|扩产|投产|并购|融资|上市|中标|订单/;
+const RECENT_HINT_RE = /最新|近日|近期|今日|昨天|本周|本月|刚刚|发布|公示|公告|通知|招标|招采|采购|截止|开标|投标|中标|签约|开工|落地|投产|扩产|融资|并购/;
+const YEAR_CANDIDATE_RE = /(?:19|20)\d{2}/g;
 
 type SortMode = 'fetched_desc' | 'score_desc' | 'published_desc';
 const UI_RECENT_DAYS = 90;
@@ -54,11 +56,34 @@ const isUsableSignal = (s: MarketSignal) => {
   try { host = new URL(url).hostname; } catch { host = ''; }
   if (!host || LOW_VALUE_HOST_RE.test(host)) return false;
   if (LOW_VALUE_TITLE_RE.test(title)) return false;
-  if (['policy', 'tender', 'standard'].includes(kind)) return true;
   const merged = `${title} ${s?.summary || ''} ${s?.content || ''}`;
+  const undatedRescue = Array.isArray(s?.tags) && s.tags.includes('日期待核验');
+  if (undatedRescue) {
+    const recencyText = `${title} ${s?.content || ''} ${url}`;
+    if (RECENT_HINT_RE.test(recencyText)) return true;
+    const years = (recencyText.match(YEAR_CANDIDATE_RE) || []).map(Number).filter(Number.isFinite);
+    const currentYear = new Date().getFullYear();
+    if (!years.includes(currentYear)) return false;
+  }
+  if (['policy', 'tender', 'standard'].includes(kind)) return true;
   if (HIGH_VALUE_KEYWORD_RE.test(merged)) return true;
   const score = Number(s?.score || 0);
   return ['industry', 'company', 'event'].includes(kind) && score >= 60;
+};
+
+const getPublishedTimeStatus = (s: MarketSignal): 'ok' | 'confirm' | 'verify' => {
+  const tags = Array.isArray(s?.tags) ? s.tags : [];
+  if (tags.includes('日期待核验')) return 'verify';
+  if (tags.includes('发布时间待确认')) return 'confirm';
+  return 'ok';
+};
+
+const renderPublishedTime = (s: MarketSignal) => {
+  const status = getPublishedTimeStatus(s);
+  const date = String(s?.publishedAt || '').slice(0, 10) || '-';
+  if (status === 'verify') return `原文时间待核验（当前显示 ${date}）`;
+  if (status === 'confirm') return `原文发布时间 ${date}（待确认）`;
+  return `原文发布时间 ${date}`;
 };
 
 const IntelRadar = () => {
@@ -83,6 +108,7 @@ const IntelRadar = () => {
   const likelyBackendIssue = /端口|后端|HTTP|连接|KIMI|Failed to fetch|代理/i.test(fetchError || '');
   const visibleSignals = useMemo(() => marketSignals.filter(isUsableSignal), [marketSignals]);
   const latestFetchSet = useMemo(() => new Set(latestFetchIds), [latestFetchIds]);
+  const showingHistoricalOnly = Boolean(fetchError) && latestFetchIds.length === 0;
 
   const checkBackend = async () => {
     try {
@@ -134,9 +160,6 @@ const IntelRadar = () => {
     }
 
     return list.sort((a, b) => {
-      const aLatest = latestFetchSet.has(a.id) ? 1 : 0;
-      const bLatest = latestFetchSet.has(b.id) ? 1 : 0;
-      if (aLatest !== bLatest) return bLatest - aLatest;
       if (sortMode === 'score_desc') {
         if (b.score !== a.score) return b.score - a.score;
         return toTime(b.publishedAt) - toTime(a.publishedAt);
@@ -171,18 +194,25 @@ const IntelRadar = () => {
       const result = await intelService.fetchDailySignals({ regions, industries, limit: 20 });
       setFetchSource(result.source || 'server');
       if (!result.ok) {
-        setLatestFetchIds([]);
-        setLatestOnly(false);
         if (result.signals.length > 0) {
           upsertMarketSignals(result.signals);
+          const thisIds = result.signals.map(s => s.id).filter(Boolean);
+          setLatestFetchIds(thisIds);
+          setLatestOnly(thisIds.length > 0);
+          setRecentOnly(true);
+          setSortMode('published_desc');
           if (!selectedId && result.signals.length > 0) setSelectedId(result.signals[0].id);
           const dropTip = (result.droppedStale || 0) + (result.droppedUndated || 0) > 0
-            ? `（已过滤超时效/无日期 ${Number(result.droppedStale || 0) + Number(result.droppedUndated || 0)} 条）`
+            ? `（已过滤超时效 ${Number(result.droppedStale || 0)} 条、无日期 ${Number(result.droppedUndated || 0)} 条）`
             : '';
-          setFetchNotice((result.error || `本次联网抓取失败，已回退缓存（${result.signals.length} 条）。`) + dropTip);
+          const rescuedTip = (result.rescuedUndated || 0) > 0 ? `；其中 ${Number(result.rescuedUndated || 0)} 条为“日期待核验”补位` : '';
+          setFetchNotice((result.error || `本次联网抓取失败，已回退缓存（${result.signals.length} 条）。`) + dropTip + rescuedTip);
           return;
         }
+        setLatestFetchIds([]);
+        setLatestOnly(false);
         setFetchError(result.error || '抓取失败，请检查后端与 API Key。');
+        setFetchNotice('');
         checkBackend();
         return;
       }
@@ -200,7 +230,8 @@ const IntelRadar = () => {
       const dropTip = (result.droppedStale || 0) + (result.droppedUndated || 0) > 0
         ? `；已过滤超时效 ${Number(result.droppedStale || 0)} 条、无日期 ${Number(result.droppedUndated || 0)} 条`
         : '';
-      setFetchNotice(`抓取完成：返回 ${result.signals.length} 条情报（来源：${result.source === 'cache' ? '缓存回退' : '联网检索'}），已切换为“仅看本次抓取”+“近${UI_RECENT_DAYS}天”${dropTip}。`);
+      const rescuedTip = (result.rescuedUndated || 0) > 0 ? `；补位“日期待核验” ${Number(result.rescuedUndated || 0)} 条` : '';
+      setFetchNotice(`抓取完成：返回 ${result.signals.length} 条情报（来源：${result.source === 'cache' ? '缓存回退' : '联网检索'}），已切换为“仅看本次抓取”+“近${UI_RECENT_DAYS}天”${dropTip}${rescuedTip}。`);
       const today = new Date().toISOString().split('T')[0];
       const lastNotice = dataService.get<string>('intel_last_notice', '');
       if (today !== lastNotice) {
@@ -515,10 +546,15 @@ const IntelRadar = () => {
                   >
                     <option value="fetched_desc">按入库时间</option>
                     <option value="score_desc">按评分</option>
-                    <option value="published_desc">按发布日期</option>
+                    <option value="published_desc">按原文发布时间</option>
                   </select>
                 </div>
               </div>
+              {showingHistoricalOnly && (
+                <div className="px-5 py-2.5 text-xs font-bold text-amber-700 bg-amber-50 border-b border-amber-100">
+                  本次抓取未返回可用结果，当前列表展示的是历史情报数据（非本次新增）。
+                </div>
+              )}
               <div className="divide-y divide-gray-100 max-h-[60vh] lg:max-h-none overflow-y-auto lg:overflow-visible">
                 {filtered.length === 0 ? (
                   <div className="p-10 text-center text-gray-400 text-sm">
@@ -534,6 +570,11 @@ const IntelRadar = () => {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 mb-1">
+                            {latestFetchSet.has(s.id) && (
+                              <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                本次抓取
+                              </span>
+                            )}
                             <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-gray-50 text-gray-600 border border-gray-200">
                               {kindLabel[s.kind]}
                             </span>
@@ -549,8 +590,8 @@ const IntelRadar = () => {
                           <div className="font-black text-gray-900 truncate">{s.title}</div>
                           <div className="text-xs text-gray-500 mt-1 line-clamp-2">{s.summary}</div>
                           <div className="flex flex-wrap gap-2 mt-2 text-[11px] text-gray-400">
-                            <span className="inline-flex items-center"><Calendar className="w-3 h-3 mr-1" />发布 {s.publishedAt}</span>
-                            <span className="inline-flex items-center">入库 {String(s.createdAt || '').slice(0, 10) || '-'}</span>
+                            <span className="inline-flex items-center"><Calendar className="w-3 h-3 mr-1" />{renderPublishedTime(s)}</span>
+                            <span className="inline-flex items-center">系统入库 {String(s.createdAt || '').slice(0, 10) || '-'}</span>
                             <span className="inline-flex items-center"><Target className="w-3 h-3 mr-1" />评分 {s.score}</span>
                             {s.deadline && <span className="inline-flex items-center"><Flame className="w-3 h-3 mr-1 text-red-500" />截止 {s.deadline}</span>}
                           </div>
@@ -626,6 +667,12 @@ const IntelRadar = () => {
                     </span>
                     <span className="text-[11px] font-black px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
                       评分：{selected.score}
+                    </span>
+                    <span className="text-[11px] font-black px-3 py-1.5 rounded-full bg-gray-50 text-gray-700 border border-gray-200">
+                      {renderPublishedTime(selected)}
+                    </span>
+                    <span className="text-[11px] font-black px-3 py-1.5 rounded-full bg-gray-50 text-gray-700 border border-gray-200">
+                      系统入库：{String(selected.createdAt || '').slice(0, 10) || '-'}
                     </span>
                   </div>
 

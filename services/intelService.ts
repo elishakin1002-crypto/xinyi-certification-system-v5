@@ -14,6 +14,7 @@ export interface IntelFetchResult {
   stale?: boolean;
   droppedStale?: number;
   droppedUndated?: number;
+  rescuedUndated?: number;
   freshnessPolicy?: {
     policy: number;
     tender: number;
@@ -47,7 +48,7 @@ const safeReadJson = async (res: Response): Promise<{ data: any | null; error?: 
 
 export const intelService = {
   fetchDailySignals: async (config: IntelFetchConfig): Promise<IntelFetchResult> => {
-    const timeoutMs = Number(import.meta.env.VITE_INTEL_FETCH_TIMEOUT_MS || 45000);
+    const timeoutMs = Number(import.meta.env.VITE_INTEL_FETCH_TIMEOUT_MS || 30000);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), Math.max(5000, timeoutMs));
     try {
@@ -80,7 +81,8 @@ export const intelService = {
           stale: Boolean(data?.stale),
           error: data?.error || `抓取失败（HTTP ${res.status}）`,
           droppedStale: Number(data?.droppedStale || 0),
-          droppedUndated: Number(data?.droppedUndated || 0)
+          droppedUndated: Number(data?.droppedUndated || 0),
+          rescuedUndated: Number(data?.rescuedUndated || 0)
         };
       }
       return {
@@ -90,6 +92,7 @@ export const intelService = {
         stale: false,
         droppedStale: Number(data?.droppedStale || 0),
         droppedUndated: Number(data?.droppedUndated || 0),
+        rescuedUndated: Number(data?.rescuedUndated || 0),
         freshnessPolicy: data?.freshnessPolicy
       };
     } catch (e) {

@@ -19,6 +19,11 @@ const KIMI_BASE_URL = String(process.env.KIMI_BASE_URL || 'https://api.moonshot.
 const DEFAULT_MODEL = String(process.env.KIMI_MODEL || 'kimi-k2.5').trim();
 const FALLBACK_MODEL = String(process.env.KIMI_FALLBACK_MODEL || '').trim();
 
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+const GEMINI_DEFAULT_MODEL = String(process.env.GEMINI_MODEL || 'gemini-3-flash').trim();
+const GEMINI_FALLBACK_MODEL = String(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash').trim();
+
 const USER_AGENT = 'XinyiIntelBot/5.0 (+https://xinyi.local)';
 const INTEL_QUOTA_KINDS = ['policy', 'industry', 'company', 'tender'];
 const DEFAULT_INTEL_KIND_QUOTA = Object.freeze({
@@ -65,14 +70,38 @@ const normalizeAIError = (error) => {
   }
 };
 
+const hasAnyAIKey = () => Boolean(API_KEY || GEMINI_API_KEY);
+
 const isRetryableError = (error) => {
   const msg = String(error?.message || error || '').toLowerCase();
   return /429|rate limit|quota|timeout|timed out|503|overloaded|temporarily unavailable|networkerror|failed to fetch/.test(msg);
 };
 
+const isModelUnavailableError = (status, code, message) => {
+  const text = `${String(code || '')} ${String(message || '')}`.toLowerCase();
+  if (status === 404) return true;
+  if (status === 400 && /model|not found|unsupported|invalid|does not exist/.test(text)) return true;
+  return false;
+};
+
+const isKimiQuotaOrBalanceError = (error) => {
+  const normalized = normalizeAIError(error);
+  const text = `${String(normalized.message || '')} ${String(normalized.code || '')} ${String(normalized.raw || '')}`.toLowerCase();
+  return /429|quota|insufficient[_\s-]?quota|insufficient balance|balance|credit|billing|payment required|rate limit|too many requests|resource_exhausted|余额不足|余额|费用不足|欠费|配额不足|超出配额|限流/.test(text);
+};
+
 const toHttpStatus = (code, message) => {
   const msg = String(message || '').toLowerCase();
-  if (code === '429' || msg.includes('rate limit') || msg.includes('quota') || msg.includes('429')) return 429;
+  if (
+    code === '429' ||
+    msg.includes('rate limit') ||
+    msg.includes('quota') ||
+    msg.includes('429') ||
+    msg.includes('insufficient balance') ||
+    msg.includes('payment required') ||
+    msg.includes('余额不足') ||
+    msg.includes('费用不足')
+  ) return 429;
   if (msg.includes('invalid') || msg.includes('bad request')) return 400;
   if (msg.includes('not found')) return 404;
   return 500;
@@ -224,6 +253,132 @@ const requestKimiCompletion = async ({
   const err = new Error(normalized.message);
   err.code = normalized.code;
   throw err;
+};
+
+const requestGeminiCompletion = async ({
+  requestedModel,
+  messages,
+  jsonMode = false,
+  temperature = 0.2
+}) => {
+  if (!GEMINI_API_KEY) {
+    const err = new Error('GEMINI_API_KEY 未配置');
+    err.code = 'NO_KEY';
+    throw err;
+  }
+
+  const modelRaw = (requestedModel || '').toLowerCase();
+  const modelChain = Array.from(new Set(
+    [
+      modelRaw.includes('gemini') ? modelRaw : '',
+      GEMINI_DEFAULT_MODEL,
+      GEMINI_FALLBACK_MODEL,
+      'gemini-1.5-flash'
+    ].map((x) => String(x || '').trim()).filter(Boolean)
+  ));
+
+  let systemInstruction = undefined;
+  const contents = [];
+
+  for (const msg of messages) {
+    const contentText = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+    if (msg.role === 'system') {
+      if (!systemInstruction) systemInstruction = { parts: [{ text: contentText }] };
+      else systemInstruction.parts[0].text += '\n' + contentText;
+    } else {
+      const role = (msg.role === 'assistant' || msg.role === 'model') ? 'model' : 'user';
+      contents.push({ role, parts: [{ text: contentText }] });
+    }
+  }
+
+  // Gemini requires non-empty contents
+  if (contents.length === 0) {
+    contents.push({ role: 'user', parts: [{ text: 'Hello' }] });
+  }
+
+  let lastError = null;
+  for (const model of modelChain) {
+    const url = `${GEMINI_BASE_URL}/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+    const body = {
+      contents,
+      ...(systemInstruction ? { system_instruction: systemInstruction } : {}),
+      generationConfig: {
+        temperature,
+        ...(jsonMode ? { response_mime_type: 'application/json' } : {})
+      }
+    };
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      const raw = await res.text();
+      let data = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        const parseErr = new Error(`Gemini response parse error: ${raw}`);
+        parseErr.code = 'PARSE_ERROR';
+        throw parseErr;
+      }
+
+      if (!res.ok) {
+        const code = String(data?.error?.code || res.status);
+        const msg = data?.error?.message || raw || `Gemini Error ${res.status}`;
+        const err = new Error(`Gemini Error ${res.status}: ${msg}`);
+        err.code = code;
+        if (isModelUnavailableError(res.status, code, msg)) {
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
+
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      return { text, modelUsed: model, raw: data };
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableError(error)) break;
+    }
+  }
+
+  const normalized = normalizeAIError(lastError || new Error('Gemini Unknown Error'));
+  const err = new Error(normalized.message);
+  err.code = normalized.code;
+  throw err;
+};
+
+const requestAI = async (params) => {
+  const model = (params.requestedModel || '').toLowerCase();
+  // 1. Explicit Gemini request
+  if (model.includes('gemini')) {
+    return requestGeminiCompletion(params);
+  }
+
+  // 2. Kimi request (default)
+  try {
+    // If NO Kimi key but HAVE Gemini key, skip Kimi and go straight to Gemini
+    if (!API_KEY && GEMINI_API_KEY) {
+      throw new Error('KIMI_API_KEY_MISSING_USE_GEMINI');
+    }
+    return await requestKimiCompletion(params);
+  } catch (err) {
+    // 3. Fallback to Gemini if Kimi fails (quota, rate limit, or no key)
+    const normalized = normalizeAIError(err);
+    const isQuotaError = isKimiQuotaOrBalanceError(err);
+    const isKeyMissing = normalized.message === 'KIMI_API_KEY_MISSING_USE_GEMINI' || String(normalized.code || '') === 'NO_KEY';
+    
+    if (GEMINI_API_KEY && (isQuotaError || isKeyMissing)) {
+      console.warn(`[AI Fallback] Kimi failed (${normalized.message}), switching to Gemini...`);
+      return requestGeminiCompletion({ ...params, requestedModel: GEMINI_DEFAULT_MODEL });
+    }
+    const out = new Error(normalized.message);
+    out.code = normalized.code;
+    throw out;
+  }
 };
 
 const withTimeout = async (promise, ms, message) => {
@@ -406,25 +561,7 @@ const buildWebContextForQuery = async (query, maxResults = 5, deepCrawl = false)
 
   // Fast path: use search snippets only. This keeps intel fetch stable.
   if (!deepCrawl) {
-    const quick = picked.map((item) => ({ ...item, excerpt: item.snippet || '' }));
-    const toHydrate = quick
-      .map((item, idx) => ({ item, idx }))
-      .filter((x) => String(x.item.excerpt || '').trim().length < 24)
-      .slice(0, 2);
-
-    if (toHydrate.length > 0) {
-      const hydrated = await Promise.all(
-        toHydrate.map(async ({ item, idx }) => ({
-          idx,
-          excerpt: await crawlPage(item.url, 520)
-        }))
-      );
-      hydrated.forEach(({ idx, excerpt }) => {
-        if (excerpt) quick[idx].excerpt = excerpt;
-      });
-    }
-
-    return quick;
+    return picked.map((item) => ({ ...item, excerpt: item.snippet || '' }));
   }
 
   // Deep crawl is used for chat/web-grounding where richer context helps.
@@ -524,20 +661,39 @@ const parseIntelList = (rawText) => {
   return [];
 };
 
-const LOW_VALUE_HOST_RE = /(?:^|\.)(11467\.com|1688\.com|aiqicha\.baidu\.com|qcc\.com|tianyancha\.com|huangye88\.com|b2b\.baidu\.com|facebook\.com|douyin\.com|tiktok\.com|xiaohongshu\.com|weibo\.com|youtube\.com|bilibili\.com)$/i;
+const LOW_VALUE_HOST_RE = /(?:^|\.)(11467\.com|1688\.com|aiqicha\.baidu\.com|qcc\.com|tianyancha\.com|huangye88\.com|b2b\.baidu\.com|facebook\.com|douyin\.com|tiktok\.com|xiaohongshu\.com|weibo\.com|youtube\.com|bilibili\.com|jobui\.com|docin\.com|renrendoc\.com|wenku\.baidu\.com|made-in-china\.com)$/i;
 const HIGH_VALUE_HOST_RE = /(?:^|\.)(gov\.cn|wenzhou\.gov\.cn|zj\.gov\.cn|zjlg\.gov\.cn|zjpy\.gov\.cn|ccgp\.gov\.cn|cebpubservice\.com|cninfo\.com\.cn|eastmoney\.com|stcn\.com|sina\.com\.cn|foodmate\.net)$/i;
 const HIGH_VALUE_KEYWORD_RE = /政策|通知|公告|公示|监管|办法|条例|标准|国标|行标|招标|招采|采购|项目申报|专项资金/;
 const INDUSTRY_NEWS_KEYWORD_RE = /行业|市场|产业|动态|新闻|趋势|景气|需求|价格|扩产|投产|开工|落地|招商|合作|并购|融资|上市|中标|订单/;
-const LOW_VALUE_TITLE_RE = /顺企网|爱企查|黄页|企业信息查询|公司详情|厂家|工厂|阿里巴巴|短视频|直播/;
+const LOW_VALUE_TITLE_RE = /顺企网|爱企查|黄页|企业信息查询|公司详情|厂家|工厂|阿里巴巴|短视频|直播|排行榜|公司排名|企业排名|下载|文档|资料库|模板|百科|供应商|制造商|名录/;
 const DATE_CANDIDATE_RE = /((?:19|20)\d{2})[.\-/年](\d{1,2})[.\-/月](\d{1,2})日?/g;
+const DATE_HINT_RE = /(发布时间|发布日期|更新于|更新|发布于|日期|时间|公示时间|公告时间)/;
+const RECENT_HINT_RE = /最新|近日|近期|今日|昨天|本周|本月|刚刚|发布|公示|公告|通知|招标|招采|采购|截止|开标|投标|中标|签约|开工|落地|投产|扩产|融资|并购/;
+const YEAR_CANDIDATE_RE = /(?:19|20)\d{2}/g;
 const INTEL_RECENCY_DAYS = Object.freeze({
   policy: toNonNegativeInt(process.env.INTEL_RECENCY_POLICY_DAYS, 90),
   tender: toNonNegativeInt(process.env.INTEL_RECENCY_TENDER_DAYS, 90),
   standard: toNonNegativeInt(process.env.INTEL_RECENCY_STANDARD_DAYS, 90),
-  industry: toNonNegativeInt(process.env.INTEL_RECENCY_INDUSTRY_DAYS, 30),
-  company: toNonNegativeInt(process.env.INTEL_RECENCY_COMPANY_DAYS, 30),
-  event: toNonNegativeInt(process.env.INTEL_RECENCY_EVENT_DAYS, 30)
+  industry: toNonNegativeInt(process.env.INTEL_RECENCY_INDUSTRY_DAYS, 90),
+  company: toNonNegativeInt(process.env.INTEL_RECENCY_COMPANY_DAYS, 90),
+  event: toNonNegativeInt(process.env.INTEL_RECENCY_EVENT_DAYS, 90)
 });
+
+const looksRecentText = (text, todayDate = new Date()) => {
+  const src = String(text || '');
+  if (!src) return false;
+  if (RECENT_HINT_RE.test(src)) return true;
+  const years = [];
+  let m = null;
+  while ((m = YEAR_CANDIDATE_RE.exec(src)) !== null) {
+    const y = Number(m[0]);
+    if (Number.isFinite(y)) years.push(y);
+  }
+  YEAR_CANDIDATE_RE.lastIndex = 0;
+  if (years.length === 0) return false;
+  const currentYear = todayDate.getUTCFullYear();
+  return years.includes(currentYear);
+};
 
 const isHighValueSource = (item) => {
   const title = String(item?.title || '');
@@ -575,13 +731,16 @@ const isUsableSignal = (s) => {
   try { host = new URL(url).hostname; } catch { host = ''; }
   if (!host || LOW_VALUE_HOST_RE.test(host)) return false;
   if (LOW_VALUE_TITLE_RE.test(title)) return false;
-  if (HIGH_VALUE_HOST_RE.test(host)) return true;
 
   const merged = `${title} ${s?.summary || ''} ${s?.content || ''}`;
+  const isUndatedRescue = Array.isArray(s?.tags) && s.tags.includes('日期待核验');
+  const recencyText = `${title} ${s?.content || ''} ${url}`;
+  if (isUndatedRescue && !looksRecentText(recencyText)) return false;
+  if (HIGH_VALUE_HOST_RE.test(host)) return true;
   if (HIGH_VALUE_KEYWORD_RE.test(merged) || INDUSTRY_NEWS_KEYWORD_RE.test(merged)) return true;
 
   const score = Number(s?.score || 0);
-  if (['policy', 'tender', 'standard'].includes(kind)) return true;
+  if (['policy', 'tender', 'standard'].includes(kind)) return score >= 70;
   return ['industry', 'company', 'event'].includes(kind) && score >= 60;
 };
 
@@ -632,6 +791,59 @@ const parseDateToUtc = (raw) => {
   return null;
 };
 
+const extractDateFromUrl = (rawUrl) => {
+  const src = decodeURIComponent(String(rawUrl || ''));
+  if (!src) return '';
+  const candidates = [];
+
+  const addDate = (y, m, d) => {
+    const dt = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
+    if (
+      dt.getUTCFullYear() === Number(y) &&
+      dt.getUTCMonth() === Number(m) - 1 &&
+      dt.getUTCDate() === Number(d)
+    ) candidates.push(dt);
+  };
+
+  // /2025/08/29/ or -2025-08-29-
+  const sepRe = /((?:19|20)\d{2})[\/_.-](\d{1,2})[\/_.-](\d{1,2})/g;
+  let m = null;
+  while ((m = sepRe.exec(src)) !== null) addDate(m[1], m[2], m[3]);
+  sepRe.lastIndex = 0;
+
+  // 20250829
+  const compactRe = /(?:^|[^\d])((?:19|20)\d{2})(\d{2})(\d{2})(?:[^\d]|$)/g;
+  while ((m = compactRe.exec(src)) !== null) addDate(m[1], m[2], m[3]);
+  compactRe.lastIndex = 0;
+
+  if (candidates.length === 0) return '';
+  candidates.sort((a, b) => b.getTime() - a.getTime());
+  return formatYmd(candidates[0]);
+};
+
+const extractDateNearHint = (text) => {
+  const src = String(text || '');
+  if (!src) return '';
+  const candidates = [];
+  let m = null;
+  while ((m = DATE_CANDIDATE_RE.exec(src)) !== null) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const dt = new Date(Date.UTC(y, mo - 1, d));
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) continue;
+    const start = Math.max(0, m.index - 24);
+    const end = Math.min(src.length, m.index + String(m[0] || '').length + 24);
+    const near = src.slice(start, end);
+    if (!DATE_HINT_RE.test(near)) continue;
+    candidates.push(dt);
+  }
+  DATE_CANDIDATE_RE.lastIndex = 0;
+  if (candidates.length === 0) return '';
+  candidates.sort((a, b) => b.getTime() - a.getTime());
+  return formatYmd(candidates[0]);
+};
+
 const extractMostRecentDate = (text) => {
   const src = String(text || '');
   if (!src) return '';
@@ -652,14 +864,30 @@ const extractMostRecentDate = (text) => {
   return formatYmd(candidates[0]);
 };
 
-const inferPublishedAt = (...segments) => {
+const inferPublishedMeta = (...segments) => {
   for (const seg of segments) {
     const direct = parseDateToUtc(seg);
-    if (direct) return formatYmd(direct);
+    if (direct) return { date: formatYmd(direct), confidence: 'high', method: 'explicit' };
   }
-  const merged = segments.map((s) => String(s || '')).filter(Boolean).join(' ');
-  if (!merged) return '';
-  return extractMostRecentDate(merged);
+
+  for (const seg of segments) {
+    const fromUrl = extractDateFromUrl(seg);
+    if (fromUrl) return { date: fromUrl, confidence: 'medium', method: 'url' };
+  }
+
+  for (const seg of segments) {
+    const text = String(seg || '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    const hintedDate = extractDateNearHint(text.slice(0, 800));
+    if (hintedDate) return { date: hintedDate, confidence: 'high', method: 'hint' };
+  }
+
+  return { date: '', confidence: 'low', method: 'none' };
+};
+
+const inferPublishedAt = (...segments) => {
+  const meta = inferPublishedMeta(...segments);
+  return String(meta?.date || '');
 };
 
 const getRecencyDaysByKind = (kindRaw) => {
@@ -673,28 +901,94 @@ const getRecencyDaysByKind = (kindRaw) => {
   return Math.max(INTEL_RECENCY_DAYS.industry, INTEL_RECENCY_DAYS.company);
 };
 
-const filterSignalsByFreshness = (signals, todayYmd) => {
+const addUniqueTag = (tags, tag) => {
+  const base = Array.isArray(tags) ? tags.map(String).filter(Boolean) : [];
+  if (!base.includes(tag)) base.push(tag);
+  return base;
+};
+
+const annotateUndatedSignal = (signal, fallbackYmd) => {
+  const base = signal && typeof signal === 'object' ? signal : {};
+  const summaryRaw = String(base.summary || '').trim();
+  const suffix = '（发布日期待核验）';
+  const summary = summaryRaw
+    ? (summaryRaw.includes('发布日期待核验') ? summaryRaw : `${summaryRaw}${suffix}`)
+    : `发布日期待核验，按抓取日期 ${fallbackYmd} 暂存。`;
+  return {
+    ...base,
+    publishedAt: fallbackYmd,
+    summary,
+    tags: addUniqueTag(base.tags, '日期待核验')
+  };
+};
+
+const appendPublishedAtTag = (tags, meta) => {
+  const base = Array.isArray(tags) ? tags.map(String).filter(Boolean) : [];
+  const confidence = String(meta?.confidence || '');
+  if (confidence === 'medium') return addUniqueTag(base, '发布时间待确认');
+  if (confidence === 'low') return addUniqueTag(base, '日期待核验');
+  return base;
+};
+
+const isLikelyRecentUndatedSignal = (signal, todayDate) => {
+  const text = `${signal?.title || ''} ${signal?.summary || ''} ${signal?.content || ''} ${signal?.sourceUrl || ''}`.slice(0, 520);
+  if (!text) return false;
+  if (LOW_VALUE_TITLE_RE.test(text)) return false;
+
+  const hintsRecent = RECENT_HINT_RE.test(text);
+  const years = [];
+  let m = null;
+  while ((m = YEAR_CANDIDATE_RE.exec(text)) !== null) {
+    const y = Number(m[0]);
+    if (Number.isFinite(y)) years.push(y);
+  }
+  YEAR_CANDIDATE_RE.lastIndex = 0;
+
+  const currentYear = todayDate.getUTCFullYear();
+  const maxYear = years.length > 0 ? Math.max(...years) : -Infinity;
+  const hasCurrentYear = years.includes(currentYear);
+
+  if (years.length > 0 && maxYear < currentYear - 1) return false;
+  if (hintsRecent) return true;
+  // Undated rescue is only for very recent candidates.
+  return hasCurrentYear;
+};
+
+const filterSignalsByFreshness = (signals, todayYmd, options = {}) => {
   const list = Array.isArray(signals) ? signals : [];
   const today = parseDateToUtc(todayYmd) || new Date();
+  const allowUndated = Boolean(options?.allowUndated);
+  const fallbackDate = parseDateToUtc(options?.undatedFallbackYmd) || today;
+  const fallbackYmd = formatYmd(fallbackDate);
   const fresh = [];
   let droppedStale = 0;
   let droppedUndated = 0;
+  let adoptedUndated = 0;
   for (const s of list) {
     const publishedAt = String(s?.publishedAt || '').slice(0, 10);
     const published = parseDateToUtc(publishedAt);
     if (!published) {
+      if (allowUndated) {
+        if (!isLikelyRecentUndatedSignal(s, today)) {
+          droppedUndated += 1;
+          continue;
+        }
+        fresh.push(annotateUndatedSignal(s, fallbackYmd));
+        adoptedUndated += 1;
+        continue;
+      }
       droppedUndated += 1;
       continue;
     }
     const ageDays = Math.floor((today.getTime() - published.getTime()) / (24 * 3600 * 1000));
     const recencyDays = getRecencyDaysByKind(s?.kind);
-    if (!Number.isFinite(ageDays) || ageDays < 0 || ageDays > recencyDays) {
+    if (!Number.isFinite(ageDays) || ageDays < -1 || ageDays > recencyDays) {
       droppedStale += 1;
       continue;
     }
     fresh.push({ ...s, publishedAt: formatYmd(published) });
   }
-  return { fresh, droppedStale, droppedUndated };
+  return { fresh, droppedStale, droppedUndated, adoptedUndated };
 };
 
 const toHttpUrl = (rawUrl) => {
@@ -872,23 +1166,23 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
   const expandedIndustries = expandIndustries(industries);
   const regionQuery = (regions.length > 0 ? regions : ['温州', '苍南', '平阳', '龙港']).join(' ');
   const industryQuery = (expandedIndustries.length > 0 ? expandedIndustries : ['食品', '包装', '印刷', '餐饮', '医药']).join(' ');
+  const currentYear = today.slice(0, 4);
+  const currentMonth = String(Number(today.slice(5, 7)) || 1);
+  const recencyHint = `${currentYear} ${currentYear}年${currentMonth}月 今日 近日 最新`;
 
   const queryPlans = [
-    { kindHint: 'policy', q: `${regionQuery} ${industryQuery} site:gov.cn 政策 通知 公告 公示` },
-    { kindHint: 'tender', q: `${regionQuery} ${industryQuery} 招标 招采 采购 交易中心` },
-    { kindHint: 'standard', q: `${regionQuery} ${industryQuery} 标准 监管 市场监督 管理局` },
-    { kindHint: 'policy', q: `${regionQuery} ${industryQuery} 专项资金 项目申报 指南` },
-    { kindHint: 'industry', q: `${regionQuery} ${industryQuery} 行业 动态 新闻 趋势 市场` },
-    { kindHint: 'company', q: `${regionQuery} ${industryQuery} 企业 扩产 投资 融资 上市 并购 中标 订单` },
-    { kindHint: 'industry', q: `${regionQuery} ${industryQuery} 项目 开工 落地 园区 招商` },
-    { kindHint: 'industry', q: `${industryQuery} 行业 动态 新闻 趋势 今日 最近` },
-    { kindHint: 'company', q: `${industryQuery} 企业 扩产 融资 并购 上市 中标 订单` }
+    { kindHint: 'policy', q: `${regionQuery} ${industryQuery} site:gov.cn 政策 通知 公告 公示 ${recencyHint}` },
+    { kindHint: 'tender', q: `${regionQuery} ${industryQuery} 招标 招采 采购 交易中心 ${recencyHint}` },
+    { kindHint: 'standard', q: `${regionQuery} ${industryQuery} 标准 监管 市场监督 管理局 ${recencyHint}` },
+    { kindHint: 'policy', q: `${regionQuery} ${industryQuery} 专项资金 项目申报 指南 ${recencyHint}` },
+    { kindHint: 'industry', q: `${regionQuery} ${industryQuery} 行业 动态 新闻 趋势 市场 ${recencyHint}` },
+    { kindHint: 'company', q: `${regionQuery} ${industryQuery} 企业 扩产 投资 融资 上市 并购 中标 订单 ${recencyHint}` }
   ];
 
   const grouped = await Promise.all(
     queryPlans.map(async ({ kindHint, q }) => ({
       kindHint,
-      items: await buildWebContextForQuery(q, 4)
+      items: await buildWebContextForQuery(q, 3)
     }))
   );
 
@@ -1023,8 +1317,8 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
     return { hints: hints.slice(0, 2), actions: actions.slice(0, 2) };
   };
 
-  const sourcePublishedAtByUrl = new Map(
-    sourceList.map((s) => [toHttpUrl(s?.url), inferPublishedAt(s?.title, s?.snippet, s?.excerpt)])
+  const sourcePublishedMetaByUrl = new Map(
+    sourceList.map((s) => [toHttpUrl(s?.url), inferPublishedMeta(s?.url, s?.title, s?.snippet, s?.excerpt)])
   );
 
   const fallbackFromSources = () => {
@@ -1045,6 +1339,7 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       const kind = inferKind(merged, s._queryKindHint);
       const serviceCategory = inferServiceCategory(merged);
       const urgency = inferUrgency(merged);
+      const publishedMeta = inferPublishedMeta(s?.url, s?.title, s?.snippet, s?.excerpt);
       const industriesText = (industries.length > 0 ? industries : ['重点行业']).join('、');
       const { hints, actions } = buildOpportunityHints(kind, serviceCategory, s.title, industriesText);
       const baseScore = kind === 'tender' ? 82 : kind === 'policy' ? 78 : kind === 'standard' ? 76 : kind === 'company' ? 72 : kind === 'industry' ? 68 : 62;
@@ -1054,14 +1349,14 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
         title: String(s.title || `情报-${out.length + 1}`).slice(0, 180),
         sourceName: host,
         sourceUrl: toHttpUrl(s.url),
-        publishedAt: inferPublishedAt(s?.title, s?.snippet, s?.excerpt),
+        publishedAt: String(publishedMeta?.date || ''),
         summary: String((s.snippet || s.excerpt || '').slice(0, 120)) || '基于联网检索自动生成的情报条目。',
         content: String((s.excerpt || s.snippet || '').slice(0, 900)),
         kind,
         regions: regions.length > 0 ? regions : ['温州', '苍南', '平阳', '龙港'],
         industries: industries.length > 0 ? industries : ['食品', '包装', '印刷', '餐饮', '医药'],
         departments: [],
-        tags: [],
+        tags: appendPublishedAtTag([], publishedMeta),
         deadline: '',
         serviceCategory,
         serviceItemCode: '',
@@ -1081,14 +1376,24 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
   };
 
   const fallbackSignalsRaw = fallbackFromSources();
-  const fallbackFreshness = filterSignalsByFreshness(fallbackSignalsRaw, today);
-  const fallbackSignals = fallbackFreshness.fresh;
+  const fallbackStrictFreshness = filterSignalsByFreshness(fallbackSignalsRaw, today);
+  const fallbackRescueFreshness = fallbackStrictFreshness.droppedUndated > 0
+    ? filterSignalsByFreshness(fallbackSignalsRaw, today, { allowUndated: true, undatedFallbackYmd: today })
+    : { fresh: [], droppedStale: 0, droppedUndated: 0, adoptedUndated: 0 };
+  const fallbackStrictSet = new Set(fallbackStrictFreshness.fresh.map(normalizeSignalKey));
+  const maxUndatedSupplement = Math.max(2, Math.floor(limit * 0.3));
+  const needUndatedSupplement = fallbackStrictFreshness.fresh.length < Math.max(4, Math.floor(limit * 0.4));
+  const fallbackUndatedPool = (needUndatedSupplement
+    ? fallbackRescueFreshness.fresh.filter((s) => !fallbackStrictSet.has(normalizeSignalKey(s)))
+    : []
+  ).slice(0, maxUndatedSupplement);
   const balancedFallbackSignals = pickSignalsByQuota({
-    primarySignals: fallbackSignals,
-    fallbackSignals: [],
+    primarySignals: fallbackStrictFreshness.fresh,
+    fallbackSignals: fallbackUndatedPool,
     limit,
     quota
   });
+  const fallbackRescuedUndated = balancedFallbackSignals.filter((s) => Array.isArray(s?.tags) && s.tags.includes('日期待核验')).length;
 
   const prompt = buildIntelPrompt({
     regions,
@@ -1101,7 +1406,7 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
   let completion = null;
   try {
     completion = await withTimeout(
-      requestKimiCompletion({
+      requestAI({
         requestedModel: DEFAULT_MODEL,
         messages: [{ role: 'user', content: prompt }],
         jsonMode: false,
@@ -1115,14 +1420,24 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       signals: balancedFallbackSignals,
       modelUsed: 'web-fallback',
       empty: balancedFallbackSignals.length === 0,
-      droppedStale: fallbackFreshness.droppedStale,
-      droppedUndated: fallbackFreshness.droppedUndated
+      droppedStale: fallbackStrictFreshness.droppedStale,
+      droppedUndated: Math.max(0, fallbackStrictFreshness.droppedUndated - fallbackRescuedUndated),
+      rescuedUndated: fallbackRescuedUndated
     };
   }
 
   const list = parseIntelList(completion?.text || '');
   const modelSignalsRaw = list.map((x, idx) => {
     const sourceUrl = toHttpUrl(x?.sourceUrl);
+    const sourcePublishedMeta = sourcePublishedMetaByUrl.get(sourceUrl);
+    const publishedMeta = inferPublishedMeta(
+      x?.publishedAt,
+      sourcePublishedMeta?.date,
+      sourceUrl,
+      x?.title,
+      x?.summary,
+      x?.content
+    );
     const mergedText = `${x?.title || ''} ${x?.summary || ''} ${x?.content || ''}`;
     const kind = normalizeSignalKind(x?.kind || inferKind(mergedText));
     const urgency = ['high', 'medium', 'low'].includes(String(x?.urgency || '').toLowerCase())
@@ -1135,14 +1450,14 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       title: String(x?.title || '').slice(0, 180) || `情报-${idx + 1}`,
       sourceName: String(x?.sourceName || '').trim() || buildSignalHostName(sourceUrl),
       sourceUrl,
-      publishedAt: inferPublishedAt(x?.publishedAt, sourcePublishedAtByUrl.get(sourceUrl), x?.title, x?.summary, x?.content),
+      publishedAt: String(publishedMeta?.date || ''),
       summary: String(x?.summary || ''),
       content: String(x?.content || x?.summary || ''),
       kind,
       regions: Array.isArray(x?.regions) ? x.regions.map(String).filter(Boolean) : regions,
       industries: Array.isArray(x?.industries) ? x.industries.map(String).filter(Boolean) : industries,
       departments: Array.isArray(x?.departments) ? x.departments.map(String).filter(Boolean) : [],
-      tags: Array.isArray(x?.tags) ? x.tags.map(String).filter(Boolean) : [],
+      tags: appendPublishedAtTag(Array.isArray(x?.tags) ? x.tags.map(String).filter(Boolean) : [], publishedMeta),
       deadline: x?.deadline ? String(x.deadline).slice(0, 10) : '',
       serviceCategory: x?.serviceCategory ? String(x.serviceCategory) : '',
       serviceItemCode: x?.serviceItemCode ? String(x.serviceItemCode) : '',
@@ -1158,17 +1473,26 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
     };
   }).filter((x) => x.sourceUrl && x.title);
 
-  const modelFreshness = filterSignalsByFreshness(modelSignalsRaw, today);
-  const modelSignals = modelFreshness.fresh;
-  const droppedStale = modelFreshness.droppedStale + fallbackFreshness.droppedStale;
-  const droppedUndated = modelFreshness.droppedUndated + fallbackFreshness.droppedUndated;
+  const modelStrictFreshness = filterSignalsByFreshness(modelSignalsRaw, today);
+  const modelRescueFreshness = modelStrictFreshness.droppedUndated > 0
+    ? filterSignalsByFreshness(modelSignalsRaw, today, { allowUndated: true, undatedFallbackYmd: today })
+    : { fresh: [], droppedStale: 0, droppedUndated: 0, adoptedUndated: 0 };
+  const modelStrictSet = new Set(modelStrictFreshness.fresh.map(normalizeSignalKey));
+  const strictTotalForDecision = modelStrictFreshness.fresh.length + fallbackStrictFreshness.fresh.length;
+  const modelUndatedPool = (strictTotalForDecision < Math.max(4, Math.floor(limit * 0.5))
+    ? modelRescueFreshness.fresh.filter((s) => !modelStrictSet.has(normalizeSignalKey(s)))
+    : []
+  ).slice(0, maxUndatedSupplement);
 
   const signals = pickSignalsByQuota({
-    primarySignals: modelSignals,
-    fallbackSignals,
+    primarySignals: modelStrictFreshness.fresh,
+    fallbackSignals: [...fallbackStrictFreshness.fresh, ...modelUndatedPool, ...fallbackUndatedPool],
     limit,
     quota
   });
+  const rescuedUndated = signals.filter((s) => Array.isArray(s?.tags) && s.tags.includes('日期待核验')).length;
+  const droppedStale = modelStrictFreshness.droppedStale + fallbackStrictFreshness.droppedStale;
+  const droppedUndated = Math.max(0, modelStrictFreshness.droppedUndated + fallbackStrictFreshness.droppedUndated - rescuedUndated);
 
   // If model did not return usable results, fall back to balanced source-driven entries.
   if (signals.length === 0) {
@@ -1177,11 +1501,12 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       modelUsed: completion.modelUsed,
       empty: balancedFallbackSignals.length === 0,
       droppedStale,
-      droppedUndated
+      droppedUndated,
+      rescuedUndated: fallbackRescuedUndated
     };
   }
 
-  return { signals, modelUsed: completion.modelUsed, empty: false, droppedStale, droppedUndated };
+  return { signals, modelUsed: completion.modelUsed, empty: false, droppedStale, droppedUndated, rescuedUndated };
 };
 
 const getLastUserQuery = (history) => {
@@ -1210,28 +1535,28 @@ const toGroundingMetadata = (sources) => ({
 });
 
 app.get('/api/ai/health', (req, res) => {
-  if (!API_KEY) {
-    return res.status(500).json({ ok: false, error: 'KIMI_API_KEY 未配置' });
+  if (!API_KEY && !GEMINI_API_KEY) {
+    return res.status(500).json({ ok: false, error: 'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)' });
   }
 
   res.json({
     ok: true,
-    provider: 'moonshot-kimi',
+    provider: API_KEY ? 'moonshot-kimi' : 'google-gemini',
+    fallback: GEMINI_API_KEY ? 'google-gemini' : 'none',
     keyLoaded: true,
-    keyLength: String(API_KEY).length,
-    baseUrl: KIMI_BASE_URL,
-    defaultModel: DEFAULT_MODEL
+    defaultModel: DEFAULT_MODEL,
+    geminiModel: GEMINI_DEFAULT_MODEL
   });
 });
 
 app.get('/api/ai/selftest', async (req, res) => {
   try {
-    if (!API_KEY) return res.status(500).json({ ok: false, error: 'KIMI_API_KEY 未配置' });
+    if (!hasAnyAIKey()) return res.status(500).json({ ok: false, error: 'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)' });
 
     const requestedModel = String(req.query.model || '').trim();
     const rawMode = String(req.query.raw || '').trim() === '1';
 
-    const result = await requestKimiCompletion({
+    const result = await requestAI({
       requestedModel: requestedModel || DEFAULT_MODEL,
       messages: [{ role: 'user', content: 'ping' }],
       disableFallback: rawMode
@@ -1246,11 +1571,11 @@ app.get('/api/ai/selftest', async (req, res) => {
 
 app.post('/api/ai/generate', async (req, res) => {
   try {
-    if (!API_KEY) return res.status(500).json({ error: 'KIMI_API_KEY 未配置' });
+    if (!hasAnyAIKey()) return res.status(500).json({ error: 'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)' });
 
     const { model, prompt, config } = req.body;
     const messages = convertHistoryToMessages(prompt);
-    const result = await requestKimiCompletion({
+    const result = await requestAI({
       requestedModel: model || DEFAULT_MODEL,
       messages,
       jsonMode: String(config?.responseMimeType || '').includes('application/json')
@@ -1266,7 +1591,7 @@ app.post('/api/ai/generate', async (req, res) => {
 
 app.post('/api/ai/chat', async (req, res) => {
   try {
-    if (!API_KEY) return res.status(500).json({ error: 'KIMI_API_KEY 未配置' });
+    if (!hasAnyAIKey()) return res.status(500).json({ error: 'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)' });
 
     const { model, history, tools } = req.body;
     const messages = convertHistoryToMessages(history);
@@ -1289,7 +1614,7 @@ app.post('/api/ai/chat', async (req, res) => {
       }
     }
 
-    const result = await requestKimiCompletion({
+    const result = await requestAI({
       requestedModel: model || DEFAULT_MODEL,
       messages
     });
@@ -1311,14 +1636,14 @@ app.post('/api/intel/fetch', async (req, res) => {
     const regions = normalizeList(req.body?.regions);
     const industries = normalizeList(req.body?.industries);
     const limit = Number(req.body?.limit || 20);
-    const timeoutMs = Number(process.env.INTEL_FETCH_TIMEOUT_MS || 45000);
+    const timeoutMs = Number(process.env.INTEL_FETCH_TIMEOUT_MS || 30000);
     const today = new Date().toISOString().slice(0, 10);
 
-    if (!API_KEY) {
-      return res.status(500).json({ ok: false, signals: [], source: 'no-key', error: 'KIMI_API_KEY 未配置' });
+    if (!hasAnyAIKey()) {
+      return res.status(500).json({ ok: false, signals: [], source: 'no-key', error: 'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)' });
     }
 
-    const { signals, modelUsed, empty, droppedStale = 0, droppedUndated = 0 } = await withTimeout(
+    const { signals, modelUsed, empty, droppedStale = 0, droppedUndated = 0, rescuedUndated = 0 } = await withTimeout(
       runIntelFetch({ regions, industries, limit }),
       timeoutMs,
       `INTEL_FETCH_TIMEOUT(${timeoutMs}ms)`
@@ -1337,7 +1662,8 @@ app.post('/api/intel/fetch', async (req, res) => {
           source: 'cache',
           error: `本次联网检索未提取到可用结构化结果，已回退最近缓存（${store.lastRunAt || '未知时间'}）`,
           droppedStale: Number(droppedStale || 0) + Number(cacheFreshness.droppedStale || 0),
-          droppedUndated: Number(droppedUndated || 0) + Number(cacheFreshness.droppedUndated || 0)
+          droppedUndated: Number(droppedUndated || 0) + Number(cacheFreshness.droppedUndated || 0),
+          rescuedUndated: Number(rescuedUndated || 0)
         });
       }
 
@@ -1348,7 +1674,8 @@ app.post('/api/intel/fetch', async (req, res) => {
         source: 'error',
         error: '本次联网检索没有提取到可用行业情报（已执行时效过滤），请缩小范围后重试。',
         droppedStale,
-        droppedUndated
+        droppedUndated,
+        rescuedUndated
       });
     }
 
@@ -1360,6 +1687,7 @@ app.post('/api/intel/fetch', async (req, res) => {
       source: 'server',
       droppedStale,
       droppedUndated,
+      rescuedUndated,
       freshnessPolicy: {
         policy: INTEL_RECENCY_DAYS.policy,
         tender: INTEL_RECENCY_DAYS.tender,
@@ -1473,7 +1801,7 @@ const scheduleIntelJob = () => {
     const delay = next.getTime() - now.getTime();
     setTimeout(async () => {
       try {
-        if (!API_KEY) return;
+        if (!hasAnyAIKey()) return;
         const { signals } = await runIntelFetch({ regions: defaultRegions, industries: defaultIndustries, limit });
         writeIntelStore({ lastRunAt: new Date().toISOString(), regions: defaultRegions, industries: defaultIndustries, signals });
         console.log(`[IntelRadar] 自动抓取完成，条数=${signals.length}`);
@@ -1499,7 +1827,10 @@ const startServer = async () => {
   app.listen(port, () => {
     const stateMode = stateHealth?.mode || 'unknown';
     const stateReason = stateHealth?.reason || 'n/a';
-    console.log(`\n🚀 后端服务已启动！\n👉 API 地址: http://localhost:${port}\n👉 AI Provider: Kimi (${DEFAULT_MODEL})\n👉 StateStore: ${stateMode} (${stateReason})\n👉 请新开一个终端运行前端页面。`);
+    const providerInfo = API_KEY
+      ? `Kimi (${DEFAULT_MODEL})${GEMINI_API_KEY ? ` -> Gemini (${GEMINI_DEFAULT_MODEL})` : ''}`
+      : `Gemini (${GEMINI_DEFAULT_MODEL})`;
+    console.log(`\n🚀 后端服务已启动！\n👉 API 地址: http://localhost:${port}\n👉 AI Provider: ${providerInfo}\n👉 StateStore: ${stateMode} (${stateReason})\n👉 请新开一个终端运行前端页面。`);
     scheduleIntelJob();
   });
 };
