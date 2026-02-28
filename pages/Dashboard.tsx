@@ -8,13 +8,11 @@ import {
   Sparkles,
   Zap,
   ArrowRight,
-  BrainCircuit,
   Target,
   AlertTriangle,
   Coins,
   CheckCircle,
-  Activity,
-  ChevronDown
+  Activity
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AggregatedReminder, Reminder, RoleID, Status } from '../types';
@@ -105,7 +103,6 @@ const parsePersona = (value: string | null): DashboardPersona | null => {
 };
 
 const money = (amount: number) => `¥${Number(amount || 0).toFixed(2)}`;
-const normalizeText = (value: string) => String(value || '').toLowerCase();
 const hasKeywords = (text: string, keywords: string[]) => keywords.some(keyword => text.includes(keyword.toLowerCase()));
 
 const getReminderText = (reminder: Reminder) => `${reminder.title || ''} ${reminder.content || ''}`.toLowerCase();
@@ -466,44 +463,6 @@ const Dashboard = () => {
       items: groups.get(scopeKey) || []
     }));
   }, [detailReminders, taskAggregatedReminders, getScopeLabel]);
-
-  const runningProjects = projects.filter(project => project.status === Status.Active);
-  const totalOverdueTasks = projects
-    .flatMap(project => project.tasks || [])
-    .filter(task => task.status !== 'Completed' && new Date(task.deadline) < now).length;
-
-  const taskCounts: Record<string, number> = {};
-  projects
-    .flatMap(project => project.tasks || [])
-    .filter(task => task.status !== 'Completed')
-    .forEach(task => {
-      taskCounts[task.owner] = (taskCounts[task.owner] || 0) + 1;
-    });
-  const busiestPerson = Object.entries(taskCounts).sort((a, b) => b[1] - a[1])[0] || ['无', 0];
-
-  const needsAttentionProject = React.useMemo(() => {
-    const overdueCountForProject = (project: typeof projects[number]) =>
-      (project.tasks || []).filter(task => task.status !== 'Completed' && new Date(task.deadline) < now).length;
-    const dueSoonCountForProject = (project: typeof projects[number]) =>
-      (project.tasks || [])
-        .filter(task => task.status !== 'Completed')
-        .filter(task => {
-          const days = dayDiff(task.deadline, now);
-          return days >= 0 && days <= 7;
-        }).length;
-    const openCountForProject = (project: typeof projects[number]) =>
-      (project.tasks || []).filter(task => task.status !== 'Completed').length;
-
-    return runningProjects
-      .slice()
-      .sort((a, b) => {
-        const overdueDelta = overdueCountForProject(b) - overdueCountForProject(a);
-        if (overdueDelta !== 0) return overdueDelta;
-        const dueSoonDelta = dueSoonCountForProject(b) - dueSoonCountForProject(a);
-        if (dueSoonDelta !== 0) return dueSoonDelta;
-        return openCountForProject(b) - openCountForProject(a);
-      })[0];
-  }, [runningProjects, now]);
 
   const monthKeys = React.useMemo(() => {
     const keys: string[] = [];
