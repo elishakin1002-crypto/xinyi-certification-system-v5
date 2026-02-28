@@ -12,6 +12,7 @@ export enum Status {
 
 // 一、身份角色定义
 export type RoleID = 'ADMIN' | 'MANAGER' | 'CONSULTANT' | 'FINANCE';
+export type DashboardPersona = 'boss' | 'sales' | 'consultant' | 'finance';
 
 export interface Role {
   id: RoleID;
@@ -64,6 +65,25 @@ export interface ProjectTask {
   category: 'Core' | 'Auxiliary' | 'System' | 'ThirdParty'; // 区分核心与辅助任务用于计算进度
   owner: string;
   serviceItemId?: string;
+}
+
+export type ProjectWorkLogSource = 'manual' | 'task_transition';
+
+export interface ProjectWorkLog {
+  id: string;
+  projectId: string;
+  serviceItemId?: string;
+  taskId?: string;
+  logDate: string; // YYYY-MM-DD
+  workContent: string;
+  actualHours: number;
+  issueNote?: string;
+  nextPlan?: string;
+  source: ProjectWorkLogSource;
+  operatorUserId: string;
+  operatorName: string;
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
 }
 
 // 三、任务模版引擎
@@ -212,9 +232,21 @@ export interface ContractAttachment {
   url?: string;
 }
 
+export interface ContractServiceItemSnapshot {
+  name: string;
+  rawName?: string;
+  catalogId?: string;
+  standardName?: string;
+  category?: ServiceCategory;
+  deliveryMode?: ServiceDeliveryMode;
+  workflowTemplateId?: string;
+}
+
 export interface Contract {
   id: string;
   title: string;
+  owner?: string;
+  customerId?: string; // 关联客户ID（新增可选字段，兼容历史数据）
   customerName: string;
   amount: number;
   signDate: string;
@@ -228,6 +260,7 @@ export interface Contract {
   contactPerson?: string;
   paymentMethod?: string;
   remarks?: string;
+  serviceItems?: ContractServiceItemSnapshot[]; // 合同服务项快照（来自合同识别/人工录入）
 }
 
 export interface Reminder {
@@ -273,6 +306,8 @@ export interface Vendor {
 
 export type ProjectType = 'Self-Operated' | 'Outsourced' | 'Joint';
 export type ProjectCategory = 'Delivery' | 'FollowUp';
+export type ProjectSourceType = 'intel' | 'lead' | 'customer' | 'contract' | 'manual';
+export type ProjectMode = 'followup' | 'delivery';
 export type SettlementRuleType = 'Ratio' | 'Fixed' | 'ProfitShare';
 
 export type ServiceItemStatus = 'Pending' | 'InProgress' | 'Completed';
@@ -329,6 +364,9 @@ export interface Project {
   customerId?: string; // 关联客户ID (最终必须存在)
   name: string;
   contractRef: string;
+  sourceType?: ProjectSourceType; // 新增：项目来源类型（兼容字段，不替换旧逻辑）
+  sourceRef?: string; // 新增：来源对象ID（如 signalId / leadId / customerId）
+  projectMode?: ProjectMode; // 新增：项目模式（followup/delivery）
 
   // T-001 Cost Closure
   costStatus?: '待补全' | '已确认';
@@ -355,6 +393,7 @@ export interface Project {
   };
   completionRecord?: {
     eventId: string;
+    completedAt?: string; // ISO 8601
     actualEndDate: string;
     duration: number; // 实际周期（天）
     passRate: boolean; // 是否一次通过
@@ -425,6 +464,8 @@ export interface KnowledgeDoc {
   format: string;
   size: string;
   updatedAt: string;
+  dedupeHash?: string;
+  originalFileName?: string;
   content?: string;
   summary?: string;
   aiVisible?: boolean;

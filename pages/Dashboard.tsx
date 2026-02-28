@@ -15,11 +15,10 @@ import {
   Activity
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { AggregatedReminder, Reminder, RoleID, Status } from '../types';
+import { AggregatedReminder, Reminder, DashboardPersona, Status } from '../types';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
 
-type DashboardPersona = 'boss' | 'sales' | 'consultant' | 'finance';
 type ReminderView = 'aggregated' | 'detail';
 type AIBriefKey = 'opportunity' | 'risk' | 'intel';
 
@@ -39,8 +38,6 @@ type PersonaPlan = {
   taskKeywords: string[];
   alertKeywords: string[];
 };
-
-const PERSONA_LIST: DashboardPersona[] = ['boss', 'sales', 'consultant', 'finance'];
 
 const PERSONA_LABEL: Record<DashboardPersona, string> = {
   boss: '老板视角',
@@ -86,20 +83,6 @@ const TONE_CLASS: Record<KpiCard['tone'], { icon: string; value: string; bg: str
   amber: { icon: 'text-amber-600', value: 'text-amber-600', bg: 'bg-amber-50' },
   indigo: { icon: 'text-indigo-600', value: 'text-indigo-600', bg: 'bg-indigo-50' },
   blue: { icon: 'text-blue-600', value: 'text-blue-600', bg: 'bg-blue-50' }
-};
-
-const resolvePersonaFromRole = (role: RoleID): DashboardPersona => {
-  if (role === 'FINANCE') return 'finance';
-  if (role === 'CONSULTANT') return 'consultant';
-  if (role === 'MANAGER') return 'sales';
-  return 'boss';
-};
-
-const parsePersona = (value: string | null): DashboardPersona | null => {
-  if (!value) return null;
-  const normalized = value.toLowerCase();
-  if (PERSONA_LIST.includes(normalized as DashboardPersona)) return normalized as DashboardPersona;
-  return null;
 };
 
 const money = (amount: number) => `¥${Number(amount || 0).toFixed(2)}`;
@@ -176,23 +159,22 @@ const Dashboard = () => {
     visibleReminders,
     aggregatedReminders,
     dismissReminder,
-    activeRole,
+    activePersona,
     currentUser,
     marketSignals,
-    dashboardMetrics
+    dashboardMetrics,
+    resolveDashboardPersona
   } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const queryRole = React.useMemo(
-    () => new URLSearchParams(location.search).get('role'),
+  const queryPersona = React.useMemo(
+    () => new URLSearchParams(location.search).get('persona'),
     [location.search]
   );
   const persona = React.useMemo<DashboardPersona>(() => {
-    const fromQuery = parsePersona(queryRole);
-    if (fromQuery) return fromQuery;
-    return resolvePersonaFromRole(activeRole);
-  }, [queryRole, activeRole]);
+    return resolveDashboardPersona(queryPersona || activePersona);
+  }, [queryPersona, activePersona, resolveDashboardPersona]);
 
   const personaPlan = PERSONA_PLAN[persona];
 
@@ -692,23 +674,7 @@ const Dashboard = () => {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-xl font-black text-gray-900">工作台</h2>
-          <p className="text-xs text-gray-500 mt-1">当前：{roleHint}（仅影响展示编排，不修改权限边界）</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {PERSONA_LIST.map(option => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => navigate(`/dashboard?role=${option}`)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
-                persona === option
-                  ? 'bg-indigo-600 text-white border-indigo-600'
-                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              {PERSONA_LABEL[option]}
-            </button>
-          ))}
+          <p className="text-xs text-gray-500 mt-1">当前：{roleHint}（由顶部“当前视角”统一控制，可用 ?persona= 仅做调试覆盖）</p>
         </div>
       </div>
 

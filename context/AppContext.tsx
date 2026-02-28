@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
-import { Lead, Customer, Contract, Project, Settlement, Reminder, AuditIssue, Status, KnowledgeDoc, Vendor, ProjectTask, ServiceItem, RoleID, TaskTemplate, UserProfile, PermissionCode, FollowUpRecord, AuditNode, StrategicTask, Receivable, CertificateDetail, ProjectCategory, AIDecisionLog, AIAction, ActionCode, AIAllowedAction, AggregatedReminder, ReminderSeverity, ImportRecord, MarketSignal } from '../types';
-import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, ROLE_CAPABILITIES, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATALOG } from '../constants';
+import { Lead, Customer, Contract, ContractAttachment, Project, Settlement, Reminder, AuditIssue, Status, KnowledgeDoc, Vendor, ProjectTask, ServiceItem, RoleID, DashboardPersona, TaskTemplate, UserProfile, PermissionCode, FollowUpRecord, AuditNode, StrategicTask, Receivable, CertificateDetail, ProjectCategory, AIDecisionLog, AIAction, ActionCode, AIAllowedAction, AggregatedReminder, ReminderSeverity, ImportRecord, MarketSignal, ProjectWorkLog } from '../types';
+import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, ROLE_CAPABILITIES, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG } from '../constants';
 import { dataService } from '../services/dataService';
 import { aiService } from '../services/aiService';
 import { wechatService } from '../services/wechatService';
@@ -9,12 +9,17 @@ import { importService } from '../services/importService';
 import { intelService } from '../services/intelService';
 import { stateSyncService } from '../services/stateSyncService';
 import { serializeWorldState } from '../services/dataSerializer';
+import { buildDashboardMetrics, DashboardMetricsBundle } from '../services/dashboardMetrics';
+import { ARCHIVE_STATUS, MARKET_SIGNAL_STATUS, TASK_STATUS, WORK_LOG_SOURCE } from '../src/constants/status.ts';
+import { inferProjectMeta, resolveProjectCapabilities } from '../src/utils/projectCapabilities';
+import { findDuplicateKnowledgeDoc } from '../src/utils/knowledgeDedupe';
 
 export interface AppContextType {
   leads: Lead[]; customers: Customer[]; contracts: Contract[]; projects: Project[];
   settlements: Settlement[]; reminders: Reminder[]; auditIssues: AuditIssue[];
   knowledgeDocs: KnowledgeDoc[]; vendors: Vendor[];
   marketSignals: MarketSignal[];
+  projectWorkLogs: ProjectWorkLog[];
   importRecords: ImportRecord[]; // 新增：导入记录状态
 
   currentUser: UserProfile;
@@ -25,6 +30,9 @@ export interface AppContextType {
   deleteUserProfile: (userId: string) => void;
   activeRole: RoleID;
   setActiveRole: (role: RoleID) => void;
+  activePersona: DashboardPersona;
+  availablePersonas: DashboardPersona[];
+  resolveDashboardPersona: (queryPersona?: string | null) => DashboardPersona;
   userPermissions: PermissionCode[];
   hasPermission: (permission: PermissionCode) => boolean;
   
@@ -33,6 +41,7 @@ export interface AppContextType {
 
   visibleReminders: Reminder[];
   aggregatedReminders: AggregatedReminder[];
+  dashboardMetrics: DashboardMetricsBundle;
   
   // 任务模版
   taskTemplates: TaskTemplate[];
@@ -43,7 +52,7 @@ export interface AppContextType {
   cloneTaskTemplate: (templateId: string, name?: string) => { ok: boolean; reason?: string; newTemplateId?: string };
   
   // 核心操作
-  addProject: (p: Partial<Project>) => void;
+  addProject: (p: AddProjectInput) => void;
   assignProjectManager: (projectId: string, manager: string) => { ok: boolean; reason?: string };
   createFollowUpProjectFromLead: (leadId: string, opts?: { owner?: string; expiryDate?: string }) => string | null;
   createFollowUpProjectFromCustomer: (customerId: string, opts?: { owner?: string; expiryDate?: string; certificateId?: string }) => string | null;
@@ -54,6 +63,9 @@ export interface AppContextType {
   addProjectServiceItem: (projectId: string, item: Omit<ServiceItem, 'id'>) => void;
   updateProjectServiceItem: (projectId: string, itemId: string, updates: Partial<ServiceItem>) => void;
   deleteProjectServiceItem: (projectId: string, itemId: string) => void;
+  addProjectWorkLog: (payload: Omit<ProjectWorkLog, 'id' | 'source' | 'operatorUserId' | 'operatorName' | 'createdAt' | 'updatedAt'> & { source?: ProjectWorkLog['source'] }) => { ok: boolean; reason?: string };
+  updateProjectWorkLog: (logId: string, updates: Partial<Pick<ProjectWorkLog, 'logDate' | 'workContent' | 'actualHours' | 'issueNote' | 'nextPlan'>>) => { ok: boolean; reason?: string };
+  deleteProjectWorkLog: (logId: string) => { ok: boolean; reason?: string };
 
   addLead: (lead: Omit<Lead, 'id'>) => void;
   updateLead: (id: string, updates: Partial<Lead>) => void;
@@ -63,9 +75,22 @@ export interface AppContextType {
   addCustomer: (customer: Omit<Customer, 'id'>) => void;
   addCustomerFollowUp: (customerId: string, record: Omit<FollowUpRecord, 'id'>) => void;
 
-  addContract: (contract: any, createProject?: boolean, fromLeadId?: string) => { ok: boolean; reason?: string; existingContractId?: string };
+  addContract: (
+    contract: any,
+    createProject?: boolean,
+    fromLeadId?: string
+  ) => {
+    ok: boolean;
+    reason?: string;
+    existingContractId?: string;
+    autoCreatedCustomerId?: string;
+    autoCreatedCustomerName?: string;
+  };
+  bindContractToCustomer: (contractId: string, customerId: string) => { ok: boolean; reason?: string };
   deleteContract: (id: string) => void;
   archiveContract: (id: string) => void;
+  addContractAttachment: (contractId: string, attachment: ContractAttachment) => { ok: boolean; reason?: string };
+  removeContractAttachment: (contractId: string, attachmentId: string) => { ok: boolean; reason?: string };
 
   addAuditIssue: (issue: Omit<AuditIssue, 'id'>) => void;
   updateAuditIssue: (id: string, updates: Partial<AuditIssue>) => void;
@@ -101,7 +126,7 @@ export interface AppContextType {
   generateProjectSettlement: (p: Project, a?: number, n?: string) => void;
   addReminder: (reminder: Omit<Reminder, 'id' | 'isRead'>) => void;
   dismissReminder: (id: string) => void;
-  addKnowledgeDoc: (doc: KnowledgeDoc) => Promise<void>;
+  addKnowledgeDoc: (doc: KnowledgeDoc) => Promise<{ ok: boolean; reason?: string; duplicateId?: string }>;
   updateCustomer: (id: string, updates: Partial<Customer>) => void;
   
   // AI Decision Center
@@ -112,6 +137,11 @@ export interface AppContextType {
   updateProjectCost: (projectId: string, amount: number) => { ok: boolean; reason?: string }; // T-002 Cost Update
 }
 
+type AddProjectInput = Partial<Project> & {
+  initialServiceItems?: Array<Omit<ServiceItem, 'id'>>;
+  disableDefaultTemplateTasks?: boolean;
+};
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 const STATE_SYNC_DATASET_KEYS = [
   'leads_v8',
@@ -120,15 +150,16 @@ const STATE_SYNC_DATASET_KEYS = [
   'projects_v8',
   'settlements_v8',
   'reminders_v8',
-  'auditIssues_v1',
-  'knowledgeDocs_v8',
-  'marketSignals_v1',
-  'strategicInsight_v1',
-  'strategicTasks_v1',
+  'audit_issues_v1',
+  'knowledge_docs_v8',
+  'market_signals_v1',
+  'project_work_logs_v1',
+  'strategic_insight_v1',
+  'strategic_tasks_v1',
   'user_profiles_v1',
   'current_user_id',
-  'aiDecisionLogs_v1',
-  'taskTemplates_v1'
+  'ai_decision_logs_v1',
+  'task_templates_v1'
 ] as const;
 
 const asArray = <T,>(value: unknown): T[] | null => (Array.isArray(value) ? (value as T[]) : null);
@@ -136,6 +167,25 @@ const asObjectOrNull = <T extends object>(value: unknown): T | null => (
   value && typeof value === 'object' && !Array.isArray(value) ? (value as T) : null
 );
 const asStringOrNull = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+const ROLE_TO_PERSONA: Record<RoleID, DashboardPersona> = {
+  ADMIN: 'boss',
+  MANAGER: 'sales',
+  CONSULTANT: 'consultant',
+  FINANCE: 'finance'
+};
+const PERSONA_TO_ROLE: Record<DashboardPersona, RoleID> = {
+  boss: 'ADMIN',
+  sales: 'MANAGER',
+  consultant: 'CONSULTANT',
+  finance: 'FINANCE'
+};
+const normalizePersona = (value?: string | null): DashboardPersona | null => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'boss' || normalized === 'sales' || normalized === 'consultant' || normalized === 'finance') {
+    return normalized;
+  }
+  return null;
+};
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [leads, setLeads] = useState<Lead[]>(() => dataService.get('leads_v8', MOCK_LEADS));
@@ -144,10 +194,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [projects, setProjects] = useState<Project[]>(() => {
     const stored = dataService.get<any[]>('projects_v8', MOCK_PROJECTS as any);
     const arr = Array.isArray(stored) ? stored : [];
-    return arr.map(p => ({
+    return arr.map(p => {
+      const projectCategory = (p as any).projectCategory || 'Delivery';
+      const meta = inferProjectMeta({
+        contractRef: String((p as any).contractRef || ''),
+        projectCategory,
+        sourceType: (p as any).sourceType,
+        sourceRef: (p as any).sourceRef,
+        projectMode: (p as any).projectMode
+      } as Project);
+      return {
       ...p,
-      projectCategory: (p as any).projectCategory || 'Delivery'
-      ,
+      projectCategory,
+      sourceType: (p as any).sourceType || meta.sourceType,
+      sourceRef: (p as any).sourceRef || (meta.sourceRef || undefined),
+      projectMode: (p as any).projectMode || meta.projectMode,
       projectAmount: (() => {
         const v = Number((p as any).projectAmount ?? 0);
         return Number.isFinite(v) ? v : 0;
@@ -157,22 +218,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return Number.isFinite(v) && v > 0 ? '已确认' : '待补全';
       })(),
       serviceItems: Array.isArray((p as any).serviceItems) ? (p as any).serviceItems : []
-    })) as Project[];
+    };
+    }) as Project[];
   });
-  const [aiDecisionLogs, setAiDecisionLogs] = useState<AIDecisionLog[]>(() => dataService.get('aiDecisionLogs_v1', []));
+  const [aiDecisionLogs, setAiDecisionLogs] = useState<AIDecisionLog[]>(() => dataService.get('ai_decision_logs_v1', dataService.get('aiDecisionLogs_v1', [])));
   const [settlements, setSettlements] = useState<Settlement[]>(() => dataService.get('settlements_v8', MOCK_SETTLEMENTS));
   const [reminders, setReminders] = useState<Reminder[]>(() => dataService.get('reminders_v8', []));
-  const [auditIssues, setAuditIssues] = useState<AuditIssue[]>(() => dataService.get('auditIssues_v1', MOCK_AUDITS));
-  const [knowledgeDocs, setKnowledgeDocs] = useState<KnowledgeDoc[]>(() => dataService.get('knowledgeDocs_v8', MOCK_DOCS));
-  const [marketSignals, setMarketSignals] = useState<MarketSignal[]>(() => dataService.get('marketSignals_v1', []));
+  const [auditIssues, setAuditIssues] = useState<AuditIssue[]>(() => dataService.get('audit_issues_v1', dataService.get('auditIssues_v1', MOCK_AUDITS)));
+  const [knowledgeDocs, setKnowledgeDocs] = useState<KnowledgeDoc[]>(() => dataService.get('knowledge_docs_v8', dataService.get('knowledgeDocs_v8', MOCK_DOCS)));
+  const [marketSignals, setMarketSignals] = useState<MarketSignal[]>(() => dataService.get('market_signals_v1', dataService.get('marketSignals_v1', [])));
+  const [projectWorkLogs, setProjectWorkLogs] = useState<ProjectWorkLog[]>(() => dataService.get('project_work_logs_v1', []));
   const [vendors] = useState<Vendor[]>(MOCK_VENDORS);
   const [importRecords, setImportRecords] = useState<ImportRecord[]>([]); // 导入记录状态
-  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>(() => dataService.get('taskTemplates_v1', TASK_TEMPLATES));
+  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>(() => dataService.get('task_templates_v1', dataService.get('taskTemplates_v1', TASK_TEMPLATES)));
   const [templatesNormalized, setTemplatesNormalized] = useState<boolean>(false);
   const [knowledgeAccessNormalized, setKnowledgeAccessNormalized] = useState<boolean>(false);
-  const [strategicInsight, setStrategicInsight] = useState<any>(() => dataService.get('strategicInsight_v1', null));
+  const [strategicInsight, setStrategicInsight] = useState<any>(() => dataService.get('strategic_insight_v1', dataService.get('strategicInsight_v1', null)));
   const [isAnalyzingStrategy, setIsAnalyzingStrategy] = useState<boolean>(false);
-  const [strategicTasks, setStrategicTasks] = useState<StrategicTask[]>(() => dataService.get('strategicTasks_v1', []));
+  const [strategicTasks, setStrategicTasks] = useState<StrategicTask[]>(() => dataService.get('strategic_tasks_v1', dataService.get('strategicTasks_v1', [])));
   const [backendReadReadyUserId, setBackendReadReadyUserId] = useState<string>('');
 
   const [userProfiles, setUserProfiles] = useState<UserProfile[]>(() => {
@@ -197,6 +260,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!normalizedCurrentUser.roles.includes(role)) return;
     setUserProfiles(prev => prev.map(u => u.id === effectiveUserId ? { ...u, activeRole: role } : u));
   };
+  const activePersona: DashboardPersona = ROLE_TO_PERSONA[activeRole] || 'boss';
+  const availablePersonas = Array.from(new Set(
+    normalizedCurrentUser.roles
+      .map(role => ROLE_TO_PERSONA[role])
+      .filter(Boolean)
+  )) as DashboardPersona[];
+  const resolveDashboardPersona = (queryPersona?: string | null): DashboardPersona => {
+    const parsed = normalizePersona(queryPersona);
+    if (parsed) {
+      const requiredRole = PERSONA_TO_ROLE[parsed];
+      if (normalizedCurrentUser.roles.includes(requiredRole)) return parsed;
+    }
+    return activePersona;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -214,21 +291,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (cancelled) return;
 
         const datasets = result.datasets as Record<string, unknown>;
+        const pickDataset = (primaryKey: string, legacyKey?: string) => (
+          datasets[primaryKey] ?? (legacyKey ? datasets[legacyKey] : undefined)
+        );
         const leadsData = asArray<Lead>(datasets.leads_v8);
         const customersData = asArray<Customer>(datasets.customers_v8);
         const contractsData = asArray<Contract>(datasets.contracts_v8);
         const projectsData = asArray<Project>(datasets.projects_v8);
         const settlementsData = asArray<Settlement>(datasets.settlements_v8);
         const remindersData = asArray<Reminder>(datasets.reminders_v8);
-        const auditIssuesData = asArray<AuditIssue>(datasets.auditIssues_v1);
-        const knowledgeDocsData = asArray<KnowledgeDoc>(datasets.knowledgeDocs_v8);
-        const marketSignalsData = asArray<MarketSignal>(datasets.marketSignals_v1);
-        const strategicInsightData = asObjectOrNull<Record<string, unknown>>(datasets.strategicInsight_v1);
-        const strategicTasksData = asArray<StrategicTask>(datasets.strategicTasks_v1);
+        const auditIssuesData = asArray<AuditIssue>(pickDataset('audit_issues_v1', 'auditIssues_v1'));
+        const knowledgeDocsData = asArray<KnowledgeDoc>(pickDataset('knowledge_docs_v8', 'knowledgeDocs_v8'));
+        const marketSignalsData = asArray<MarketSignal>(pickDataset('market_signals_v1', 'marketSignals_v1'));
+        const projectWorkLogsData = asArray<ProjectWorkLog>(datasets.project_work_logs_v1);
+        const strategicInsightData = asObjectOrNull<Record<string, unknown>>(pickDataset('strategic_insight_v1', 'strategicInsight_v1'));
+        const strategicTasksData = asArray<StrategicTask>(pickDataset('strategic_tasks_v1', 'strategicTasks_v1'));
         const userProfilesData = asArray<UserProfile>(datasets.user_profiles_v1);
         const currentUserIdData = asStringOrNull(datasets.current_user_id);
-        const aiDecisionLogsData = asArray<AIDecisionLog>(datasets.aiDecisionLogs_v1);
-        const taskTemplatesData = asArray<TaskTemplate>(datasets.taskTemplates_v1);
+        const aiDecisionLogsData = asArray<AIDecisionLog>(pickDataset('ai_decision_logs_v1', 'aiDecisionLogs_v1'));
+        const taskTemplatesData = asArray<TaskTemplate>(pickDataset('task_templates_v1', 'taskTemplates_v1'));
 
         if (leadsData) setLeads(leadsData);
         if (customersData) setCustomers(customersData);
@@ -242,6 +323,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setKnowledgeAccessNormalized(false);
         }
         if (marketSignalsData) setMarketSignals(marketSignalsData);
+        if (projectWorkLogsData) setProjectWorkLogs(projectWorkLogsData);
         if (strategicInsightData !== null) setStrategicInsight(strategicInsightData);
         if (strategicTasksData) setStrategicTasks(strategicTasksData);
         if (aiDecisionLogsData) setAiDecisionLogs(aiDecisionLogsData);
@@ -276,6 +358,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     new Set(normalizedCurrentUser.roles.flatMap(r => ROLE_PERMISSIONS[r] || []))
   );
   const hasPermission = (permission: PermissionCode) => userPermissions.includes(permission);
+  const dashboardMetrics = useMemo(() => buildDashboardMetrics({
+    leads,
+    customers,
+    contracts,
+    projects,
+    projectWorkLogs,
+    settlements,
+    currentUser: normalizedCurrentUser,
+    activeRole
+  }), [leads, customers, contracts, projects, projectWorkLogs, settlements, normalizedCurrentUser, activeRole]);
 
   const todayStr = () => new Date().toISOString().split('T')[0];
   const parseDateMs = (value?: string) => {
@@ -305,6 +397,75 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     .replace(/[\s/\\\-_.()（）]+/g, '')
     .replace(/[^A-Z0-9\u4e00-\u9fa5]/g, '');
 
+  const splitServiceLineText = (value: string): string[] => {
+    const normalized = String(value || '')
+      .replace(/[；;｜|]/g, '、')
+      .replace(/[和及与]/g, '、')
+      .replace(/[\/]/g, '、')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!normalized) return [];
+    return normalized
+      .split(/[、,，]/)
+      .map(part => part.trim())
+      .filter(Boolean);
+  };
+
+  const matchServiceCatalogItem = (text: string) => {
+    const normalized = normalizeServiceToken(text || '');
+    if (!normalized) return null;
+    for (const item of SERVICE_CATALOG) {
+      const tokens = [item.code, item.name, ...(item.aliases || [])]
+        .filter(Boolean)
+        .map(val => normalizeServiceToken(String(val)));
+      if (tokens.some(token => normalized.includes(token) || token.includes(normalized))) {
+        return item;
+      }
+    }
+    return null;
+  };
+
+  const inferServiceCategoryByName = (name: string): ServiceItem['category'] => {
+    const text = String(name || '');
+    if (!text) return '其他';
+    if (/ISO|IATF|HACCP|体系|贯标|认证/i.test(text)) return '体系认证';
+    if (/CCC|CE|FDA|ROHS|REACH|产品认证/i.test(text)) return '产品认证';
+    if (/申报|高新|专精特新|两化融合|技改|质量奖|研究院|研发中心/i.test(text)) return '政府项目申报';
+    if (/许可|SC|QS|特种设备|药包材|医疗器械|排污|排水/i.test(text)) return '生产许可类';
+    if (/顾问|培训|台账|咨询|审计|体系落地|精益|6S/i.test(text)) return '管理培训/顾问服务';
+    return '其他';
+  };
+
+  const normalizeContractServiceSeeds = (raw: any): Array<Omit<ServiceItem, 'id'>> => {
+    const rawList = Array.isArray(raw?.serviceItems) ? raw.serviceItems : [];
+    const fromArray = rawList
+      .map((entry: any) => (typeof entry === 'string' ? entry : (entry?.name || entry?.standardName || entry?.rawName || '')))
+      .map((name: string) => String(name || '').trim())
+      .filter(Boolean);
+    const fromLine = splitServiceLineText(String(raw?.serviceLine || ''));
+    const candidates = Array.from(new Set([...fromArray, ...fromLine]));
+    const cleaned = candidates
+      .map(item => item.replace(/^[□☐☑✅✔√■▣]+/, '').trim())
+      .filter(item => item && item !== '未分类' && item !== 'ISO 标准');
+
+    return cleaned.map((name) => {
+      const matched = matchServiceCatalogItem(name);
+      const category = matched?.category || inferServiceCategoryByName(name);
+      const deliveryMode = matched?.deliveryMode || SERVICE_CATEGORY_DELIVERY_MODE[category];
+      return {
+        name: matched?.name || name,
+        rawName: name,
+        standardName: matched?.name || name,
+        catalogId: matched?.id,
+        category,
+        deliveryMode,
+        workflowTemplateId: matched?.workflowTemplateId || DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY[category],
+        status: 'Pending' as const,
+        autoGenerateTasks: true
+      };
+    });
+  };
+
   const matchServiceCatalogText = (text: string) => {
     const normalized = normalizeServiceToken(text || '');
     if (!normalized) return null;
@@ -319,8 +480,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return null;
   };
 
-  const appendKnowledgeDoc = (doc: KnowledgeDoc) => {
-    setKnowledgeDocs(prev => [doc, ...prev]);
+  const appendKnowledgeDoc = (doc: KnowledgeDoc): { ok: boolean; reason?: string; duplicateId?: string } => {
+    let result: { ok: boolean; reason?: string; duplicateId?: string } = { ok: true };
+    setKnowledgeDocs(prev => {
+      const duplicate = findDuplicateKnowledgeDoc(prev, doc);
+      if (duplicate) {
+        result = { ok: false, reason: 'DUPLICATE_DOC', duplicateId: duplicate.id };
+        return prev;
+      }
+      return [doc, ...prev];
+    });
+    return result;
   };
 
   const normalizeTaskTemplates = (raw: any[], opts: { userId: string; userName: string }) => {
@@ -439,9 +609,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const customerId = parts[1];
         return customers.find(c => c.id === customerId)?.name;
       }
+      if (ref.startsWith('CUST:')) {
+        const customerId = ref.split(':')[1];
+        return customers.find(c => c.id === customerId)?.name;
+      }
       if (ref.startsWith('LEAD:')) {
         const leadId = ref.split(':')[1];
         return leads.find(l => l.id === leadId)?.company;
+      }
+      if (project.sourceType === 'customer' && project.sourceRef) {
+        const customerId = String(project.sourceRef).split(':')[0];
+        const found = customers.find(c => c.id === customerId);
+        if (found?.name) return found.name;
       }
       const linked = contracts.find(c => c.id === ref || c.contractNo === ref);
       return linked?.customerName;
@@ -720,16 +899,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       projects_v8: projects,
       settlements_v8: settlements,
       reminders_v8: reminders,
-      auditIssues_v1: auditIssues,
-      knowledgeDocs_v8: knowledgeDocs,
-      marketSignals_v1: marketSignals,
-      strategicInsight_v1: strategicInsight,
-      strategicTasks_v1: strategicTasks,
+      audit_issues_v1: auditIssues,
+      knowledge_docs_v8: knowledgeDocs,
+      market_signals_v1: marketSignals,
+      project_work_logs_v1: projectWorkLogs,
+      strategic_insight_v1: strategicInsight,
+      strategic_tasks_v1: strategicTasks,
       user_profiles_v1: userProfiles,
       current_user_id: currentUserId,
       current_role: activeRole,
-      aiDecisionLogs_v1: aiDecisionLogs,
-      taskTemplates_v1: taskTemplates
+      ai_decision_logs_v1: aiDecisionLogs,
+      task_templates_v1: taskTemplates
     };
 
     Object.entries(datasets).forEach(([key, value]) => {
@@ -743,7 +923,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       clientId: normalizedCurrentUser.id,
       appVersion: 'v5.0'
     });
-  }, [backendReadReadyUserId, leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, marketSignals, strategicInsight, strategicTasks, userProfiles, currentUserId, activeRole, aiDecisionLogs, taskTemplates, effectiveUserId, normalizedCurrentUser.id]);
+  }, [backendReadReadyUserId, leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, marketSignals, projectWorkLogs, strategicInsight, strategicTasks, userProfiles, currentUserId, activeRole, aiDecisionLogs, taskTemplates, effectiveUserId, normalizedCurrentUser.id]);
 
   const switchUser = (userId: string) => {
     if (!userProfiles.some(u => u.id === userId)) return;
@@ -856,7 +1036,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const convertSignalToFollowUpProject = (signalId: string) => {
     const signal = marketSignals.find(s => s.id === signalId);
     if (!signal) return { ok: false, reason: '信号不存在' };
-    if (signal.status === 'converted' && signal.convertedTo?.projectId) return { ok: true, projectId: signal.convertedTo.projectId };
+    if (signal.status === MARKET_SIGNAL_STATUS.CONVERTED && signal.convertedTo?.projectId) return { ok: true, projectId: signal.convertedTo.projectId };
 
     const nowStr = todayStr();
     const projectId = `P-INTEL-${Date.now()}`;
@@ -867,6 +1047,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: projectId,
       name: projectName,
       contractRef: `INTEL:${signal.id}`,
+      sourceType: 'intel',
+      sourceRef: signal.id,
+      projectMode: 'followup',
       projectCategory: 'FollowUp',
       manager: managerName,
       progress: 0,
@@ -880,7 +1063,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           id: `T-INTEL-${Date.now()}-1`,
           title: '快速研判：适用范围/截止时间/申报入口',
           deadline: nowStr,
-          status: 'Pending',
+          status: TASK_STATUS.PENDING,
           priority: 'High',
           category: 'Core',
           owner: managerName
@@ -889,7 +1072,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           id: `T-INTEL-${Date.now()}-2`,
           title: '匹配潜在客户（存量客户+同业画像）并制定触达话术',
           deadline: nowStr,
-          status: 'Pending',
+          status: TASK_STATUS.PENDING,
           priority: 'Medium',
           category: 'Auxiliary',
           owner: managerName
@@ -898,7 +1081,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           id: `T-INTEL-${Date.now()}-3`,
           title: '建立跟进节奏：电话/微信/上门，记录反馈与下一步',
           deadline: nowStr,
-          status: 'Pending',
+          status: TASK_STATUS.PENDING,
           priority: 'Medium',
           category: 'Core',
           owner: managerName
@@ -908,7 +1091,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     setProjects(prev => [newProject, ...prev]);
-    updateMarketSignal(signalId, { status: 'converted', convertedTo: { ...(signal.convertedTo || {}), projectId } });
+    updateMarketSignal(signalId, { status: MARKET_SIGNAL_STATUS.CONVERTED, convertedTo: { ...(signal.convertedTo || {}), projectId } });
     addReminder({
       title: `📡 情报已转化为跟进项目`,
       content: `已基于“${signal.title}”生成跟进项目：${projectName}`,
@@ -937,11 +1120,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const convertIntelProjectToLead = (projectId: string) => {
     const project = projects.find(p => p.id === projectId);
     if (!project) return { ok: false, reason: '项目不存在' };
-    if (project.projectCategory !== 'FollowUp') return { ok: false, reason: '仅跟进项目支持该操作' };
-    const ref = project.contractRef || '';
-    if (!ref.startsWith('INTEL:')) return { ok: false, reason: '仅情报来源项目支持转线索' };
+    const capabilities = resolveProjectCapabilities(project);
+    if (!capabilities.isFollowUpProject) return { ok: false, reason: '仅跟进项目支持该操作' };
+    if (!capabilities.isIntelOrigin) return { ok: false, reason: '仅情报来源项目支持转线索' };
 
-    const signalId = ref.split(':')[1];
+    const signalId = capabilities.sourceRef || String(project.contractRef || '').split(':')[1];
     const signal = marketSignals.find(s => s.id === signalId);
     const now = todayStr();
     const inferredCompany = inferLeadCompanyFromSignal(signal);
@@ -979,6 +1162,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return {
         ...p,
         contractRef: `LEAD:${leadId}`,
+        sourceType: p.sourceType || 'intel',
+        sourceRef: p.sourceRef || signalId,
+        projectMode: p.projectMode || 'followup',
         name: nextName
       };
     }));
@@ -1004,12 +1190,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const bindFollowUpProjectToCustomer = (projectId: string, customerId: string) => {
     const project = projects.find(p => p.id === projectId);
     if (!project) return { ok: false, reason: '项目不存在' };
-    if (project.projectCategory !== 'FollowUp') return { ok: false, reason: '仅跟进项目支持绑定客户' };
+    const capabilities = resolveProjectCapabilities(project);
+    if (!capabilities.isFollowUpProject) return { ok: false, reason: '仅跟进项目支持绑定客户' };
     const customer = customers.find(c => c.id === customerId);
     if (!customer) return { ok: false, reason: '客户不存在' };
 
-    const ref = project.contractRef || '';
-    const signalId = ref.startsWith('INTEL:') ? ref.split(':')[1] : '';
+    const signalId = capabilities.isIntelOrigin ? (capabilities.sourceRef || String(project.contractRef || '').split(':')[1]) : '';
     const today = todayStr();
 
     setProjects(prev => prev.map(p => {
@@ -1020,6 +1206,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return {
         ...p,
         contractRef: `CUST:${customerId}`,
+        sourceType: capabilities.isIntelOrigin ? (p.sourceType || 'intel') : 'customer',
+        sourceRef: capabilities.isIntelOrigin ? (p.sourceRef || signalId) : customerId,
+        projectMode: p.projectMode || 'followup',
         customerId,
         name: nextName
       };
@@ -1427,7 +1616,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // --- 项目操作逻辑 ---
-  const addProject = (p: Partial<Project>) => {
+  const addProject = (p: AddProjectInput) => {
     // 强制校验：必须有负责人
     if (!p.manager || p.manager === '待定') {
       console.warn('拒绝创建无负责人项目');
@@ -1440,10 +1629,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // 自动套用模板
     let initialTasks: ProjectTask[] = [];
+    let initialServiceItems: ServiceItem[] = [];
     const category = (p as any).projectCategory || 'Delivery';
+    const incomingContractRef = p.contractRef || '无关联';
+    const inferredMeta = inferProjectMeta({
+      contractRef: incomingContractRef,
+      projectCategory: category,
+      sourceType: (p as any).sourceType,
+      sourceRef: (p as any).sourceRef,
+      projectMode: (p as any).projectMode
+    } as Project);
     
+    const disableDefaultTemplateTasks = Boolean((p as any).disableDefaultTemplateTasks);
+
     // 1. 跟进项目：自动套用跟进模板
-    if (category === 'FollowUp') {
+    if (category === 'FollowUp' && !disableDefaultTemplateTasks) {
         const tpl = taskTemplates.find(t => t.id === 'TEMPLATE_FOLLOWUP');
         if (tpl) {
             initialTasks = tpl.tasks.map((t, idx) => ({
@@ -1458,7 +1658,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
     } 
     // 2. 交付项目：自动套用交付模板
-    if (category === 'Delivery') {
+    if (category === 'Delivery' && !disableDefaultTemplateTasks) {
         const tpl = taskTemplates.find(t => t.id === 'TEMPLATE_DELIVERY');
         if (tpl) {
             initialTasks = tpl.tasks.map((t, idx) => ({
@@ -1473,22 +1673,81 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
     }
     
+    const seedItems = Array.isArray((p as any).initialServiceItems)
+      ? ((p as any).initialServiceItems as Array<Omit<ServiceItem, 'id'>>)
+      : [];
+    if (seedItems.length > 0) {
+      const usedNameKeys = new Set<string>();
+      const generatedTasks: ProjectTask[] = [];
+      initialServiceItems = seedItems
+        .map((item) => {
+          const serviceName = String(item?.name || '').trim();
+          if (!serviceName) return null;
+          const key = normalizeServiceToken(serviceName);
+          if (!key || usedNameKeys.has(key)) return null;
+          usedNameKeys.add(key);
+
+          const serviceId = `SI-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+          const resolvedCategory = item.category || inferServiceCategoryByName(serviceName);
+          const resolvedTemplateId = item.workflowTemplateId || DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY[resolvedCategory];
+          const next: ServiceItem = {
+            id: serviceId,
+            name: serviceName,
+            owner: item.owner || p.manager || '待指派',
+            status: item.status || 'Pending',
+            notes: item.notes,
+            catalogId: item.catalogId,
+            standardName: item.standardName,
+            rawName: item.rawName,
+            category: resolvedCategory,
+            deliveryMode: item.deliveryMode || SERVICE_CATEGORY_DELIVERY_MODE[resolvedCategory],
+            workflowTemplateId: resolvedTemplateId,
+            autoGenerateTasks: item.autoGenerateTasks !== false
+          };
+          if (next.autoGenerateTasks !== false) {
+            generatedTasks.push(...buildWorkflowTasks({
+              id: 'TMP',
+              name: p.name || '未命名项目',
+              contractRef: incomingContractRef,
+              projectCategory: category,
+              manager: p.manager || '待指派',
+              progress: 0,
+              status: Status.Active,
+              paymentStatus: 'unpaid',
+              deadline: p.deadline || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().split('T')[0],
+              projectType: p.projectType || 'Self-Operated',
+              tasks: [],
+              settlementConfig: p.settlementConfig || { rule: 'Ratio', value: 10, base: 'Revenue' }
+            } as Project, serviceId, resolvedTemplateId, next.owner));
+          }
+          return next;
+        })
+        .filter((item): item is ServiceItem => Boolean(item));
+
+      if (generatedTasks.length > 0) {
+        initialTasks = disableDefaultTemplateTasks ? generatedTasks : [...initialTasks, ...generatedTasks];
+      }
+    }
+
     const newProject: Project = {
       id: `P-${Date.now()}`,
       name: p.name || '未命名项目',
-      contractRef: p.contractRef || '无关联',
+      contractRef: incomingContractRef,
+      sourceType: inferredMeta.sourceType,
+      sourceRef: inferredMeta.sourceRef || undefined,
+      projectMode: inferredMeta.projectMode,
       projectCategory: category,
       costStatus,
       projectAmount,
       manager: p.manager, // 此时必有值
-      progress: 0,
+      progress: calculateProjectProgress(initialTasks),
       status: Status.Active,
       paymentStatus: 'unpaid',
       deadline: p.deadline || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().split('T')[0],
       duration: p.duration || 30,
       projectType: p.projectType || 'Self-Operated',
       tasks: initialTasks, // 注入初始任务
-      serviceItems: [],
+      serviceItems: initialServiceItems,
       settlementConfig: p.settlementConfig || { rule: 'Ratio', value: 10, base: 'Revenue' }
     };
     setProjects(prev => [...prev, newProject]);
@@ -1563,6 +1822,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: projectId,
       name: `${lead.company} 认证到期挖角跟进`,
       contractRef: `LEAD:${leadId}`,
+      sourceType: 'lead',
+      sourceRef: leadId,
+      projectMode: 'followup',
       projectCategory: 'FollowUp',
       manager: owner,
       progress: calculateProjectProgress(tasks),
@@ -1614,6 +1876,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: projectId,
       name: `${customer.name} 认证到期跟进`,
       contractRef: ref,
+      sourceType: 'customer',
+      sourceRef: certificateId ? `${customerId}:${certificateId}` : customerId,
+      projectMode: 'followup',
       projectCategory: 'FollowUp',
       manager: owner,
       progress: calculateProjectProgress(tasks),
@@ -1636,12 +1901,132 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return projectId;
   };
 
+  const addProjectWorkLog: AppContextType['addProjectWorkLog'] = (payload) => {
+    const projectId = String(payload?.projectId || '').trim();
+    if (!projectId) return { ok: false, reason: '项目ID不能为空' };
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return { ok: false, reason: '项目不存在' };
+
+    const taskId = String(payload?.taskId || '').trim();
+    const serviceItemIdRaw = String(payload?.serviceItemId || '').trim();
+    const projectTasks = Array.isArray(project.tasks) ? project.tasks : [];
+    const projectServiceItems = Array.isArray(project.serviceItems) ? project.serviceItems : [];
+
+    if (!taskId && !serviceItemIdRaw) {
+      return { ok: false, reason: '工作日志必须至少关联一个服务项或任务' };
+    }
+
+    const task = taskId ? projectTasks.find(t => t.id === taskId) : undefined;
+    if (taskId && !task) {
+      return { ok: false, reason: '关联任务不存在或不属于当前项目' };
+    }
+
+    const inferredServiceItemId = serviceItemIdRaw || task?.serviceItemId || '';
+    if (inferredServiceItemId && !projectServiceItems.some(si => si.id === inferredServiceItemId)) {
+      return { ok: false, reason: '关联服务项不存在或不属于当前项目' };
+    }
+
+    const workContent = String(payload?.workContent || '').trim();
+    if (!workContent) return { ok: false, reason: '工作内容不能为空' };
+
+    const actualHours = Number(payload?.actualHours || 0);
+    if (!Number.isFinite(actualHours) || actualHours <= 0) {
+      return { ok: false, reason: '实际耗时必须大于 0' };
+    }
+
+    const logDate = String(payload?.logDate || todayStr()).trim() || todayStr();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(logDate)) {
+      return { ok: false, reason: '日志日期格式必须为 YYYY-MM-DD' };
+    }
+
+    const nowIso = new Date().toISOString();
+    const next: ProjectWorkLog = {
+      id: `WLOG-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      projectId,
+      serviceItemId: inferredServiceItemId || undefined,
+      taskId: task?.id,
+      logDate,
+      workContent,
+      actualHours,
+      issueNote: String(payload?.issueNote || '').trim() || undefined,
+      nextPlan: String(payload?.nextPlan || '').trim() || undefined,
+      source: payload?.source || WORK_LOG_SOURCE.MANUAL,
+      operatorUserId: effectiveUserId,
+      operatorName: normalizedCurrentUser.name,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+
+    setProjectWorkLogs(prev => [next, ...prev]);
+    return { ok: true };
+  };
+
+  const updateProjectWorkLog: AppContextType['updateProjectWorkLog'] = (logId, updates) => {
+    const id = String(logId || '').trim();
+    if (!id) return { ok: false, reason: '日志ID不能为空' };
+    const existing = projectWorkLogs.find(item => item.id === id);
+    if (!existing) return { ok: false, reason: '日志不存在' };
+    if (existing.operatorUserId !== effectiveUserId && activeRole !== 'ADMIN' && activeRole !== 'MANAGER') {
+      return { ok: false, reason: '仅可编辑本人日志（管理员/经理可管理）' };
+    }
+
+    const patch: Partial<ProjectWorkLog> = {};
+    if (typeof updates.logDate === 'string') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(updates.logDate)) return { ok: false, reason: '日志日期格式必须为 YYYY-MM-DD' };
+      patch.logDate = updates.logDate;
+    }
+    if (typeof updates.workContent === 'string') {
+      const workContent = updates.workContent.trim();
+      if (!workContent) return { ok: false, reason: '工作内容不能为空' };
+      patch.workContent = workContent;
+    }
+    if (updates.actualHours !== undefined) {
+      const actualHours = Number(updates.actualHours);
+      if (!Number.isFinite(actualHours) || actualHours <= 0) return { ok: false, reason: '实际耗时必须大于 0' };
+      patch.actualHours = actualHours;
+    }
+    if (updates.issueNote !== undefined) {
+      patch.issueNote = String(updates.issueNote || '').trim() || undefined;
+    }
+    if (updates.nextPlan !== undefined) {
+      patch.nextPlan = String(updates.nextPlan || '').trim() || undefined;
+    }
+
+    setProjectWorkLogs(prev => prev.map(item => item.id === id ? { ...item, ...patch, updatedAt: new Date().toISOString() } : item));
+    return { ok: true };
+  };
+
+  const deleteProjectWorkLog: AppContextType['deleteProjectWorkLog'] = (logId) => {
+    const id = String(logId || '').trim();
+    if (!id) return { ok: false, reason: '日志ID不能为空' };
+    const existing = projectWorkLogs.find(item => item.id === id);
+    if (!existing) return { ok: false, reason: '日志不存在' };
+    if (existing.operatorUserId !== effectiveUserId && activeRole !== 'ADMIN' && activeRole !== 'MANAGER') {
+      return { ok: false, reason: '仅可删除本人日志（管理员/经理可管理）' };
+    }
+    setProjectWorkLogs(prev => prev.filter(item => item.id !== id));
+    return { ok: true };
+  };
+
   const updateProjectTask = (projectId: string, taskId: string, updates: Partial<ProjectTask>) => {
     const project = projects.find(p => p.id === projectId);
     if (project) {
       const oldTask = (project.tasks || []).find(t => t.id === taskId);
       const newTasks = (project.tasks || []).map(t => t.id === taskId ? { ...t, ...updates } : t);
       const statusChangedToCompleted = updates.status === 'Completed' && oldTask?.status !== 'Completed';
+      if (statusChangedToCompleted) {
+        addProjectWorkLog({
+          projectId,
+          taskId,
+          serviceItemId: String((updates.serviceItemId || oldTask?.serviceItemId || '')).trim() || undefined,
+          logDate: todayStr(),
+          workContent: `完成任务：${String(updates.title || oldTask?.title || '未命名任务')}`,
+          actualHours: 0.5,
+          issueNote: '',
+          nextPlan: '',
+          source: WORK_LOG_SOURCE.TASK_TRANSITION
+        });
+      }
       const allCompleted = newTasks.length > 0 && newTasks.every(t => t.status === 'Completed');
       if (statusChangedToCompleted && allCompleted && project.status !== Status.Completed) {
         completeProject(projectId, { source: 'auto', tasksOverride: newTasks });
@@ -1896,14 +2281,17 @@ ${receivableLines}
     const project = projects.find(p => p.id === projectId);
     if (!project) return { ok: false, reason: '项目不存在' };
     if (project.status === Status.Completed) return { ok: false, reason: '项目已完成' };
-    const isFollowUpProject = project.projectCategory === 'FollowUp';
+    const projectCaps = resolveProjectCapabilities(project);
+    const isIntelFollowUpProject = projectCaps.allowFastFollowUpComplete;
     const nextTasks = Array.isArray(opts?.tasksOverride) ? opts!.tasksOverride! : (project.tasks || []);
     const now = new Date();
     const nowStr = now.toISOString().split('T')[0];
     const eventId = `EVT-PCOMP-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     const source = opts?.source || 'manual';
 
-    if (isFollowUpProject) {
+    // Only intel-origin follow-up projects can be completed without financial closure.
+    // Other follow-up projects follow normal financial/project closure rules.
+    if (isIntelFollowUpProject) {
       const createdTs = Number(project.id.split('-')[1]);
       const createdAt = Number.isFinite(createdTs) ? new Date(createdTs) : now;
       const rawDuration = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 3600 * 24));
@@ -1923,6 +2311,7 @@ ${receivableLines}
           tasks: nextTasks,
           completionRecord: {
             eventId,
+            completedAt: now.toISOString(),
             actualEndDate: nowStr,
             duration,
             passRate: delayedTasks === 0,
@@ -2165,6 +2554,7 @@ ${receivableLines}
         tasks: nextTasks,
         completionRecord: {
           eventId,
+          completedAt: now.toISOString(),
           actualEndDate: nowStr,
           duration,
           passRate: true,
@@ -2345,6 +2735,22 @@ ${receivableLines}
   };
 
   const normalizeText = (val: any) => (val ?? '').toString().replace(/\u3000/g, ' ').trim().replace(/\s+/g, ' ');
+  const normalizeCompanyKey = (val: any) =>
+    normalizeText(val)
+      .toLowerCase()
+      .replace(/[（(].*?[）)]/g, '')
+      .replace(/股份有限公司|有限责任公司|有限公司|集团|公司/g, '')
+      .replace(/[\s\-_/]/g, '');
+  const findCustomerByName = (name: any) => {
+    const key = normalizeCompanyKey(name);
+    if (!key) return undefined;
+    return customers.find(c => normalizeCompanyKey(c.name) === key);
+  };
+  const resolveContractCustomerId = (raw: { customerId?: any; customerName?: any }) => {
+    const directId = normalizeText(raw?.customerId);
+    if (directId && customers.some(c => c.id === directId)) return directId;
+    return findCustomerByName(raw?.customerName)?.id;
+  };
   const normalizeContractNo = (val: any) => normalizeText(val).toUpperCase();
   const normalizeDate = (val: any) => {
     const raw = normalizeText(val);
@@ -2366,6 +2772,20 @@ ${receivableLines}
     const amount = normalizeAmount(c.amount);
     return `${customerName}|${title}|${signDate}|${amount}`;
   };
+
+  useEffect(() => {
+    if (!Array.isArray(contracts) || contracts.length === 0 || customers.length === 0) return;
+    setContracts(prev => {
+      let changed = false;
+      const next = prev.map(contract => {
+        const linkedId = resolveContractCustomerId(contract);
+        if (!linkedId || contract.customerId === linkedId) return contract;
+        changed = true;
+        return { ...contract, customerId: linkedId };
+      });
+      return changed ? next : prev;
+    });
+  }, [contracts, customers]);
 
   const backfillPdcaForPaidContracts = () => {
     const paidContracts = contracts.filter(c => Array.isArray(c.receivables) && c.receivables.length > 0 && c.receivables.every(r => r.status === 'paid'));
@@ -2391,9 +2811,10 @@ ${receivableLines}
     paidContracts.forEach(contract => {
       scanned++;
       const relatedProject = projects.find(p => p.contractRef === contract.id || (contract.contractNo && p.contractRef === contract.contractNo));
+      const customerByContractId = contract.customerId ? customers.find(c => c.id === contract.customerId) : undefined;
       const customerByProjectId = relatedProject?.customerId ? customers.find(c => c.id === relatedProject.customerId) : undefined;
-      const customerByName = customers.find(c => normalizeText(c.name) === normalizeText(contract.customerName));
-      const targetCustomer = customerByProjectId || customerByName;
+      const customerByName = findCustomerByName(contract.customerName);
+      const targetCustomer = customerByContractId || customerByProjectId || customerByName;
       if (!targetCustomer) {
         skipped++;
         return;
@@ -2461,9 +2882,23 @@ ${receivableLines}
     return { scanned, created, updated, skipped };
   };
 
-  const addContract = (raw: any, createProject?: boolean, fromLeadId?: string): { ok: boolean; reason?: string; existingContractId?: string } => {
+  const addContract = (
+    raw: any,
+    createProject?: boolean,
+    fromLeadId?: string
+  ): {
+    ok: boolean;
+    reason?: string;
+    existingContractId?: string;
+    autoCreatedCustomerId?: string;
+    autoCreatedCustomerName?: string;
+  } => {
     const id = raw.id || `CT-${Date.now()}`;
     const incomingContractNo = normalizeContractNo(raw.contractNo);
+    let linkedCustomerId = resolveContractCustomerId(raw || {});
+    const normalizedServiceItems = normalizeContractServiceSeeds(raw || {});
+    let autoCreatedCustomerId: string | undefined;
+    let autoCreatedCustomerName: string | undefined;
 
     const existing = (() => {
       if (incomingContractNo) {
@@ -2477,16 +2912,62 @@ ${receivableLines}
       return { ok: false, reason: '合同已存在，已阻止重复录入。', existingContractId: existing.id };
     }
 
+    if (!linkedCustomerId) {
+      const customerName = normalizeText(raw?.customerName);
+      if (customerName) {
+        const matched = findCustomerByName(customerName);
+        if (matched) {
+          linkedCustomerId = matched.id;
+        } else {
+          const now = Date.now();
+          const fallbackContactName = normalizeText(raw?.contactPerson) || '待补充联系人';
+          const fallbackMobile = normalizeText(raw?.mobile || raw?.phone || raw?.contactMobile);
+          const seededContact = {
+            id: `CP-AUTO-${now}`,
+            name: fallbackContactName,
+            mobile: fallbackMobile || undefined,
+            isPrimary: true
+          };
+          const seededCustomer: Customer = {
+            id: `C-${now}`,
+            name: customerName,
+            contactPerson: fallbackContactName,
+            totalValue: 0,
+            riskStatus: 'low',
+            activeContracts: 0,
+            mobile: fallbackMobile || undefined,
+            status: Status.Pending,
+            contacts: [seededContact],
+            followUpRecords: [
+              {
+                id: `F-AUTO-${now}`,
+                date: todayStr(),
+                type: 'system',
+                content: '由合同录入自动创建客户主体，待确认合同生效并补充客户资料。',
+                operator: '系统'
+              }
+            ]
+          };
+          linkedCustomerId = seededCustomer.id;
+          autoCreatedCustomerId = seededCustomer.id;
+          autoCreatedCustomerName = seededCustomer.name;
+          setCustomers(prev => [seededCustomer, ...prev]);
+        }
+      }
+    }
+
     const newContract: Contract = {
       id,
       title: raw.title || '未命名合同',
+      owner: normalizedCurrentUser.name,
+      customerId: linkedCustomerId,
       customerName: raw.customerName || '未知客户',
       amount: typeof raw.amount === 'number' ? raw.amount : Number(raw.amount || 0),
       signDate: normalizeDate(raw.signDate) || new Date().toISOString().split('T')[0],
       status: raw.status || Status.Active,
       serviceLine: raw.serviceLine || '未分类',
       riskLevel: raw.riskLevel || 'Low',
-      archiveStatus: raw.archiveStatus || 'active',
+      archiveStatus: raw.archiveStatus || ARCHIVE_STATUS.ACTIVE,
       receivables: Array.isArray(raw.receivables)
         ? raw.receivables.map((r: Receivable) => ({ ...r, status: deriveReceivableStatus(r) }))
         : [],
@@ -2494,7 +2975,16 @@ ${receivableLines}
       contractNo: incomingContractNo || undefined,
       contactPerson: raw.contactPerson,
       paymentMethod: raw.paymentMethod,
-      remarks: raw.remarks
+      remarks: raw.remarks,
+      serviceItems: normalizedServiceItems.map(item => ({
+        name: item.name,
+        rawName: item.rawName,
+        catalogId: item.catalogId,
+        standardName: item.standardName,
+        category: item.category,
+        deliveryMode: item.deliveryMode,
+        workflowTemplateId: item.workflowTemplateId
+      }))
     };
     setContracts(prev => [newContract, ...prev]);
     if (createProject) {
@@ -2504,16 +2994,22 @@ ${receivableLines}
         addProject({
           name: `${newContract.customerName} ${newContract.title}`,
           contractRef: ref,
+          customerId: linkedCustomerId,
           projectAmount: newContract.amount || 0,
           manager: '待指派',
-          projectCategory: 'Delivery'
+          projectCategory: 'Delivery',
+          sourceType: 'contract',
+          sourceRef: ref,
+          projectMode: 'delivery',
+          initialServiceItems: normalizedServiceItems,
+          disableDefaultTemplateTasks: normalizedServiceItems.length > 0
         });
       }
     }
     if (fromLeadId) {
       updateLead(fromLeadId, { status: Status.Converted });
     }
-    return { ok: true };
+    return { ok: true, autoCreatedCustomerId, autoCreatedCustomerName };
   };
 
   const deleteContract = (id: string) => {
@@ -2521,7 +3017,56 @@ ${receivableLines}
   };
 
   const archiveContract = (id: string) => {
-    setContracts(prev => prev.map(c => c.id === id ? { ...c, archiveStatus: 'archived' } : c));
+    setContracts(prev => prev.map(c => c.id === id ? { ...c, archiveStatus: ARCHIVE_STATUS.ARCHIVED } : c));
+  };
+
+  const addContractAttachment = (contractId: string, attachment: ContractAttachment) => {
+    if (!contractId || !attachment?.id) return { ok: false, reason: '参数错误' };
+    let updated = false;
+    setContracts(prev => prev.map(c => {
+      if (c.id !== contractId) return c;
+      const nextAttachments = Array.isArray(c.attachments) ? c.attachments : [];
+      if (nextAttachments.some(a => a.id === attachment.id)) return c;
+      updated = true;
+      return { ...c, attachments: [...nextAttachments, attachment] };
+    }));
+    return updated ? { ok: true } : { ok: false, reason: '合同不存在' };
+  };
+
+  const removeContractAttachment = (contractId: string, attachmentId: string) => {
+    if (!contractId || !attachmentId) return { ok: false, reason: '参数错误' };
+    let updated = false;
+    setContracts(prev => prev.map(c => {
+      if (c.id !== contractId) return c;
+      const nextAttachments = Array.isArray(c.attachments) ? c.attachments : [];
+      const filtered = nextAttachments.filter(a => a.id !== attachmentId);
+      if (filtered.length === nextAttachments.length) return c;
+      updated = true;
+      return { ...c, attachments: filtered };
+    }));
+    return updated ? { ok: true } : { ok: false, reason: '附件不存在或合同不存在' };
+  };
+
+  const bindContractToCustomer = (contractId: string, customerId: string) => {
+    const targetCustomer = customers.find(c => c.id === customerId);
+    if (!targetCustomer) return { ok: false, reason: '客户不存在' };
+
+    let linkedContract: Contract | null = null;
+    setContracts(prev => prev.map(contract => {
+      if (contract.id !== contractId) return contract;
+      linkedContract = { ...contract, customerId };
+      return linkedContract;
+    }));
+
+    if (!linkedContract) return { ok: false, reason: '合同不存在' };
+
+    setProjects(prev => prev.map(project => {
+      if (project.contractRef !== linkedContract!.id && project.contractRef !== linkedContract!.contractNo) return project;
+      if (project.customerId === customerId) return project;
+      return { ...project, customerId };
+    }));
+
+    return { ok: true };
   };
 
   const addAuditIssue = (issue: Omit<AuditIssue, 'id'>) => {
@@ -2755,9 +3300,10 @@ ${receivableLines}
 
     if (paidCompleted && updatedContract) {
       const relatedProject = projects.find(p => p.contractRef === updatedContract!.id || (updatedContract!.contractNo && p.contractRef === updatedContract!.contractNo));
+      const customerByContractId = updatedContract.customerId ? customers.find(c => c.id === updatedContract.customerId) : undefined;
       const customerByProjectId = relatedProject?.customerId ? customers.find(c => c.id === relatedProject.customerId) : undefined;
-      const customerByName = customers.find(c => normalizeText(c.name) === normalizeText(updatedContract!.customerName));
-      const targetCustomer = customerByProjectId || customerByName;
+      const customerByName = findCustomerByName(updatedContract!.customerName);
+      const targetCustomer = customerByContractId || customerByProjectId || customerByName;
       if (targetCustomer) {
         const alreadyCounted = (targetCustomer.pdcaPaidContractIds || []).includes(updatedContract.id);
         const nowStr = new Date().toISOString().split('T')[0];
@@ -2904,7 +3450,10 @@ ${receivableLines}
     }
   };
 
-  useEffect(() => { dataService.set('aiDecisionLogs_v1', aiDecisionLogs); }, [aiDecisionLogs]);
+  useEffect(() => {
+    dataService.set('ai_decision_logs_v1', aiDecisionLogs);
+    dataService.set('aiDecisionLogs_v1', aiDecisionLogs);
+  }, [aiDecisionLogs]);
 
   const addReminder = (r: any) => {
     const rawLinkType = r?.linkType;
@@ -2977,15 +3526,15 @@ ${receivableLines}
 
   return (
     <AppContext.Provider value={{
-      leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, vendors, marketSignals,
+      leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, vendors, marketSignals, projectWorkLogs,
       currentUser: normalizedCurrentUser, userProfiles, switchUser, updateUserProfile, addUserProfile, deleteUserProfile,
-      activeRole, setActiveRole, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
-      addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem,
+      activeRole, setActiveRole, activePersona, availablePersonas, resolveDashboardPersona, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
+      addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, updateProjectWorkLog, deleteProjectWorkLog,
       createFollowUpProjectFromLead,
       createFollowUpProjectFromCustomer,
       addLead, updateLead, addLeadFollowUp,
       addCustomer, addCustomerFollowUp,
-      addContract, deleteContract, archiveContract,
+      addContract, bindContractToCustomer, deleteContract, archiveContract, addContractAttachment, removeContractAttachment,
       addAuditIssue, updateAuditIssue,
       rejectReceivable, importSettlements, updateSettlementStatus,
       deleteKnowledgeDoc, updateKnowledgeDoc, backfillPdcaForPaidContracts,
