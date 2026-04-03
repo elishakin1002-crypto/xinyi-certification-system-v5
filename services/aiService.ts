@@ -204,14 +204,18 @@ class AIService {
   private async routeRequest<T>(
     endpoint: string,
     payload: any,
-    fallbackMethod: () => Promise<T>
+    fallbackMethod: () => Promise<T>,
+    options?: { timeoutMs?: number; allowAbortFallback?: boolean }
   ): Promise<T> {
     const now = Date.now();
     if (now < this.backendState.disabledUntil) return fallbackMethod();
 
     try {
       const controller = new AbortController();
-      const timeoutMs = this.resolveBackendTimeout(endpoint, payload);
+      const overrideTimeout = Number(options?.timeoutMs);
+      const timeoutMs = Number.isFinite(overrideTimeout) && overrideTimeout >= 1000
+        ? overrideTimeout
+        : this.resolveBackendTimeout(endpoint, payload);
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       const response = await fetch(`${this.backendUrl}${endpoint}`, {
@@ -224,18 +228,23 @@ class AIService {
 
       const raw = await response.text();
       const data = raw ? JSON.parse(raw) : {};
+      const hasCode = Number.isFinite(Number(data?.code));
+      const envelopeOk = hasCode ? Number(data.code) === 0 : Boolean(data?.ok ?? true);
+      const message = String(data?.message || data?.error || '');
 
-      if (!response.ok) {
-        const message = data?.error || `Backend Status: ${response.status}`;
-        throw new Error(message);
+      if (!response.ok || !envelopeOk) {
+        throw new Error(message || `Backend Status: ${response.status}`);
       }
 
       this.backendState.consecutiveFailures = 0;
       this.backendState.disabledUntil = 0;
-      return data as T;
+      return ((data && typeof data?.data === 'object') ? data.data : data) as T;
     } catch (error) {
       const isAbort = (error as any)?.name === 'AbortError';
       if (isAbort) {
+        if (options?.allowAbortFallback) {
+          return fallbackMethod();
+        }
         throw new Error(`AI 请求超时（${endpoint}）`);
       }
 
@@ -287,7 +296,11 @@ class AIService {
     return result.text || '';
   }
 
-  async generateJSON(modelName: string, input: string | any[], options?: { inlineData?: any }): Promise<any> {
+  async generateJSON(
+    modelName: string,
+    input: string | any[],
+    options?: { inlineData?: any; timeoutMs?: number; allowAbortFallback?: boolean }
+  ): Promise<any> {
     const model = this.normalizeModelName(modelName, this.defaultModel);
     const parts = typeof input === 'string' ? [{ text: input }] : (Array.isArray(input) ? [...input] : [input]);
     if (options?.inlineData) {
@@ -319,7 +332,11 @@ class AIService {
         prompt: history,
         config: { responseMimeType: 'application/json' }
       },
-      fallback
+      fallback,
+      {
+        timeoutMs: options?.timeoutMs,
+        allowAbortFallback: Boolean(options?.allowAbortFallback)
+      }
     );
 
     return typeof result.text === 'string' ? this.cleanAndParseJSON(result.text) : result;

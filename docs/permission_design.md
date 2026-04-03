@@ -22,7 +22,7 @@ AI 执行任何动作（execute_action）前，必须通过 **三层校验**：
 | **TASK_CREATE** | 创建任务 | ✅ | ✅ | ✅ (仅自己项目) | ❌ |
 | **TASK_COMPLETE** | 完成任务 | ✅ | ✅ | ✅ (仅自己负责) | ❌ |
 | **TASK_DELETE** | 删除任务 | ✅ | ✅ | ❌ | ❌ |
-| **CONTRACT_CREATE** | 录入合同 | ✅ | ✅ | ❌ | ❌ |
+| **CONTRACT_CREATE** | 录入合同 | ✅ | ✅ | ✅（仅自己录入或关联自己负责项目） | ❌ |
 | **CONTRACT_VIEW_AMOUNT** | 查看合同金额 | ✅ | ✅ | ❌ | ✅ |
 | **PAYMENT_CONFIRM** | 确认回款 | ❌ | ❌ | ❌ | ✅ |
 | **CUSTOMER_CREATE** | 录入客户 | ✅ | ✅ | ✅ | ❌ |
@@ -37,7 +37,7 @@ AI 执行任何动作（execute_action）前，必须通过 **三层校验**：
 1. **CONSULTANT (咨询师)**
    - **读**：只能查看自己是 `manager` 或 `tasks.owner` 的项目。
    - **写**：只能操作自己负责的任务（`task.owner === currentUser`）。
-   - **禁**：不可见其他咨询师的项目详情、合同金额。
+   - **合同**：仅可访问“自己录入的合同”或“与自己负责项目关联的合同”；不可见其他咨询师合同金额。
 
 2. **MANAGER (交付负责人)**
    - **读/写**：所有 `projectCategory === 'Delivery'` 的项目。

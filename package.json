@@ -9,6 +9,7 @@
     "dev": "node scripts/dev-all.mjs",
     "dev:all": "node scripts/dev-all.mjs",
     "health:stack": "node scripts/check-stack.mjs",
+    "health:stability": "node scripts/stability-smoke.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

@@ -10,6 +10,7 @@ import { intelService } from '../services/intelService';
 import { stateSyncService } from '../services/stateSyncService';
 import { serializeWorldState } from '../services/dataSerializer';
 import { buildDashboardMetrics, DashboardMetricsBundle } from '../services/dashboardMetrics';
+import { seedDemoData } from '../services/demoDataSeeder';
 import { ARCHIVE_STATUS, MARKET_SIGNAL_STATUS, TASK_STATUS, WORK_LOG_SOURCE } from '../src/constants/status.ts';
 import { inferProjectMeta, resolveProjectCapabilities } from '../src/utils/projectCapabilities';
 import { findDuplicateKnowledgeDoc } from '../src/utils/knowledgeDedupe';
@@ -92,7 +93,7 @@ export interface AppContextType {
   addContractAttachment: (contractId: string, attachment: ContractAttachment) => { ok: boolean; reason?: string };
   removeContractAttachment: (contractId: string, attachmentId: string) => { ok: boolean; reason?: string };
 
-  addAuditIssue: (issue: Omit<AuditIssue, 'id'>) => void;
+  addAuditIssue: (issue: Omit<AuditIssue, 'id'>) => string;
   updateAuditIssue: (id: string, updates: Partial<AuditIssue>) => void;
 
   rejectReceivable: (contractId: string, receivableId: string, reason: string) => void;
@@ -124,7 +125,7 @@ export interface AppContextType {
   // 原有业务保全
   toggleReceivableStatus: (contractId: string, receivableId: string) => void;
   generateProjectSettlement: (p: Project, a?: number, n?: string) => void;
-  addReminder: (reminder: Omit<Reminder, 'id' | 'isRead'>) => void;
+  addReminder: (reminder: Omit<Reminder, 'id' | 'isRead'> & { id?: string }) => void;
   dismissReminder: (id: string) => void;
   addKnowledgeDoc: (doc: KnowledgeDoc) => Promise<{ ok: boolean; reason?: string; duplicateId?: string }>;
   updateCustomer: (id: string, updates: Partial<Customer>) => void;
@@ -188,6 +189,10 @@ const normalizePersona = (value?: string | null): DashboardPersona | null => {
 };
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [demoSeedVersion] = useState(() => {
+    seedDemoData();
+    return 1;
+  });
   const [leads, setLeads] = useState<Lead[]>(() => dataService.get('leads_v8', MOCK_LEADS));
   const [customers, setCustomers] = useState<Customer[]>(() => dataService.get('customers_v8', MOCK_CUSTOMERS));
   const [contracts, setContracts] = useState<Contract[]>(() => dataService.get('contracts_v8', MOCK_CONTRACTS));
@@ -237,6 +242,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isAnalyzingStrategy, setIsAnalyzingStrategy] = useState<boolean>(false);
   const [strategicTasks, setStrategicTasks] = useState<StrategicTask[]>(() => dataService.get('strategic_tasks_v1', dataService.get('strategicTasks_v1', [])));
   const [backendReadReadyUserId, setBackendReadReadyUserId] = useState<string>('');
+  void demoSeedVersion;
 
   const [userProfiles, setUserProfiles] = useState<UserProfile[]>(() => {
     const stored = dataService.get<UserProfile[] | null>('user_profiles_v1', null);
@@ -663,6 +669,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         customerName = leads.find(l => l.id === linkId)?.company;
       } else if (linkType === 'contract') {
         customerName = contracts.find(c => c.id === linkId || c.contractNo === linkId)?.customerName;
+      } else if (linkType === 'audit') {
+        const issue = auditIssues.find(x => x.id === linkId);
+        const linkedProject = issue?.projectId ? projects.find(x => x.id === issue.projectId) : undefined;
+        const linkedContract = issue?.contractId
+          ? contracts.find(c => c.id === issue.contractId)
+          : contracts.find(c => c.id === issue?.contractRef || c.contractNo === issue?.contractRef);
+        const linkedCustomer = issue?.customerId ? customers.find(c => c.id === issue.customerId) : undefined;
+        projectId = linkedProject?.id;
+        projectName = linkedProject?.name;
+        customerName = linkedCustomer?.name || linkedContract?.customerName || issue?.customerName;
       } else if (linkType === 'intel') {
         projectName = '情报雷达';
       }
@@ -689,7 +705,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (sa !== sb) return sb - sa;
       return parseDateKey(b.latestDate) - parseDateKey(a.latestDate);
     });
-  }, [visibleReminders, projects, contracts, customers, leads]);
+  }, [visibleReminders, projects, contracts, customers, leads, auditIssues]);
 
   useEffect(() => {
     if (templatesNormalized) return;
@@ -1438,7 +1454,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             date: today,
             type: 'expire',
             linkId: issue.id,
-            linkType: 'customer',
+            linkType: 'audit',
             ...buildReminderTarget(targets, fallbackRoles)
           });
         }
@@ -1453,7 +1469,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             date: today,
             type: 'risk',
             linkId: issue.id,
-            linkType: 'customer',
+            linkType: 'audit',
             ...buildReminderTarget(targets, fallbackRoles)
           });
         }
@@ -3069,13 +3085,103 @@ ${receivableLines}
     return { ok: true };
   };
 
+  const resolveAuditLinkedProject = (issue: Partial<AuditIssue>) => {
+    if (issue.projectId) {
+      const direct = projects.find(project => project.id === issue.projectId);
+      if (direct) return direct;
+    }
+
+    const contract = issue.contractId
+      ? contracts.find(item => item.id === issue.contractId)
+      : contracts.find(item => item.id === issue.contractRef || item.contractNo === issue.contractRef);
+    if (!contract) return null;
+
+    return projects.find(project => project.contractRef === contract.id || (contract.contractNo && project.contractRef === contract.contractNo)) || null;
+  };
+
+  const buildAuditRectificationTaskTitle = (issue: Partial<AuditIssue>) => {
+    const summary = String(issue.findings || '不符合项').replace(/\s+/g, ' ').trim().slice(0, 24) || '不符合项';
+    return `整改闭环｜${issue.customerName || '客户'}｜${summary}`;
+  };
+
+  const syncAuditRectificationTask = (issue: AuditIssue, previousIssue?: AuditIssue) => {
+    const targetProject = resolveAuditLinkedProject(issue);
+    const previousProjectId = previousIssue?.projectId || resolveAuditLinkedProject(previousIssue || {})?.id;
+    const previousTaskId = previousIssue?.rectificationTaskId;
+    let nextTaskId = issue.rectificationTaskId || previousTaskId;
+    const shouldCompleteTask = issue.status === 'Closed';
+    const nextDeadline = String(issue.deadline || '').trim() || new Date().toISOString().split('T')[0];
+    const nextOwner = String(issue.auditor || targetProject?.manager || normalizedCurrentUser.name || '待指派').trim() || '待指派';
+    const nextTitle = buildAuditRectificationTaskTitle(issue);
+
+    setProjects(prev => prev.map(project => {
+      let tasks = Array.isArray(project.tasks) ? [...project.tasks] : [];
+      let changed = false;
+
+      if (previousTaskId && previousProjectId && project.id === previousProjectId && (!targetProject || targetProject.id !== previousProjectId)) {
+        const filtered = tasks.filter(task => task.id !== previousTaskId);
+        if (filtered.length !== tasks.length) {
+          tasks = filtered;
+          changed = true;
+        }
+      }
+
+      if (targetProject && project.id === targetProject.id) {
+        const existingTaskIndex = nextTaskId ? tasks.findIndex(task => task.id === nextTaskId) : -1;
+        const taskPayload = {
+          title: nextTitle,
+          deadline: nextDeadline,
+          status: shouldCompleteTask ? 'Completed' as const : 'Pending' as const,
+          priority: issue.severity === 'Major' ? 'High' as const : 'Medium' as const,
+          category: 'Core' as const,
+          owner: nextOwner
+        };
+
+        if (existingTaskIndex >= 0) {
+          tasks[existingTaskIndex] = { ...tasks[existingTaskIndex], ...taskPayload };
+          changed = true;
+        } else {
+          nextTaskId = `T-AUD-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+          tasks.push({ id: nextTaskId, ...taskPayload });
+          changed = true;
+        }
+      }
+
+      if (!changed) return project;
+      return { ...project, tasks, progress: calculateProjectProgress(tasks) };
+    }));
+
+    return {
+      projectId: targetProject?.id,
+      rectificationTaskId: nextTaskId
+    };
+  };
+
   const addAuditIssue = (issue: Omit<AuditIssue, 'id'>) => {
-    const newIssue: AuditIssue = { ...issue, id: `AUD-${Date.now()}` };
+    const draftIssue: AuditIssue = { ...issue, id: `AUD-${Date.now()}` };
+    const synced = syncAuditRectificationTask(draftIssue);
+    const newIssue: AuditIssue = {
+      ...draftIssue,
+      projectId: draftIssue.projectId || synced.projectId,
+      rectificationTaskId: synced.rectificationTaskId || draftIssue.rectificationTaskId
+    };
     setAuditIssues(prev => [newIssue, ...prev]);
+    return newIssue.id;
   };
 
   const updateAuditIssue = (id: string, updates: Partial<AuditIssue>) => {
-    setAuditIssues(prev => prev.map(i => i.id === id ? { ...i, ...updates } : i));
+    const existing = auditIssues.find(issue => issue.id === id);
+    if (!existing) return;
+
+    const mergedIssue: AuditIssue = { ...existing, ...updates };
+    const synced = syncAuditRectificationTask(mergedIssue, existing);
+    const nextIssue: AuditIssue = {
+      ...mergedIssue,
+      projectId: mergedIssue.projectId || synced.projectId || existing.projectId,
+      rectificationTaskId: synced.rectificationTaskId || mergedIssue.rectificationTaskId || existing.rectificationTaskId
+    };
+
+    setAuditIssues(prev => prev.map(issue => issue.id === id ? nextIssue : issue));
   };
 
   const rejectReceivable = (contractId: string, receivableId: string, reason: string) => {
@@ -3461,8 +3567,10 @@ ${receivableLines}
 
     if (!rawLinkType) return;
 
-    if (rawLinkType === 'intel') {
-      const id = r?.id || (rawLinkId ? `REM-INTEL-${rawLinkId}` : `REM-INTEL-${Date.now()}`);
+    if (rawLinkType === 'intel' || rawLinkType === 'audit') {
+      if (!rawLinkId) return;
+      const prefix = rawLinkType === 'intel' ? 'REM-INTEL' : 'REM-AUDIT';
+      const id = r?.id || `${prefix}-${rawLinkId}`;
       upsertSystemReminder(id, r);
       return;
     }
@@ -3490,7 +3598,7 @@ ${receivableLines}
 
     if (rawLinkType === 'project' && !rawLinkId) return;
 
-    upsertSystemReminder(`REM-${Date.now()}`, r);
+    upsertSystemReminder(r?.id || `REM-${Date.now()}`, r);
   };
   const dismissReminder = (id: string) => setReminders(prev => prev.filter(r => r.id !== id));
   const addKnowledgeDoc = async (doc: any) => appendKnowledgeDoc(doc);

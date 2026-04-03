@@ -1,15 +1,17 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { aiService } from '../services/aiService'; 
 import { IngestionUploader } from '../components/IngestionUploader';
 import { Receivable, Lead, Status, Contract, ContractAttachment, KnowledgeDoc } from '../types';
 import { extractTextFromDocx, extractTextFromPdf, renderPdfPagesAsImages } from '../services/documentParsers';
+import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
+import { readGlobalSearchQuery } from '../src/modules/global_search';
 
 const Contracts = () => {
-  const { contracts, addContract, deleteContract, archiveContract, projects, addProject, addKnowledgeDoc, checkActionPermission } = useApp();
+  const { contracts, customers, addContract, bindContractToCustomer, deleteContract, archiveContract, projects, addProject, addKnowledgeDoc, checkActionPermission, activeRole, currentUser, addContractAttachment, removeContractAttachment } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -17,21 +19,158 @@ const Contracts = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'risk' | 'archived'>('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [dashboardFocus, setDashboardFocus] = useState<any>(null);
+  const [dashboardFocusLabel, setDashboardFocusLabel] = useState('');
+  const [customerScope, setCustomerScope] = useState<{ customerId: string; customerName: string }>({ customerId: '', customerName: '' });
   
   const [docContent, setDocContent] = useState<any[] | null>(null);
   const [isAnalyzingRisk, setIsAnalyzingRisk] = useState(false);
   const [riskAssessment, setRiskAssessment] = useState<{ level: 'Low' | 'Medium' | 'High'; score: number; summary: string; issues: Array<{ category: string; description: string; severity: 'High' | 'Medium' | 'Low' }>; } | null>(null);
 
   const [formData, setFormData] = useState({
-      title: '', contractNo: '', customerName: '', contactPerson: '', amount: '',
+      title: '', contractNo: '', customerId: '', customerName: '', contactPerson: '', amount: '',
       signDate: new Date().toISOString().split('T')[0], serviceLine: 'ISO 标准',
       paymentMethod: '', remarks: '', createProject: true
   });
   
   const [extractedReceivables, setExtractedReceivables] = useState<Receivable[]>([]);
+  const [extractedServiceItems, setExtractedServiceItems] = useState<Array<any>>([]);
   const [fileAttachments, setFileAttachments] = useState<ContractAttachment[]>([]);
   const [fromLeadId, setFromLeadId] = useState<string | null>(null);
   const [originalLead, setOriginalLead] = useState<Lead | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachmentTargetContractId, setAttachmentTargetContractId] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<null | { name: string; url: string; kind: 'pdf' | 'image' }>(null);
+
+  const formatSize = (bytes: number) => {
+    const n = Number(bytes || 0);
+    if (!Number.isFinite(n) || n <= 0) return '0 KB';
+    const kb = n / 1024;
+    if (kb < 1024) return `${kb.toFixed(1)} KB`;
+    return `${(kb / 1024).toFixed(2)} MB`;
+  };
+
+  const defaultFormState = () => ({
+    title: '',
+    contractNo: '',
+    customerId: '',
+    customerName: '',
+    contactPerson: '',
+    amount: '',
+    signDate: new Date().toISOString().split('T')[0],
+    serviceLine: 'ISO 标准',
+    paymentMethod: '',
+    remarks: '',
+    createProject: true
+  });
+
+  const resetContractDraft = () => {
+    setFormData(defaultFormState());
+    setExtractedReceivables([]);
+    setExtractedServiceItems([]);
+    setFileAttachments([]);
+    setFromLeadId(null);
+    setOriginalLead(null);
+    setRiskAssessment(null);
+    setDocContent(null);
+    setIsUploading(false);
+    setIsAnalyzingRisk(false);
+  };
+
+  const openContractModal = () => {
+    const perm = checkActionPermission('CONTRACT_CREATE', { owner: currentUser.name });
+    if (!perm.allowed) {
+      alert(`权限拒绝：${perm.reason || '无权限'}`);
+      return;
+    }
+    resetContractDraft();
+    setIsModalOpen(true);
+  };
+
+  const closeContractModal = () => {
+    setIsModalOpen(false);
+    resetContractDraft();
+  };
+
+  const canEditContractAttachments = (contract: Contract) => {
+    if (activeRole === 'ADMIN' || activeRole === 'MANAGER') return true;
+    if (activeRole !== 'CONSULTANT') return false;
+    const ownByContract = String(contract.owner || '').trim() === String(currentUser.name || '').trim();
+    if (ownByContract) return true;
+    const linkedProject = projects.find(p => p.contractRef === contract.id || p.contractRef === contract.contractNo);
+    const ownByProject = Boolean(
+      linkedProject &&
+      (linkedProject.manager === currentUser.name ||
+        (linkedProject.tasks || []).some((t: any) => t.owner === currentUser.name))
+    );
+    return ownByProject;
+  };
+
+  const openAttachmentPickerForContract = (e: React.MouseEvent, contractId: string) => {
+    e.stopPropagation();
+    const contract = contracts.find(c => c.id === contractId);
+    if (!contract) return;
+    if (!canEditContractAttachments(contract)) {
+      alert('权限拒绝：您无法为该合同增删电子档案。');
+      return;
+    }
+    setAttachmentTargetContractId(contractId);
+    window.setTimeout(() => attachmentInputRef.current?.click(), 0);
+  };
+
+  const handleAttachmentPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const contractId = attachmentTargetContractId;
+    if (!contractId) return;
+    const attachment: ContractAttachment = {
+      id: `A-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+      name: file.name,
+      size: formatSize(file.size),
+      type: file.name.split('.').pop() || 'file',
+      uploadDate: new Date().toISOString().split('T')[0],
+      url: URL.createObjectURL(file)
+    };
+    const res = addContractAttachment(contractId, attachment);
+    if (!res.ok) alert(res.reason || '附件添加失败');
+    setAttachmentTargetContractId(null);
+    e.target.value = '';
+  };
+
+  const normalizeNameKey = (val: unknown) =>
+    String(val || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[（(].*?[）)]/g, '')
+      .replace(/股份有限公司|有限责任公司|有限公司|集团|公司/g, '')
+      .replace(/[\s\-_/]/g, '');
+
+  const sortedCustomers = useMemo(
+    () => [...customers].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN')),
+    [customers]
+  );
+
+  const findCustomerByName = (name: string) => {
+    const key = normalizeNameKey(name);
+    if (!key) return undefined;
+    return customers.find(c => normalizeNameKey(c.name) === key);
+  };
+
+  const applyCustomerSelection = (customerId: string) => {
+    if (!customerId) {
+      setFormData(prev => ({ ...prev, customerId: '' }));
+      return;
+    }
+    const found = customers.find(c => c.id === customerId);
+    if (!found) return;
+    setFormData(prev => ({
+      ...prev,
+      customerId,
+      customerName: found.name || prev.customerName,
+      contactPerson: prev.contactPerson || found.contactPerson || ''
+    }));
+  };
 
   const compressImage = async (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -64,28 +203,62 @@ const Contracts = () => {
   };
 
   useEffect(() => {
-      if (location.state) {
-          if (location.state.openModal) {
-              setIsModalOpen(true);
-              const lead = location.state.fromLead;
-              if (lead) {
-                  setOriginalLead(lead);
-                  setFormData(prev => ({
-                      ...prev, customerName: lead.company, contactPerson: lead.name, title: `${lead.company} - 服务合同`
-                  }));
-                  setFromLeadId(lead.id);
-              }
+      const state: any = location.state || {};
+      if (state.openModal) {
+          resetContractDraft();
+          setIsModalOpen(true);
+          const lead = state.fromLead;
+          if (lead) {
+              setOriginalLead(lead);
+              const matched = findCustomerByName(lead.company || '');
+              setFormData(prev => ({
+                  ...prev,
+                  customerId: matched?.id || prev.customerId,
+                  customerName: lead.company,
+                  contactPerson: lead.name,
+                  title: `${lead.company} - 服务合同`
+              }));
+              setFromLeadId(lead.id);
           }
-          if (location.state.openDetailId) {
-              setExpandedContract(location.state.openDetailId);
-              setTimeout(() => {
-                  const element = document.getElementById(`contract-row-${location.state.openDetailId}`);
-                  if (element) element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              }, 100);
+          const fromCustomer = state.fromCustomer;
+          if (fromCustomer?.id || fromCustomer?.name) {
+              setFromLeadId(null);
+              setOriginalLead(null);
+              setFormData(prev => ({
+                  ...prev,
+                  customerId: String(fromCustomer.id || prev.customerId || ''),
+                  customerName: String(fromCustomer.name || prev.customerName || ''),
+                  contactPerson: String(fromCustomer.contactPerson || prev.contactPerson || ''),
+                  title: prev.title || `${String(fromCustomer.name || '客户')} - 服务合同`
+              }));
           }
+      }
+      if (state.dashboardFocus?.type) {
+          setDashboardFocus(state.dashboardFocus);
+          if (state.dashboardFocus.type === 'signed_month') setDashboardFocusLabel(state.dashboardFocus.owner === 'me' ? '我本月签约合同' : '本月签约合同');
+          else if (state.dashboardFocus.type === 'due_days') setDashboardFocusLabel(`未来 ${state.dashboardFocus.days || 7} 天到期合同`);
+          else if (state.dashboardFocus.type === 'pending_sign') setDashboardFocusLabel(state.dashboardFocus.owner === 'me' ? '我的待签合同' : '待签合同');
+      }
+      if (state.openDetailId) {
+          setExpandedContract(state.openDetailId);
+          setTimeout(() => {
+              const element = document.getElementById(`contract-row-${state.openDetailId}`);
+              if (element) element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 100);
+      }
+      if (state.openModal || state.openDetailId || state.dashboardFocus) {
           window.history.replaceState({}, document.title);
       }
-  }, [location]);
+  }, [location.state]);
+
+  useEffect(() => {
+    const q = readGlobalSearchQuery(location.search);
+    setSearchTerm(q);
+    const params = new URLSearchParams(String(location.search || ''));
+    const scopedCustomerId = String(params.get('customerId') || '').trim();
+    const scopedCustomerName = String(params.get('customer') || '').trim();
+    setCustomerScope({ customerId: scopedCustomerId, customerName: scopedCustomerName });
+  }, [location.search]);
 
   useEffect(() => {
      setExtractedReceivables(prev => prev.map(r => {
@@ -97,12 +270,97 @@ const Contracts = () => {
   }, [formData.signDate]);
 
   const toggleExpand = (id: string) => setExpandedContract(expandedContract === id ? null : id);
-  const handleDelete = (e: React.MouseEvent, id: string, title: string) => { e.stopPropagation(); e.preventDefault(); setTimeout(() => { if (window.confirm(`确认要撤销/删除合同 "${title}" 吗？\n\n注意：\n1. 关联的项目将被删除\n2. 若来自线索，线索状态将回滚为“跟进中”`)) { deleteContract(id); } }, 50); };
-  const handleArchive = (e: React.MouseEvent, id: string, title: string) => { e.stopPropagation(); e.preventDefault(); setTimeout(() => { if (window.confirm(`确认要归档合同 "${title}" 吗？\n\n归档后，合同将移入历史库，不再显示在活跃列表中，但财务数据保留。`)) { archiveContract(id); } }, 50); };
+  const handleDelete = (e: React.MouseEvent, id: string, title: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!['ADMIN', 'MANAGER'].includes(activeRole)) {
+      alert('权限拒绝：仅管理员/交付负责人可撤销或删除合同。');
+      return;
+    }
+    setTimeout(() => {
+      if (window.confirm(`确认要撤销/删除合同 "${title}" 吗？\n\n注意：\n1. 关联的项目将被删除\n2. 若来自线索，线索状态将回滚为“跟进中”`)) {
+        deleteContract(id);
+      }
+    }, 50);
+  };
+  const handleArchive = (e: React.MouseEvent, id: string, title: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!['ADMIN', 'MANAGER'].includes(activeRole)) {
+      alert('权限拒绝：仅管理员/交付负责人可归档合同。');
+      return;
+    }
+    setTimeout(() => {
+      if (window.confirm(`确认要归档合同 "${title}" 吗？\n\n归档后，合同将移入历史库，不再显示在活跃列表中，但财务数据保留。`)) {
+        archiveContract(id);
+      }
+    }, 50);
+  };
   const getLinkedProject = (contract: Contract) => projects.find(p => p.contractRef === contract.id || p.contractRef === contract.contractNo);
-  const handleCreateProject = (e: React.MouseEvent, contract: Contract) => { e.stopPropagation(); if (window.confirm(`确认要为合同 "${contract.title}" 立项吗？\n\n系统将自动创建交付项目，您可以在“项目管理”中指派负责人。`)) { addProject({ id: `P-${Date.now()}`, name: `${contract.customerName} - ${contract.serviceLine}项目`, contractRef: contract.id, manager: '待指派', progress: 0, status: Status.Active, paymentStatus: 'unpaid', deadline: '2025-12-31', projectType: 'Self-Operated', settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' } }); alert("项目创建成功！"); } };
+  const handleCreateProject = (e: React.MouseEvent, contract: Contract) => {
+    e.stopPropagation();
+    const perm = checkActionPermission('PROJECT_CREATE');
+    if (!perm.allowed) {
+      alert(`权限拒绝：${perm.reason || '无权限'}`);
+      return;
+    }
+    if (!window.confirm(`确认要为合同 "${contract.title}" 立项吗？\n\n系统将自动创建交付项目，您可以在“项目管理”中指派负责人。`)) return;
+    const initialServiceItems = Array.isArray(contract.serviceItems)
+      ? contract.serviceItems.map(item => ({
+          name: item.standardName || item.name,
+          rawName: item.rawName || item.name,
+          catalogId: item.catalogId,
+          standardName: item.standardName || item.name,
+          category: item.category,
+          deliveryMode: item.deliveryMode,
+          workflowTemplateId: item.workflowTemplateId,
+          status: 'Pending' as const,
+          autoGenerateTasks: true
+        }))
+      : [];
+    addProject({
+      id: `P-${Date.now()}`,
+      name: `${contract.customerName} - ${contract.serviceLine}项目`,
+      contractRef: contract.id,
+      customerId: contract.customerId,
+      manager: '待指派',
+      progress: 0,
+      status: Status.Active,
+      paymentStatus: 'unpaid',
+      deadline: '2025-12-31',
+      projectType: 'Self-Operated',
+      settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' },
+      initialServiceItems,
+      disableDefaultTemplateTasks: initialServiceItems.length > 0
+    });
+    alert("项目创建成功！");
+  };
   const handleGoToProject = (e: React.MouseEvent) => { e.stopPropagation(); navigate('/projects'); }
-  const handlePreviewFile = (e: React.MouseEvent, file: ContractAttachment) => { e.stopPropagation(); e.preventDefault(); let targetUrl = file.url; if (!targetUrl) { const lowerType = file.type.toLowerCase(); const lowerName = file.name.toLowerCase(); if (lowerType === 'pdf' || lowerName.endsWith('.pdf')) { targetUrl = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'; } else if (['jpg', 'jpeg', 'png', 'webp', 'gif'].some(t => lowerType.includes(t) || lowerName.includes(t))) { targetUrl = 'https://via.placeholder.com/800x600?text=System+Demo+Image'; } else { alert(`【系统提示】\n模拟文件 "${file.name}" 无法在线预览。\n请上传真实文件以体验完整预览功能。`); return; } } if (targetUrl) { window.open(targetUrl, '_blank'); } };
+  const resolvePreviewTarget = (file: ContractAttachment): { kind: 'pdf' | 'image'; url: string } | null => {
+    const lowerType = String(file.type || '').toLowerCase();
+    const lowerName = String(file.name || '').toLowerCase();
+    const isPdf = lowerType === 'pdf' || lowerName.endsWith('.pdf');
+    const isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif'].some(t => lowerType.includes(t) || lowerName.includes(t));
+    const kind: 'pdf' | 'image' | null = isPdf ? 'pdf' : (isImage ? 'image' : null);
+    let url = file.url;
+    if (!url) {
+      if (isPdf) url = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
+      else if (isImage) url = 'https://via.placeholder.com/1200x800?text=System+Demo+Image';
+      else url = undefined;
+    }
+    if (!kind || !url) return null;
+    return { kind, url };
+  };
+  const handlePreviewFile = (e: React.MouseEvent, file: ContractAttachment) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const resolved = resolvePreviewTarget(file);
+    if (!resolved) {
+      alert(`【系统提示】\n文件 "${file.name}" 无法在线预览。\n请上传真实文件或使用下载功能。`);
+      return;
+    }
+    setPreviewFile({ name: file.name, url: resolved.url, kind: resolved.kind });
+  };
   
   const handleDownloadFile = (e: React.MouseEvent, file: ContractAttachment) => { 
       e.stopPropagation(); 
@@ -259,6 +517,32 @@ const Contracts = () => {
       return out;
   };
 
+  const normalizeServiceItemsPayload = (value: any): Array<any> => {
+      if (!Array.isArray(value)) return [];
+      const unique = new Set<string>();
+      const out: Array<any> = [];
+      value.forEach((entry: any) => {
+          const rawName = typeof entry === 'string'
+              ? entry
+              : (entry?.name || entry?.standardName || entry?.rawName || '');
+          const name = String(rawName || '').trim();
+          if (!name) return;
+          const key = name.toUpperCase().replace(/[\s/\\\-_.()（）]+/g, '');
+          if (!key || unique.has(key)) return;
+          unique.add(key);
+          out.push({
+              name,
+              rawName: String(entry?.rawName || name),
+              standardName: String(entry?.standardName || name),
+              catalogId: entry?.catalogId,
+              category: entry?.category,
+              deliveryMode: entry?.deliveryMode,
+              workflowTemplateId: entry?.workflowTemplateId
+          });
+      });
+      return out;
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -268,12 +552,13 @@ const Contracts = () => {
       setDocContent(null);
       // Prevent stale auto-filled values from previous uploads.
       setExtractedReceivables([]);
+      setExtractedServiceItems([]);
       setFormData(prev => ({
           ...prev,
           title: '',
           contractNo: '',
-          customerName: '',
-          contactPerson: '',
+          customerName: prev.customerId ? prev.customerName : '',
+          contactPerson: prev.customerId ? prev.contactPerson : '',
           amount: '',
           paymentMethod: '',
           remarks: '',
@@ -437,10 +722,12 @@ const Contracts = () => {
           }
 
           const extractedSignDate = finalSignDate || formData.signDate;
+          const matchedCustomer = findCustomerByName(finalCustomer || '');
           setFormData(prev => ({
               ...prev,
               title: finalTitle || prev.title || file.name.replace(/\.[^/.]+$/, ""),
               contractNo: finalContractNo || prev.contractNo,
+              customerId: matchedCustomer?.id || prev.customerId || '',
               customerName: finalCustomer || prev.customerName,
               contactPerson: finalContact || prev.contactPerson,
               amount: finalAmount ? String(finalAmount) : String(prev.amount || ''),
@@ -505,7 +792,7 @@ const Contracts = () => {
   const removeReceivable = (index: number) => { setExtractedReceivables(extractedReceivables.filter((_, i) => i !== index)); };
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const perm = checkActionPermission('CONTRACT_CREATE');
+    const perm = checkActionPermission('CONTRACT_CREATE', { owner: currentUser.name });
     if (!perm.allowed) {
       alert(`权限拒绝：${perm.reason || '无权限'}`);
       return;
@@ -513,6 +800,7 @@ const Contracts = () => {
     const result = addContract(
       {
         ...formData,
+        serviceItems: extractedServiceItems,
         receivables: extractedReceivables.length > 0 ? extractedReceivables : undefined,
         riskLevel: riskAssessment?.level || 'Low',
         attachments: fileAttachments
@@ -524,7 +812,7 @@ const Contracts = () => {
     if (!result.ok) {
       alert(result.reason || '录入失败');
       if (result.existingContractId) {
-        setIsModalOpen(false);
+        closeContractModal();
         setExpandedContract(result.existingContractId);
         setTimeout(() => {
           const element = document.getElementById(`contract-row-${result.existingContractId}`);
@@ -534,41 +822,152 @@ const Contracts = () => {
       return;
     }
 
-    setIsModalOpen(false);
-    setFormData({ title: '', contractNo: '', customerName: '', contactPerson: '', amount: '', signDate: new Date().toISOString().split('T')[0], serviceLine: 'ISO 标准', paymentMethod: '', remarks: '', createProject: true });
-    setExtractedReceivables([]);
-    setFileAttachments([]);
-    setFromLeadId(null);
-    setOriginalLead(null);
-    setRiskAssessment(null);
-    setDocContent(null);
+    if (result.autoCreatedCustomerId) {
+      alert(`已自动创建客户主体：${result.autoCreatedCustomerName || result.autoCreatedCustomerId}（待确认）。\n请前往客户管理补充联系人与工商信息，并确认合同是否生效。`);
+    }
+
+    closeContractModal();
   };
   const totalReceivables = extractedReceivables.reduce((sum, r) => sum + Number(r.amount), 0);
   const contractAmount = Number(formData.amount);
   const isTotalMatching = Math.abs(totalReceivables - contractAmount) < 1;
   const hasSubjectMismatch = fromLeadId && formData.customerName && originalLead?.company && originalLead.company !== formData.customerName;
   const calculateProgress = (contract: Contract) => { const paid = contract.receivables.filter(r => r.status === 'paid').reduce((acc, r) => acc + r.amount, 0); return contract.amount > 0 ? (paid / contract.amount) * 100 : 0; };
-  const filteredContracts = contracts.filter(c => { if (filterStatus === 'all') return c.archiveStatus !== 'archived'; if (filterStatus === 'archived') return c.archiveStatus === 'archived'; if (filterStatus === 'risk') return c.riskLevel === 'High' || c.status === Status.Risk; if (filterStatus === 'active') return c.archiveStatus !== 'archived' && c.status === Status.Active; return true; });
-  const createContractPerm = checkActionPermission('CONTRACT_CREATE');
+  const isMyContract = (contract: Contract) => {
+    const owner = String((contract as any).owner || '').trim();
+    if (owner) return owner === currentUser.name;
+    const linked = projects.find(p => p.contractRef === contract.id || p.contractRef === contract.contractNo);
+    return linked ? String(linked.manager || '') === currentUser.name : false;
+  };
+  const matchesDashboardFocus = (contract: Contract) => {
+    if (!dashboardFocus?.type) return true;
+    if (dashboardFocus.owner === 'me' && !isMyContract(contract)) return false;
+    if (dashboardFocus.contractId && contract.id !== dashboardFocus.contractId) return false;
+
+    if (dashboardFocus.type === 'signed_month') return String(contract.signDate || '').startsWith(String(dashboardFocus.month || ''));
+    if (dashboardFocus.type === 'due_days') {
+      return (contract.receivables || []).some(receivable => {
+        if (receivable.status === RECEIVABLE_STATUS.PAID) return false;
+        const diff = Math.ceil((new Date(String(receivable.dueDate || '')).getTime() - Date.now()) / (24 * 3600 * 1000));
+        return diff >= 0 && diff <= Number(dashboardFocus.days || 7);
+      });
+    }
+    if (dashboardFocus.type === 'pending_sign') return contract.status === Status.Pending;
+    return true;
+  };
+  const normalizedContractQuery = searchTerm.trim().toLowerCase();
+  const filteredContracts = contracts.filter(c => {
+    if (activeRole === 'CONSULTANT') {
+      const ownByContract = String(c.owner || '').trim() === String(currentUser.name || '').trim();
+      const linkedProject = projects.find(p => p.contractRef === c.id || p.contractRef === c.contractNo);
+      const ownByProject = Boolean(
+        linkedProject &&
+        (linkedProject.manager === currentUser.name ||
+          (linkedProject.tasks || []).some((t: any) => t.owner === currentUser.name))
+      );
+      if (!ownByContract && !ownByProject) return false;
+    }
+    const matchScopedCustomer = (() => {
+      if (customerScope.customerId) return c.customerId === customerScope.customerId;
+      if (customerScope.customerName) return normalizeNameKey(c.customerName) === normalizeNameKey(customerScope.customerName);
+      return true;
+    })();
+    if (!matchScopedCustomer) return false;
+
+    const isArchived = c.archiveStatus === ARCHIVE_STATUS.ARCHIVED;
+    const hasOverdueReceivable = (c.receivables || []).some(r => r.status === RECEIVABLE_STATUS.OVERDUE);
+    const isRiskContract = !isArchived && (c.riskLevel === 'High' || c.status === Status.Risk || hasOverdueReceivable);
+    const isActiveContract = !isArchived && !isRiskContract && c.status === Status.Active;
+
+    const statusMatched =
+      filterStatus === 'all'
+        ? !isArchived
+        : filterStatus === 'archived'
+          ? isArchived
+          : filterStatus === 'risk'
+            ? isRiskContract
+            : isActiveContract;
+
+    if (!statusMatched) return false;
+    if (!matchesDashboardFocus(c)) return false;
+    if (!normalizedContractQuery) return true;
+
+    const haystack = [
+      c.title,
+      c.contractNo,
+      c.customerName,
+      c.contactPerson,
+      c.serviceLine,
+      c.paymentMethod,
+      c.remarks
+    ]
+      .map(v => String(v || '').toLowerCase())
+      .join(' ');
+
+    return haystack.includes(normalizedContractQuery);
+  });
+  const createContractPerm = checkActionPermission('CONTRACT_CREATE', { owner: currentUser.name });
 
   return (
     <div className="p-6">
        <div className="mb-6 flex justify-between items-center">
            <div><h1 className="text-2xl font-bold text-gray-900">合同管理</h1><p className="text-sm text-gray-500 mt-1">管理合同详情、回款节点与执行状态</p></div>
            <button
-             onClick={() => {
-               if (!createContractPerm.allowed) {
-                 alert(`权限拒绝：${createContractPerm.reason || '无权限'}`);
-                 return;
-               }
-               setIsModalOpen(true);
-             }}
+             onClick={openContractModal}
              className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-700 flex items-center shadow-sm whitespace-nowrap transition-all active:scale-95"
            >
              <Plus className="w-4 h-4 mr-2" /> 录入合同
            </button>
       </div>
       <div className="flex space-x-2 mb-6 border-b border-gray-200 pb-1 overflow-x-auto no-scrollbar"> {[ { id: 'all', label: '全部活跃', icon: AlignLeft }, { id: 'active', label: '执行中', icon: Zap }, { id: 'risk', label: '风险预警', icon: ShieldAlert }, { id: 'archived', label: '已归档', icon: Archive }, ].map(tab => ( <button key={tab.id} onClick={() => setFilterStatus(tab.id as any)} className={`flex items-center px-4 py-2 text-sm font-bold border-b-2 transition-colors whitespace-nowrap uppercase tracking-wide ${ filterStatus === tab.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' }`} > <tab.icon className="w-4 h-4 mr-2" /> {tab.label} </button> ))} </div>
+      <div className="mb-4 space-y-2">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          <div className="relative w-full md:w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="搜索合同标题/编号/客户..."
+              className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 bg-white outline-none"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          {(customerScope.customerId || customerScope.customerName) && (
+            <div className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+              <span>客户视图：{customerScope.customerName || customers.find(c => c.id === customerScope.customerId)?.name || customerScope.customerId}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const params = new URLSearchParams(String(location.search || ''));
+                  params.delete('customerId');
+                  params.delete('customer');
+                  navigate(`${location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
+                }}
+                className="rounded bg-white px-2 py-0.5 text-indigo-600 hover:bg-indigo-100"
+              >
+                清除
+              </button>
+            </div>
+          )}
+        </div>
+        {dashboardFocusLabel && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+              工作台焦点：{dashboardFocusLabel}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setDashboardFocus(null);
+                setDashboardFocusLabel('');
+              }}
+              className="text-xs font-bold text-gray-500 hover:text-gray-700"
+            >
+              清除焦点
+            </button>
+          </div>
+        )}
+      </div>
       
       <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <table className="w-full text-sm text-left">
@@ -606,12 +1005,12 @@ const Contracts = () => {
                             </td> 
                             <td className="px-6 py-5"> 
                                 <div className="flex space-x-2"> 
-                                    {contract.archiveStatus === 'archived' ? ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-gray-100 text-gray-600 border border-gray-200"> <Archive className="w-3 h-3 mr-1" /> 已归档 </span> ) : ( <> {contract.riskLevel === 'High' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-red-100 text-red-700 border border-red-200"> <ShieldAlert className="w-3 h-3 mr-1" /> 高风险 </span> )} {contract.riskLevel === 'Medium' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-orange-100 text-orange-700 border border-orange-200"> <AlertTriangle className="w-3 h-3 mr-1" /> 中风险 </span> )} {contract.riskLevel === 'Low' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-green-100 text-green-700 border border-green-200"> <ShieldCheck className="w-3 h-3 mr-1" /> 正常 </span> )} </> )} 
+                                    {contract.archiveStatus === ARCHIVE_STATUS.ARCHIVED ? ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-gray-100 text-gray-600 border border-gray-200"> <Archive className="w-3 h-3 mr-1" /> 已归档 </span> ) : ( <> {contract.riskLevel === 'High' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-red-100 text-red-700 border border-red-200"> <ShieldAlert className="w-3 h-3 mr-1" /> 高风险 </span> )} {contract.riskLevel === 'Medium' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-orange-100 text-orange-700 border border-orange-200"> <AlertTriangle className="w-3 h-3 mr-1" /> 中风险 </span> )} {contract.riskLevel === 'Low' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-green-100 text-green-700 border border-green-200"> <ShieldCheck className="w-3 h-3 mr-1" /> 正常 </span> )} </> )} 
                                 </div> 
                             </td> 
                             <td className="px-6 py-5 text-center w-24" onClick={(e) => e.stopPropagation()}> 
                                 <div className="flex flex-col items-center justify-center space-y-2">
-                                {contract.archiveStatus !== 'archived' && ( 
+                                {contract.archiveStatus !== ARCHIVE_STATUS.ARCHIVED && ( 
                                     <> 
                                         {/* Top: Main Action */}
                                         {linkedProject ? ( 
@@ -640,14 +1039,53 @@ const Contracts = () => {
                             <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden"> 
                                 <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-gray-100"> 
                                     {/* Details */} 
-                                    <div className="flex-1 p-6"> <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center"> <AlignLeft className="w-4 h-4 mr-2" /> 基础信息 </h4> <div className="space-y-3 text-sm"> <div className="flex justify-between border-b border-gray-50 pb-2"> <span className="text-gray-500 font-bold text-xs uppercase">签订日期</span> <span className="text-gray-900 font-mono">{contract.signDate}</span> </div> <div className="flex justify-between border-b border-gray-50 pb-2"> <span className="text-gray-500 font-bold text-xs uppercase">支付方式</span> <span className="text-gray-900">{contract.paymentMethod || '-'}</span> </div> <div className="flex justify-between border-b border-gray-50 pb-2"> <span className="text-gray-500 font-bold text-xs uppercase">服务项目</span> <span className="text-gray-900 font-bold">{contract.serviceLine}</span> </div> <div className="pt-2"> <span className="text-gray-500 block mb-1 text-xs font-bold uppercase">备注</span> <p className="text-gray-700 bg-gray-50 p-3 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{contract.remarks || '无'}</p> </div> </div> </div> 
+                                    <div className="flex-1 p-6">
+                                      <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center">
+                                        <AlignLeft className="w-4 h-4 mr-2" /> 基础信息
+                                      </h4>
+                                      <div className="space-y-3 text-sm">
+                                        <div className="flex justify-between border-b border-gray-50 pb-2">
+                                          <span className="text-gray-500 font-bold text-xs uppercase">签订日期</span>
+                                          <span className="text-gray-900 font-mono">{contract.signDate}</span>
+                                        </div>
+                                        <div className="flex justify-between border-b border-gray-50 pb-2 items-center gap-3">
+                                          <span className="text-gray-500 font-bold text-xs uppercase shrink-0">客户绑定</span>
+                                          <select
+                                            value={contract.customerId || ''}
+                                            onChange={(event) => {
+                                              if (!event.target.value) return;
+                                              const result = bindContractToCustomer(contract.id, event.target.value);
+                                              if (!result.ok) alert(result.reason || '客户绑定失败');
+                                            }}
+                                            className="min-w-0 w-56 px-2 py-1 border border-gray-200 rounded-lg bg-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                          >
+                                            <option value="">未关联（请确认）</option>
+                                            {sortedCustomers.map(customer => (
+                                              <option key={customer.id} value={customer.id}>{customer.name}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                        <div className="flex justify-between border-b border-gray-50 pb-2">
+                                          <span className="text-gray-500 font-bold text-xs uppercase">支付方式</span>
+                                          <span className="text-gray-900">{contract.paymentMethod || '-'}</span>
+                                        </div>
+                                        <div className="flex justify-between border-b border-gray-50 pb-2">
+                                          <span className="text-gray-500 font-bold text-xs uppercase">服务项目</span>
+                                          <span className="text-gray-900 font-bold">{contract.serviceLine}</span>
+                                        </div>
+                                        <div className="pt-2">
+                                          <span className="text-gray-500 block mb-1 text-xs font-bold uppercase">备注</span>
+                                          <p className="text-gray-700 bg-gray-50 p-3 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{contract.remarks || '无'}</p>
+                                        </div>
+                                      </div>
+                                    </div> 
                                     {/* Receivables */} 
                                     <div className="flex-1 p-6 bg-gray-50/30"> <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center"> <Wallet className="w-4 h-4 mr-2" /> 回款计划 </h4> <div className="space-y-2"> {contract.receivables.map(r => ( <div key={r.id} className="flex justify-between text-sm border-b border-gray-100 pb-2 items-center"> <div className="flex items-center"> {r.status === 'paid' ? <CheckCircle className="w-3 h-3 text-green-500 mr-2" /> : <Clock className="w-3 h-3 text-yellow-500 mr-2" />} <span className="text-gray-900 font-bold text-sm">{r.node}</span> </div> <div className="text-right"> <div className="font-mono font-bold text-gray-900">¥{r.amount.toLocaleString()}</div> <div className="text-xs text-gray-400">{r.dueDate || '待定'}</div> </div> </div> ))} </div> </div> 
                                     {/* Archives */} 
                                     <div className="flex-1 p-6 bg-blue-50/10"> 
                                         <div className="flex justify-between items-center mb-4"> 
                                             <h4 className="text-sm font-black text-blue-800 uppercase tracking-widest flex items-center"> <Paperclip className="w-4 h-4 mr-2" /> 电子档案柜 </h4> 
-                                            <button className="text-xs font-bold text-blue-600 hover:underline flex items-center"> <Plus className="w-3 h-3 mr-1" /> 添加 </button> 
+                                            <button onClick={(e) => openAttachmentPickerForContract(e, contract.id)} className="text-xs font-bold text-blue-600 hover:underline flex items-center"> <Plus className="w-3 h-3 mr-1" /> 添加 </button> 
                                         </div> 
                                         <div className="space-y-3"> 
                                             {contract.attachments && contract.attachments.length > 0 ? contract.attachments.map(file => ( 
@@ -665,6 +1103,22 @@ const Contracts = () => {
                                                             title="存入知识中心"
                                                         >
                                                             <BookOpen className="w-4 h-4" />
+                                                        </button>
+                                                        <button
+                                                          onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            if (!canEditContractAttachments(contract)) {
+                                                              alert('权限拒绝：您无法删除该合同电子档案。');
+                                                              return;
+                                                            }
+                                                            if (!window.confirm(`确认要从该合同移除附件 "${file.name}" 吗？`)) return;
+                                                            const res = removeContractAttachment(contract.id, file.id);
+                                                            if (!res.ok) alert(res.reason || '移除失败');
+                                                          }}
+                                                          className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600 transition-colors"
+                                                          title="移除"
+                                                        >
+                                                          <Trash2 className="w-4 h-4" />
                                                         </button>
                                                     </div> 
                                                 </div> 
@@ -747,7 +1201,7 @@ const Contracts = () => {
                             {fromLeadId && <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded mr-2 font-bold uppercase">来自线索</span>}
                             录入合同
                         </h2>
-                        <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600"><X className="w-6 h-6" /></button>
+                        <button onClick={closeContractModal} className="text-gray-400 hover:text-gray-600"><X className="w-6 h-6" /></button>
                     </div>
                     
                     {/* AI Upload Section - Unified Base */}
@@ -798,18 +1252,25 @@ const Contracts = () => {
                                 }
                                 
                                 // Auto-fill form
+                                const serviceItemsFromAI = normalizeServiceItemsPayload(data.serviceItems);
+                                const normalizedServiceLine = serviceItemsFromAI.length > 0
+                                  ? serviceItemsFromAI.map(item => String(item.standardName || item.name)).join(' / ')
+                                  : (data.serviceLine || '');
+                                const matchedCustomer = findCustomerByName(String(data.customerName || ''));
                                 setFormData(prev => ({
                                     ...prev,
                                     title: data.title || prev.title,
                                     contractNo: data.contractNo || prev.contractNo,
+                                    customerId: matchedCustomer?.id || prev.customerId || '',
                                     customerName: data.customerName || prev.customerName,
                                     contactPerson: data.contactPerson || prev.contactPerson,
                                     amount: resolvedAmount ? resolvedAmount.toString() : prev.amount,
                                     signDate: data.signDate || prev.signDate,
-                                    serviceLine: data.serviceLine || prev.serviceLine,
+                                    serviceLine: normalizedServiceLine || prev.serviceLine,
                                     paymentMethod: data.paymentMethod || prev.paymentMethod,
                                     remarks: data.notes || prev.remarks
                                 }));
+                                setExtractedServiceItems(serviceItemsFromAI);
 
                                 // Auto-fill receivables
                                 if (data.paymentPlan && Array.isArray(data.paymentPlan)) {
@@ -840,17 +1301,103 @@ const Contracts = () => {
                     {/* ... Form ... */}
                     <form onSubmit={handleSubmit} className="space-y-4">
                         {/* ... Existing Fields ... */}
-                        <div className="grid grid-cols-2 gap-4"> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">合同标题</label> <input required type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">合同编号</label> <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.contractNo} onChange={e => setFormData({...formData, contractNo: e.target.value})} /> </div> </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">合同标题</label>
+                            <input required type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">合同编号</label>
+                            <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.contractNo} onChange={e => setFormData({...formData, contractNo: e.target.value})} />
+                          </div>
+                        </div>
                         {/* ... Rest of the form is unchanged ... */}
-                        <div className="grid grid-cols-2 gap-4"> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">客户名称</label> <input required type="text" className={`w-full px-3 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm ${hasSubjectMismatch ? 'border-yellow-400 bg-yellow-50' : 'border-gray-200 bg-gray-50'}`} value={formData.customerName} onChange={e => setFormData({...formData, customerName: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">服务项目</label> <input required type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.serviceLine} onChange={e => setFormData({...formData, serviceLine: e.target.value})} /> </div> </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">关联客户（可选）</label>
+                            <select
+                              className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm"
+                              value={formData.customerId}
+                              onChange={(e) => applyCustomerSelection(e.target.value)}
+                            >
+                              <option value="">不绑定（仅保留客户名称快照）</option>
+                              {sortedCustomers.map(customer => (
+                                <option key={customer.id} value={customer.id}>{customer.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">客户名称</label>
+                            <input
+                              required
+                              type="text"
+                              className={`w-full px-3 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm ${hasSubjectMismatch ? 'border-yellow-400 bg-yellow-50' : 'border-gray-200 bg-gray-50'}`}
+                              value={formData.customerName}
+                              onChange={e => {
+                                const nextName = e.target.value;
+                                const matched = findCustomerByName(nextName);
+                                setFormData({
+                                  ...formData,
+                                  customerName: nextName,
+                                  customerId: matched?.id || ''
+                                });
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">联系人</label>
+                            <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.contactPerson} onChange={e => setFormData({...formData, contactPerson: e.target.value})} />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">服务项目</label>
+                            <input required type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.serviceLine} onChange={e => setFormData({...formData, serviceLine: e.target.value})} />
+                          </div>
+                        </div>
                         <div className="grid grid-cols-3 gap-4"> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">合同总额 (¥)</label> <input required type="number" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm font-mono font-bold" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">签订日期</label> <input required type="date" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.signDate} onChange={e => setFormData({...formData, signDate: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">支付方式</label> <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.paymentMethod} onChange={e => setFormData({...formData, paymentMethod: e.target.value})} /> </div> </div>
                         <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100"> <div className="flex justify-between items-center mb-3"> <h4 className="text-xs font-black text-gray-900 uppercase tracking-wider flex items-center"> <Wallet className="w-4 h-4 mr-2 text-blue-600" /> 支付节点与金额 (可编辑) </h4> <button type="button" onClick={addReceivable} className="text-xs font-bold text-blue-600 hover:underline flex items-center"> <Plus className="w-3 h-3 mr-1" /> 添加款项节点 </button> </div> {extractedReceivables.length === 0 && ( <div className="text-center text-gray-400 text-xs py-4 border-2 border-dashed border-gray-200 rounded-xl font-bold"> 暂无支付计划，AI 识别后将在此显示 </div> )} <div className="space-y-2"> {extractedReceivables.map((r, idx) => ( <div key={idx} className="flex space-x-2 items-center"> <div className="flex-1"> <input type="text" className="w-full px-3 py-2 text-sm font-bold border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none" value={r.node} onChange={(e) => handleReceivableChange(idx, 'node', e.target.value)} placeholder="节点名称 (如: 首付款)" /> </div> <div className="w-32 relative"> <span className="absolute left-2 top-2 text-xs text-gray-400">¥</span> <input type="number" className="w-full pl-6 pr-2 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none font-mono font-bold" value={r.amount} onChange={(e) => handleReceivableChange(idx, 'amount', Number(e.target.value))} placeholder="金额" /> </div> <div className="w-36"> <input type="date" className="w-full px-2 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none" value={r.dueDate} onChange={(e) => handleReceivableChange(idx, 'dueDate', e.target.value)} /> </div> <button type="button" onClick={() => removeReceivable(idx)} className="text-gray-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-lg transition-colors" > <Trash2 className="w-4 h-4" /> </button> </div> ))} </div> </div>
                         <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center"> <AlignLeft className="w-4 h-4 mr-1" /> 备注 (注：最后一行内容) </label> <textarea className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm resize-none" rows={2} value={formData.remarks} onChange={e => setFormData({...formData, remarks: e.target.value})} ></textarea> </div>
                         <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-start"> <div className="flex items-center h-5"> <input id="createProject" name="createProject" type="checkbox" className="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded" checked={formData.createProject} onChange={e => setFormData({...formData, createProject: e.target.checked})} /> </div> <div className="ml-3 text-sm"> <label htmlFor="createProject" className="font-bold text-blue-900">同时创建交付项目 (推荐)</label> <p className="text-blue-700 text-xs mt-0.5">勾选后将自动在“项目管理”中生成对应项目，项目回款状态将自动同步此处的支付计划。</p> </div> </div>
-                        <div className="pt-4 flex justify-end space-x-3"> <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 border border-gray-200 rounded-xl text-gray-700 font-bold hover:bg-gray-50 transition-colors" > 取消 </button> <button type="submit" className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-lg shadow-blue-500/20 transition-all active:scale-95" > 确认录入并生成 </button> </div>
+                        <div className="pt-4 flex justify-end space-x-3"> <button type="button" onClick={closeContractModal} className="px-6 py-3 border border-gray-200 rounded-xl text-gray-700 font-bold hover:bg-gray-50 transition-colors" > 取消 </button> <button type="submit" className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-lg shadow-blue-500/20 transition-all active:scale-95" > 确认录入并生成 </button> </div>
                     </form>
                 </div>
             </div>
+        </div>
+      )}
+
+      <input ref={attachmentInputRef} type="file" className="hidden" onChange={handleAttachmentPick} />
+
+      {previewFile && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl border border-gray-100 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div className="min-w-0">
+                <div className="text-sm font-black text-gray-900 truncate">{previewFile.name}</div>
+                <div className="text-[11px] text-gray-400 font-bold mt-1">合同附件预览</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.open(previewFile.url, '_blank')}
+                  className="px-3 py-2 rounded-xl text-xs font-black bg-white border border-gray-200 text-gray-700 hover:bg-gray-50"
+                >
+                  新窗口打开
+                </button>
+                <button onClick={() => setPreviewFile(null)} className="p-2 hover:bg-gray-100 rounded-full">
+                  <X className="w-5 h-5 text-gray-400" />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 bg-gray-50">
+              {previewFile.kind === 'pdf' ? (
+                <iframe title={previewFile.name} src={previewFile.url} className="w-full h-[75vh] rounded-2xl bg-white border border-gray-100" />
+              ) : (
+                <div className="w-full h-[75vh] flex items-center justify-center">
+                  <img src={previewFile.url} alt={previewFile.name} className="max-h-[75vh] max-w-full rounded-2xl border border-gray-100 bg-white" />
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -16,6 +16,10 @@ export interface IngestResult<T = any> {
     fileType: string;
     size: number;
     processedAt: string;
+    modelUsed?: string;
+    stage?: string;
+    attempts?: number;
+    fallbackUsed?: boolean;
   };
 }
 

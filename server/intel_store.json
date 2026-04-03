@@ -1,87 +1,533 @@
 {
-  "lastRunAt": "2026-02-20T05:02:56.415Z",
+  "lastRunAt": "2026-04-03T00:55:22.893Z",
   "regions": [
-    "温州"
+    "温州",
+    "苍南",
+    "平阳",
+    "龙港"
   ],
   "industries": [
-    "食品"
+    "塑料编织制品制造业",
+    "食包",
+    "药材",
+    "印刷",
+    "食品",
+    "餐饮"
   ],
   "signals": [
     {
-      "id": "SIG-1771563761414-0",
-      "title": "温州市市场监督管理局（知识产权局）",
-      "sourceName": "wzmsa.wenzhou.gov.cn",
-      "sourceUrl": "https://wzmsa.wenzhou.gov.cn/index.html",
-      "publishedAt": "2026-02-20",
-      "summary": "温州市市场监督管理局 2025年第十二期食品监督抽检情况的通告 温州市市场监督管理局食品安全抽检备份样品处置公示（2025年三季度） 温州市市场监督管理局 2025年第十一期食品&quot;你点我检&quot;抽检情况的通告 2025年药品（发布日期待核验）",
-      "content": "温州市市场监督管理局 2025年第十二期食品监督抽检情况的通告 温州市市场监督管理局食品安全抽检备份样品处置公示（2025年三季度） 温州市市场监督管理局 2025年第十一期食品&quot;你点我检&quot;抽检情况的通告 2025年药品经营企业飞行检查公告 （第二期）",
-      "kind": "policy",
+      "id": "SIG-1775177710886-4",
+      "title": "\"平阳正处在发展能级跃升的关键期\"，兴业银行温州分行负责人表示，\"'强城行动'的纵深推进、鳌江实验室等科创平台的落地、优势产业的加快集聚，都为金融服务提供了广阔舞台。",
+      "sourceName": "kjjrw.com.cn",
+      "sourceUrl": "http://www.kjjrw.com.cn/system/2026/03/26/015433559.shtml",
+      "publishedAt": "2026-03-26",
+      "summary": "##",
+      "content": "##",
+      "kind": "company",
       "regions": [
-        "温州"
+        "温州",
+        "平阳"
       ],
       "industries": [
-        "食品"
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
       ],
       "departments": [],
       "tags": [
-        "日期待核验"
-      ],
-      "deadline": "",
-      "serviceCategory": "体系认证",
-      "serviceItemCode": "",
-      "opportunityHypothesis": [
-        "围绕“温州市市场监督管理局（知识产权局）”可发起合规差距诊断与标准落地辅导。",
-        "对食品客户可推出“解读培训 + 文件整改 + 内审辅导”组合包。"
-      ],
-      "recommendedActions": [
-        "48小时内完成受影响客户名单筛选并分派负责人。",
-        "72小时内发布一页纸解读并邀约重点客户线上沟通。"
-      ],
-      "score": 82,
-      "urgency": "medium",
-      "status": "new",
-      "ownerUserId": "",
-      "convertedTo": {},
-      "createdAt": "2026-02-20T05:02:39.322Z",
-      "updatedAt": "2026-02-20T05:02:39.322Z"
-    },
-    {
-      "id": "SIG-1771563761414-1",
-      "title": "PDF 温州市人民政府关于印发2025年温州市级产业政策的通知",
-      "sourceName": "zjjcmspublic.oss-cn-hangzhou-zwynet-d01-a.internet.cloud.zj.gov.cn",
-      "sourceUrl": "https://zjjcmspublic.oss-cn-hangzhou-zwynet-d01-a.internet.cloud.zj.gov.cn/jcms_files/jcms1/web1825/site/attach/0/2dffe1a7c8114d398656cb36b8148463.pdf",
-      "publishedAt": "2026-02-20",
-      "summary": "围绕&quot;5+5+N&quot; 产业,实施一批以突破产业关键核心技术为导向的市级重大科技攻关项目,其中企业牵头立项单个项目按不超过项目经费总投入的20%、最高200万元补助。 转 变高能级平台扶持方式,市 财政以&quot;拨投联动（发布日期待核验）",
-      "content": "围绕&quot;5+5+N&quot; 产业,实施一批以突破产业关键核心技术为导向的市级重大科技攻关项目,其中企业牵头立项单个项目按不超过项目经费总投入的20%、最高200万元补助。 转 变高能级平台扶持方式,市 财政以&quot;拨投联动&quot; 支持高能级科创平台科技成果产业化项目,最高补助500 万元。 对本市企业与国内外高校院所、医 疗卫生机构、新型研发机构等单位发生技术交易额20 万以上的项目,按经登记的单个项目技术交易合",
-      "kind": "policy",
-      "regions": [
-        "温州"
-      ],
-      "industries": [
-        "食品"
-      ],
-      "departments": [],
-      "tags": [
-        "日期待核验"
+        "发布时间待确认"
       ],
       "deadline": "",
       "serviceCategory": "其他",
       "serviceItemCode": "",
       "opportunityHypothesis": [
-        "围绕“PDF 温州市人民政府关于印发2025年温州市级”可发起合规差距诊断与标准落地辅导。",
-        "对食品客户可推出“解读培训 + 文件整改 + 内审辅导”组合包。"
+        "该动态可作为塑料编织制品制造业、食包、药材、印刷、食品、餐饮增量市场线索，适合切入管理改进与认证升级。",
+        "可围绕扩产/订单/市场变化场景，提供专项诊断与项目化服务。"
       ],
       "recommendedActions": [
-        "48小时内完成受影响客户名单筛选并分派负责人。",
-        "72小时内发布一页纸解读并邀约重点客户线上沟通。"
+        "在CRM新建线索并绑定行业标签，进入7天跟进行动。",
+        "准备同业成功案例与报价框架，安排首次沟通。"
       ],
-      "score": 80,
+      "score": 68,
       "urgency": "medium",
       "status": "new",
       "ownerUserId": "",
       "convertedTo": {},
-      "createdAt": "2026-02-20T05:02:39.322Z",
-      "updatedAt": "2026-02-20T05:02:39.322Z"
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710886-6",
+      "title": "最新数据显示：2026年1-2月，该市规模以上工业增加值同比增长19.5%，增速位居温州市首位，实现工业经济\"开门红\"。 作为全国首个镇改市，龙港近年来立足\"中国印刷城\"产业根基，走出了一条传统产业数字化转型与新兴消费赛道加速崛起的双轮驱动之路。 眼下，全市449家规上工业企业全线发力，从传统印刷车间到文创生产线，从智能生产设备到市场热销爆款，处处展现发展活",
+      "sourceName": "zj.xinhuanet.com",
+      "sourceUrl": "http://www.zj.xinhuanet.com/20260327/5c234fc64bed44cd9a2c5348ddbee7ae/c.html",
+      "publishedAt": "2026-03-27",
+      "summary": "##",
+      "content": "##",
+      "kind": "company",
+      "regions": [
+        "温州",
+        "龙港"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "管理培训/顾问服务",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "该动态可作为塑料编织制品制造业、食包、药材、印刷、食品、餐饮增量市场线索，适合切入管理改进与认证升级。",
+        "可围绕扩产/订单/市场变化场景，提供专项诊断与项目化服务。"
+      ],
+      "recommendedActions": [
+        "在CRM新建线索并绑定行业标签，进入7天跟进行动。",
+        "准备同业成功案例与报价框架，安排首次沟通。"
+      ],
+      "score": 60,
+      "urgency": "low",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710886-2",
+      "title": "温州网讯 在今年1月拿到温州首张即食鲜切果蔬生产许可证后，瑞安农业企业迈出从\"准入突破\"到\"产能跃升\"的关键一步。 日前，位于瑞安市马屿镇的温州万科农业开发有限公司新厂内，一条投资超800万元的即食鲜切果蔬生产线正式投产。 这条生产线让瑞安优质农产品从田间地头\"鲜\"到市民餐桌，并助力企业叩开长三角市场的大门。 走进万科农业新建成的即食果蔬加工车间，一条长达2",
+      "sourceName": "news.66wz.com",
+      "sourceUrl": "https://news.66wz.com/system/2026/03/16/105731045.shtml",
+      "publishedAt": "2026-03-16",
+      "summary": "##",
+      "content": "##",
+      "kind": "company",
+      "regions": [
+        "温州"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "生产许可类",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "该动态可作为塑料编织制品制造业、食包、药材、印刷、食品、餐饮增量市场线索，适合切入管理改进与认证升级。",
+        "可围绕扩产/订单/市场变化场景，提供专项诊断与项目化服务。"
+      ],
+      "recommendedActions": [
+        "在CRM新建线索并绑定行业标签，进入7天跟进行动。",
+        "准备同业成功案例与报价框架，安排首次沟通。"
+      ],
+      "score": 68,
+      "urgency": "low",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710886-5",
+      "title": "魏乃绪控制的苍南芯盛拟通过协议受让股份与受托表决权实现对思创智联的控制，构成管理层收购，公司将由无实际控制人变更为魏乃绪实际控制 ...",
+      "sourceName": "finance.sina.com.cn",
+      "sourceUrl": "https://finance.sina.com.cn/wm/2026-03-20/doc-inhrrzus0597636.shtml",
+      "publishedAt": "2026-03-20",
+      "summary": "##",
+      "content": "##",
+      "kind": "company",
+      "regions": [
+        "苍南"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "其他",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "该动态可作为塑料编织制品制造业、食包、药材、印刷、食品、餐饮增量市场线索，适合切入管理改进与认证升级。",
+        "可围绕扩产/订单/市场变化场景，提供专项诊断与项目化服务。"
+      ],
+      "recommendedActions": [
+        "在CRM新建线索并绑定行业标签，进入7天跟进行动。",
+        "准备同业成功案例与报价框架，安排首次沟通。"
+      ],
+      "score": 62,
+      "urgency": "low",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710887-8",
+      "title": "3月25日，省委常委、市委书记张振丰在苍南县调研县域经济高质量发展工作，强调要深入学习贯彻习近平总书记重要讲话和全国两会精神，聚焦聚力 ...",
+      "sourceName": "finance.sina.com.cn",
+      "sourceUrl": "https://finance.sina.com.cn/wm/2026-03-25/doc-inhsffcv9664548.shtml",
+      "publishedAt": "2026-03-25",
+      "summary": "##",
+      "content": "##",
+      "kind": "company",
+      "regions": [
+        "苍南"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "其他",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "该动态可作为塑料编织制品制造业、食包、药材、印刷、食品、餐饮增量市场线索，适合切入管理改进与认证升级。",
+        "可围绕扩产/订单/市场变化场景，提供专项诊断与项目化服务。"
+      ],
+      "recommendedActions": [
+        "在CRM新建线索并绑定行业标签，进入7天跟进行动。",
+        "准备同业成功案例与报价框架，安排首次沟通。"
+      ],
+      "score": 56,
+      "urgency": "low",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710887-12",
+      "title": "平阳国诚是平阳县核心的城市开发建设及国有资产运营主体。 多年来，平阳国诚深耕平阳、服务地方，聚焦安置房建设、土地综合开发、基础设施建设、商品销售、公共客运等主责主业，构建多元化业务布局，在推进县域城市化进程、保障民生需求、支撑地方经济高质量发展中发挥着不可替代的战略支撑与\"压舱石\"作用。 作为本次债券的牵头主承销商与簿记管理人，天风证券充分发挥全链条投行服务",
+      "sourceName": "finance.sina.com.cn",
+      "sourceUrl": "https://finance.sina.com.cn/roll/2026-03-19/doc-inhrpsps4583895.shtml",
+      "publishedAt": "2026-03-19",
+      "summary": "##",
+      "content": "##",
+      "kind": "company",
+      "regions": [
+        "平阳"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "政府项目申报",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "该动态可作为塑料编织制品制造业、食包、药材、印刷、食品、餐饮增量市场线索，适合切入管理改进与认证升级。",
+        "可围绕扩产/订单/市场变化场景，提供专项诊断与项目化服务。"
+      ],
+      "recommendedActions": [
+        "在CRM新建线索并绑定行业标签，进入7天跟进行动。",
+        "准备同业成功案例与报价框架，安排首次沟通。"
+      ],
+      "score": 52,
+      "urgency": "medium",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710887-13",
+      "title": "最新数据显示：2026年1-2月，该市规模以上工业增加值同比增长19.5%，增速位居温州市首位，实现工业经济\"开门红\"。 作为全国首个镇改市，龙港近年来立足\"中国印刷城\"产业根基，走出了一条传统产业数字化转型与新兴消费赛道加速崛起的双轮驱动之路。 眼下，全市449家规上工业企业全线发力，从传统印刷车间到文创生产线，从智能生产设备到市场热销爆款，处处展现发展活",
+      "sourceName": "zj.news.cn",
+      "sourceUrl": "https://www.zj.news.cn/20260327/5c234fc64bed44cd9a2c5348ddbee7ae/c.html",
+      "publishedAt": "2026-03-27",
+      "summary": "##",
+      "content": "##",
+      "kind": "company",
+      "regions": [
+        "温州",
+        "龙港"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "管理培训/顾问服务",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "该动态可作为塑料编织制品制造业、食包、药材、印刷、食品、餐饮增量市场线索，适合切入管理改进与认证升级。",
+        "可围绕扩产/订单/市场变化场景，提供专项诊断与项目化服务。"
+      ],
+      "recommendedActions": [
+        "在CRM新建线索并绑定行业标签，进入7天跟进行动。",
+        "准备同业成功案例与报价框架，安排首次沟通。"
+      ],
+      "score": 50,
+      "urgency": "low",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710887-16",
+      "title": "为什么一家从温州瑞安起步、以塑料编织袋为主业的乡镇企业，能在30年后成长为全球聚氨酯领域的重要参与者，甚至进入世界经济论坛灯塔工厂名单？ 这个问题的答案，不只是企业成长故事，而是温州制造业如何完成产业跃迁的一个缩影。",
+      "sourceName": "wztv.66wz.com",
+      "sourceUrl": "https://wztv.66wz.com/system/2026/03/27/105733382.shtml",
+      "publishedAt": "2026-03-27",
+      "summary": "##",
+      "content": "##",
+      "kind": "event",
+      "regions": [
+        "温州"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "其他",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "可作为区域市场活跃度信号，辅助销售前置触达。"
+      ],
+      "recommendedActions": [
+        "纳入周会情报复盘，筛选可转化客户。"
+      ],
+      "score": 50,
+      "urgency": "low",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710886-1",
+      "title": "3月5日，温州市市场监督管理局党委书记、局长王丹率队来龙港开展产业强链行动。 活动以龙港市印刷包装产业质量创新中心共建签约为主线，同步开展企业调研与产业质量强链需求对接，为龙港印刷包装支柱产业高质量发展注入新动能。",
+      "sourceName": "lgxw.cn",
+      "sourceUrl": "http://www.lgxw.cn/system/2026/03/06/015423955.shtml",
+      "publishedAt": "2026-03-06",
+      "summary": "##",
+      "content": "##",
+      "kind": "event",
+      "regions": [
+        "温州",
+        "龙港"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "管理培训/顾问服务",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "可作为区域市场活跃度信号，辅助销售前置触达。"
+      ],
+      "recommendedActions": [
+        "纳入周会情报复盘，筛选可转化客户。"
+      ],
+      "score": 60,
+      "urgency": "low",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710887-10",
+      "title": "\"不少食客尝了之后都在追问上市时间和价格，这让我们信心大增。 \"企业负责人王少丽表示。 从单一的鲜果销售，到如今的果汁、果酒、果酥等多元化加工产品，苍南番茄正推动种、产、储、加、销一体化全产业链发展，致力从\"种得好\"向\"卖得俏\"跃升。",
+      "sourceName": "zjnews.zjol.com.cn",
+      "sourceUrl": "https://zjnews.zjol.com.cn/zjnews/202603/t20260320_31562093.shtml",
+      "publishedAt": "2026-03-20",
+      "summary": "##",
+      "content": "##",
+      "kind": "company",
+      "regions": [
+        "苍南"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "管理培训/顾问服务",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "该动态可作为塑料编织制品制造业、食包、药材、印刷、食品、餐饮增量市场线索，适合切入管理改进与认证升级。",
+        "可围绕扩产/订单/市场变化场景，提供专项诊断与项目化服务。"
+      ],
+      "recommendedActions": [
+        "在CRM新建线索并绑定行业标签，进入7天跟进行动。",
+        "准备同业成功案例与报价框架，安排首次沟通。"
+      ],
+      "score": 52,
+      "urgency": "low",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710887-14",
+      "title": "据悉，罗赛洛（温州）明胶有限公司作为温州食用明胶产业的骨干企业，是一家集食品添加剂生产、销售于一体的外商投资企业，凭借优质产品获得了国内外市场的广泛认可。 温州食用明胶出口的持续突破，离不开温州海关的精准帮扶与有力助推。 自2018年欧盟恢复我国食用明胶企业注册登记以来，温州海关主动推动辖区食用明胶企业对欧盟推荐注册，成功助推两家企业成为全国首批对欧盟注册的",
+      "sourceName": "finance.sina.com.cn",
+      "sourceUrl": "https://finance.sina.com.cn/jjxw/2026-03-12/doc-inhqtkar4860366.shtml",
+      "publishedAt": "2026-03-12",
+      "summary": "##",
+      "content": "##",
+      "kind": "company",
+      "regions": [
+        "温州"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "管理培训/顾问服务",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "该动态可作为塑料编织制品制造业、食包、药材、印刷、食品、餐饮增量市场线索，适合切入管理改进与认证升级。",
+        "可围绕扩产/订单/市场变化场景，提供专项诊断与项目化服务。"
+      ],
+      "recommendedActions": [
+        "在CRM新建线索并绑定行业标签，进入7天跟进行动。",
+        "准备同业成功案例与报价框架，安排首次沟通。"
+      ],
+      "score": 50,
+      "urgency": "low",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
+    },
+    {
+      "id": "SIG-1775177710887-15",
+      "title": "据悉，自2022年启动大孵化器集群建设以来，苍南统筹布局全域孵化空间，已建成孵化载体20个，累计新增孵化空间面积40.52万平方米。 低空数智谷以人才科技大厦为企业总部、在全县布局生产基地，全力打造产创融合新标杆，2025年入驻企业产值达4.67亿元。 曾仁海强调，低空经济是国家重点培育的未来主导产业，发展空间广阔、潜力巨大。 要进一步统一思想、锚定方向，坚",
+      "sourceName": "cnxw.com.cn",
+      "sourceUrl": "https://www.cnxw.com.cn/system/2026/03/09/015425541.shtml",
+      "publishedAt": "2026-03-09",
+      "summary": "##",
+      "content": "##",
+      "kind": "event",
+      "regions": [
+        "苍南"
+      ],
+      "industries": [
+        "塑料编织制品制造业",
+        "食包",
+        "药材",
+        "印刷",
+        "食品",
+        "餐饮"
+      ],
+      "departments": [],
+      "tags": [
+        "发布时间待确认"
+      ],
+      "deadline": "",
+      "serviceCategory": "管理培训/顾问服务",
+      "serviceItemCode": "",
+      "opportunityHypothesis": [
+        "可作为区域市场活跃度信号，辅助销售前置触达。"
+      ],
+      "recommendedActions": [
+        "纳入周会情报复盘，筛选可转化客户。"
+      ],
+      "score": 50,
+      "urgency": "low",
+      "status": "new",
+      "ownerUserId": "",
+      "convertedTo": {},
+      "createdAt": "2026-04-03T00:54:59.858Z",
+      "updatedAt": "2026-04-03T00:54:59.858Z"
     }
   ]
 }

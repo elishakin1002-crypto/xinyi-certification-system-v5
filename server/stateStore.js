@@ -3,7 +3,7 @@ const path = require('path');
 
 const fileStorePath = path.resolve(__dirname, './state_store.json');
 const MAX_DATASET_KEY_LENGTH = 128;
-const DATASET_KEY_PATTERN = /^[a-zA-Z0-9_.:-]+$/;
+const DATASET_KEY_PATTERN = /^[a-z0-9_]+$/;
 
 let pool = null;
 let backend = {
@@ -14,11 +14,23 @@ let backend = {
 
 const nowIso = () => new Date().toISOString();
 
+const normalizeFileRecord = (record, fallbackNow) => {
+  const row = record && typeof record === 'object' ? record : {};
+  return {
+    value: Object.prototype.hasOwnProperty.call(row, 'value') ? row.value : row.dataset_value,
+    updated_at: row.updated_at || row.updatedAt || fallbackNow,
+    source: row.source || 'frontend',
+    actor_user_id: row.actor_user_id || row.actorUserId || '',
+    client_id: row.client_id || row.clientId || '',
+    app_version: row.app_version || row.appVersion || ''
+  };
+};
+
 const ensureFileStore = () => {
   if (!fs.existsSync(fileStorePath)) {
     fs.writeFileSync(
       fileStorePath,
-      JSON.stringify({ updatedAt: nowIso(), datasets: {} }, null, 2)
+      JSON.stringify({ updated_at: nowIso(), datasets: {} }, null, 2)
     );
   }
 };
@@ -29,14 +41,22 @@ const readFileStore = () => {
     const raw = fs.readFileSync(fileStorePath, 'utf-8');
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') {
-      return { updatedAt: nowIso(), datasets: {} };
+      return { updated_at: nowIso(), datasets: {} };
     }
+    const normalizedDatasets = {};
+    const datasetEntries = parsed.datasets && typeof parsed.datasets === 'object' ? parsed.datasets : {};
+    const now = nowIso();
+    Object.entries(datasetEntries).forEach(([key, value]) => {
+      const normalizedKey = normalizeDatasetKey(key);
+      if (!normalizedKey) return;
+      normalizedDatasets[normalizedKey] = normalizeFileRecord(value, now);
+    });
     return {
-      updatedAt: parsed.updatedAt || nowIso(),
-      datasets: parsed.datasets && typeof parsed.datasets === 'object' ? parsed.datasets : {}
+      updated_at: parsed.updated_at || parsed.updatedAt || nowIso(),
+      datasets: normalizedDatasets
     };
   } catch (error) {
-    return { updatedAt: nowIso(), datasets: {} };
+    return { updated_at: nowIso(), datasets: {} };
   }
 };
 
@@ -45,7 +65,11 @@ const writeFileStore = (store) => {
 };
 
 const normalizeDatasetKey = (rawKey) => {
-  const key = String(rawKey || '').trim();
+  const key = String(rawKey || '')
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[.:-]+/g, '_')
+    .toLowerCase();
   if (!key) return '';
   if (key.length > MAX_DATASET_KEY_LENGTH) return '';
   if (!DATASET_KEY_PATTERN.test(key)) return '';
@@ -142,14 +166,14 @@ const upsertStateBatchFile = async (datasets, meta) => {
   entries.forEach(([datasetKey, datasetValue]) => {
     store.datasets[datasetKey] = {
       value: datasetValue,
-      updatedAt: now,
+      updated_at: now,
       source: meta.source || 'frontend',
-      actorUserId: meta.actorUserId || '',
-      clientId: meta.clientId || '',
-      appVersion: meta.appVersion || ''
+      actor_user_id: meta.actorUserId || '',
+      client_id: meta.clientId || '',
+      app_version: meta.appVersion || ''
     };
   });
-  store.updatedAt = now;
+  store.updated_at = now;
   writeFileStore(store);
   return { written: entries.length };
 };
@@ -233,7 +257,7 @@ const getStateBatchFile = async (keys) => {
     if (!store.datasets[key]) return;
     datasets[key] = store.datasets[key].value;
     metadata[key] = {
-      updatedAt: store.datasets[key].updatedAt || '',
+      updatedAt: store.datasets[key].updated_at || store.datasets[key].updatedAt || '',
       source: store.datasets[key].source || ''
     };
   });
@@ -300,7 +324,7 @@ const getStateHealth = async () => {
     ready: true,
     reason: backend.reason,
     totalDatasets: Object.keys(store.datasets).length,
-    latestUpdateAt: store.updatedAt || ''
+    latestUpdateAt: store.updated_at || store.updatedAt || ''
   };
 };
 

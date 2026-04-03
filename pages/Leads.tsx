@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Status, Lead, ContactPerson, CertificateDetail, FollowUpRecord } from '../types';
 import {
   Search,
@@ -22,8 +22,9 @@ import {
 import { useApp } from '../context/AppContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { IngestionUploader } from '../components/IngestionUploader';
+import { readGlobalSearchQuery } from '../src/modules/global_search';
 const Leads = () => {
-  const { leads, addLead, updateLead, addLeadFollowUp, createFollowUpProjectFromLead, importExcel } = useApp();
+  const { leads, addLead, updateLead, addLeadFollowUp, createFollowUpProjectFromLead, importExcel, currentUser } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -40,6 +41,8 @@ const Leads = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [editingLeadData, setEditingLeadData] = useState<Lead | null>(null);
   const [showConvertToProject, setShowConvertToProject] = useState(false);
+  const [dashboardFocus, setDashboardFocus] = useState<any>(null);
+  const [dashboardFocusLabel, setDashboardFocusLabel] = useState('');
   
   // AI & Import States
   const [isImporting, setIsImporting] = useState(false);
@@ -53,9 +56,57 @@ const Leads = () => {
   // Quick Tags for Follow-up
   const QUICK_TAGS = ['💰 价格敏感', '📄 需发资料', '📅 预约面谈', '🤝 竞品比价', '❌ 暂时无意向'];
 
-  const filteredLeads = leads.filter(lead => {
-      // 默认过滤掉 Converted 和 Lost 状态（除非明确选择该状态）
-      if (statusFilter === 'All') {
+  const todayText = new Date().toISOString().split('T')[0];
+  const currentMonthKey = todayText.slice(0, 7);
+  const weekStart = useMemo(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 6);
+    date.setHours(0, 0, 0, 0);
+    return date.getTime();
+  }, []);
+
+  const isMyLead = (lead: Lead) =>
+    (lead.followUpRecords || []).some(record => String(record.operator || '') === currentUser.name) || String(lead.name || '') === currentUser.name;
+
+  const getLeadTimestamp = (lead: Lead) => {
+    const idTs = Number(String(lead.id || '').split('-')[1]);
+    if (Number.isFinite(idTs) && idTs > 0) return idTs;
+    const fallbackTs = Date.parse(String(lead.lastContact || ''));
+    return Number.isFinite(fallbackTs) ? fallbackTs : 0;
+  };
+
+  const getLastFollowUpTs = (lead: Lead) => {
+    const records = [...(lead.followUpRecords || [])].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    const lastDate = String(records[0]?.date || lead.lastContact || '');
+    const ts = Date.parse(lastDate);
+    return Number.isFinite(ts) ? ts : 0;
+  };
+
+  const matchesDashboardFocus = (lead: Lead) => {
+    if (!dashboardFocus?.type) return true;
+    if (dashboardFocus.owner === 'me' && !isMyLead(lead)) return false;
+
+    if (dashboardFocus.type === 'conversion') return lead.status === Status.Converted;
+    if (dashboardFocus.type === 'created_month') return String(getLeadTimestamp(lead) ? new Date(getLeadTimestamp(lead)).toISOString().slice(0, 7) : '').startsWith(dashboardFocus.month || currentMonthKey);
+    if (dashboardFocus.type === 'created_week') return getLeadTimestamp(lead) >= weekStart;
+    if (dashboardFocus.type === 'todo_today') {
+      if (lead.status === Status.Converted || lead.status === Status.Lost) return false;
+      const lastTs = getLastFollowUpTs(lead);
+      const staleDays = lastTs ? Math.floor((Date.now() - lastTs) / (24 * 3600 * 1000)) : 999;
+      return staleDays >= 7 || lead.intent === 'High' || lead.status === Status.Pending;
+    }
+    if (dashboardFocus.type === 'intent_high') return lead.intent === 'High' && lead.status !== Status.Converted && lead.status !== Status.Lost;
+    if (dashboardFocus.type === 'stale') {
+      const lastTs = getLastFollowUpTs(lead);
+      const staleDays = lastTs ? Math.floor((Date.now() - lastTs) / (24 * 3600 * 1000)) : 999;
+      return staleDays > Number(dashboardFocus.days || 7);
+    }
+    if (dashboardFocus.type === 'status') return lead.status === Status.Pending;
+    return true;
+  };
+
+  const filteredLeads = useMemo(() => leads.filter(lead => {
+      if (!dashboardFocus?.type && statusFilter === 'All') {
           if (lead.status === Status.Converted || lead.status === Status.Lost) return false;
       }
 
@@ -63,21 +114,41 @@ const Leads = () => {
       const matchesSearch = searchTerm === '' || 
           lead.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
           lead.company.toLowerCase().includes(searchTerm.toLowerCase());
-      return matchesStatus && matchesSearch;
-  });
+      return matchesStatus && matchesSearch && matchesDashboardFocus(lead);
+  }), [leads, statusFilter, searchTerm, dashboardFocus, currentUser.name, currentMonthKey, weekStart]);
 
   // Calculate leads waiting for analysis (Score 0 usually means raw import)
   const pendingAnalysisCount = leads.filter(l => l.score === 0 || l.industry === '待 AI 分析').length;
 
   useEffect(() => {
-      if (location.state && location.state.openDetailId) {
-          const targetLead = leads.find(l => l.id === location.state.openDetailId);
+      const state: any = location.state || {};
+      const focus = state.dashboardFocus;
+      if (focus?.type) {
+          setDashboardFocus(focus);
+          setStatusFilter('All');
+          if (focus.type === 'conversion') setDashboardFocusLabel(focus.owner === 'me' ? '我的转化线索' : '线索转化清单');
+          else if (focus.type === 'created_month') setDashboardFocusLabel(focus.owner === 'me' ? '我本月新增线索' : '本月新增线索');
+          else if (focus.type === 'created_week') setDashboardFocusLabel(focus.owner === 'me' ? '我本周新增线索' : '本周新增线索');
+          else if (focus.type === 'todo_today') setDashboardFocusLabel('今日优先跟进线索');
+          else if (focus.type === 'intent_high') setDashboardFocusLabel('高意向线索');
+          else if (focus.type === 'stale') setDashboardFocusLabel(`超过 ${focus.days || 7} 天未跟进`);
+          else if (focus.type === 'status') setDashboardFocusLabel('待报价 / 跟进中');
+      }
+      if (state.openDetailId) {
+          const targetLead = leads.find(l => l.id === state.openDetailId);
           if (targetLead) {
               openDetail(targetLead);
-              window.history.replaceState({}, document.title);
           }
       }
-  }, [location, leads]);
+      if (state.dashboardFocus || state.openDetailId) {
+          window.history.replaceState({}, document.title);
+      }
+  }, [location.state, leads]);
+
+  useEffect(() => {
+    const q = readGlobalSearchQuery(location.search);
+    setSearchTerm(q);
+  }, [location.search]);
 
   useEffect(() => {
     if (selectedLead) {
@@ -318,18 +389,38 @@ const Leads = () => {
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-6 overflow-hidden">
          {/* Filter & Search Bar */}
-         <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row items-start md:items-center justify-between bg-gray-50/30 gap-4">
-            <div className="flex space-x-2 w-full md:w-auto overflow-x-auto no-scrollbar pb-1 md:pb-0">
-                {['All', Status.New, Status.Pending, Status.Converted].map(s => (
-                    <button key={s} onClick={() => setStatusFilter(s as any)} className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors whitespace-nowrap ${statusFilter === s ? 'bg-gray-900 text-white shadow-md' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                        {s === 'All' ? '全部' : getStatusBadge(s as Status)}
-                    </button>
-                ))}
+         <div className="p-4 border-b border-gray-100 flex flex-col bg-gray-50/30 gap-4">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex space-x-2 w-full md:w-auto overflow-x-auto no-scrollbar pb-1 md:pb-0">
+                  {['All', Status.New, Status.Pending, Status.Converted].map(s => (
+                      <button key={s} onClick={() => setStatusFilter(s as any)} className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors whitespace-nowrap ${statusFilter === s ? 'bg-gray-900 text-white shadow-md' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                          {s === 'All' ? '全部' : getStatusBadge(s as Status)}
+                      </button>
+                  ))}
+              </div>
+              <div className="relative w-full md:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input type="text" placeholder="搜索线索..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 bg-white" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+              </div>
             </div>
-            <div className="relative w-full md:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input type="text" placeholder="搜索线索..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 bg-white" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-            </div>
+            {dashboardFocusLabel && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+                  工作台焦点：{dashboardFocusLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDashboardFocus(null);
+                    setDashboardFocusLabel('');
+                    setStatusFilter('All');
+                  }}
+                  className="text-xs font-bold text-gray-500 hover:text-gray-700"
+                >
+                  清除焦点
+                </button>
+              </div>
+            )}
          </div>
          
          {/* Mobile Card View */}
@@ -555,10 +646,58 @@ const Leads = () => {
                             <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
                                 <h3 className="font-bold text-gray-900">基本信息</h3>
                                 <div className="grid grid-cols-2 gap-4 text-sm">
-                                    <div><label className="block text-xs text-gray-400 font-bold uppercase mb-1">联系电话</label><div className="font-mono">{editingLeadData.mobile || '-'}</div></div>
-                                    <div><label className="block text-xs text-gray-400 font-bold uppercase mb-1">微信号</label><div>{editingLeadData.wechat || '-'}</div></div>
-                                    <div><label className="block text-xs text-gray-400 font-bold uppercase mb-1">来源渠道</label><div>{editingLeadData.source}</div></div>
-                                    <div><label className="block text-xs text-gray-400 font-bold uppercase mb-1">统一信用代码</label><div className="font-mono text-gray-500">{editingLeadData.unifiedSocialCreditCode || '-'}</div></div>
+                                    <div>
+                                      <label className="block text-xs text-gray-400 font-bold uppercase mb-1">联系电话</label>
+                                      {isEditing ? (
+                                        <input
+                                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-indigo-100"
+                                          value={editingLeadData.mobile || ''}
+                                          onChange={e => setEditingLeadData({ ...editingLeadData, mobile: e.target.value })}
+                                          placeholder="请输入联系电话"
+                                        />
+                                      ) : (
+                                        <div className="font-mono">{editingLeadData.mobile || '-'}</div>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <label className="block text-xs text-gray-400 font-bold uppercase mb-1">微信号</label>
+                                      {isEditing ? (
+                                        <input
+                                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-100"
+                                          value={editingLeadData.wechat || ''}
+                                          onChange={e => setEditingLeadData({ ...editingLeadData, wechat: e.target.value })}
+                                          placeholder="请输入微信号"
+                                        />
+                                      ) : (
+                                        <div>{editingLeadData.wechat || '-'}</div>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <label className="block text-xs text-gray-400 font-bold uppercase mb-1">来源渠道</label>
+                                      {isEditing ? (
+                                        <input
+                                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-100"
+                                          value={editingLeadData.source || ''}
+                                          onChange={e => setEditingLeadData({ ...editingLeadData, source: e.target.value })}
+                                          placeholder="请输入来源渠道"
+                                        />
+                                      ) : (
+                                        <div>{editingLeadData.source || '-'}</div>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <label className="block text-xs text-gray-400 font-bold uppercase mb-1">统一信用代码</label>
+                                      {isEditing ? (
+                                        <input
+                                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-indigo-100"
+                                          value={editingLeadData.unifiedSocialCreditCode || ''}
+                                          onChange={e => setEditingLeadData({ ...editingLeadData, unifiedSocialCreditCode: e.target.value })}
+                                          placeholder="请输入统一信用代码"
+                                        />
+                                      ) : (
+                                        <div className="font-mono text-gray-500">{editingLeadData.unifiedSocialCreditCode || '-'}</div>
+                                      )}
+                                    </div>
                                     <div className="col-span-2">
                                       <label className="block text-xs text-gray-400 font-bold uppercase mb-1">目标认证到期日（挖角）</label>
                                       {isEditing ? (
@@ -587,35 +726,108 @@ const Leads = () => {
                                 <div className="grid grid-cols-2 gap-4 text-xs">
                                     <div>
                                         <label className="block text-slate-400 font-bold mb-1">法定代表人</label>
-                                        <div className="text-slate-700 font-medium">{editingLeadData.legalRepresentative || '-'}</div>
+                                        {isEditing ? (
+                                          <input
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            value={editingLeadData.legalRepresentative || ''}
+                                            onChange={e => setEditingLeadData({ ...editingLeadData, legalRepresentative: e.target.value })}
+                                            placeholder="请输入法定代表人"
+                                          />
+                                        ) : (
+                                          <div className="text-slate-700 font-medium">{editingLeadData.legalRepresentative || '-'}</div>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-slate-400 font-bold mb-1">注册资本</label>
-                                        <div className="text-slate-700 font-medium">{editingLeadData.registeredCapital || '-'}</div>
+                                        {isEditing ? (
+                                          <input
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            value={editingLeadData.registeredCapital || ''}
+                                            onChange={e => setEditingLeadData({ ...editingLeadData, registeredCapital: e.target.value })}
+                                            placeholder="请输入注册资本"
+                                          />
+                                        ) : (
+                                          <div className="text-slate-700 font-medium">{editingLeadData.registeredCapital || '-'}</div>
+                                        )}
                                     </div>
                                     <div className="col-span-2">
                                         <label className="block text-slate-400 font-bold mb-1">注册地址</label>
-                                        <div className="text-slate-700 font-medium truncate" title={editingLeadData.registeredAddress}>{editingLeadData.registeredAddress || '-'}</div>
+                                        {isEditing ? (
+                                          <input
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            value={editingLeadData.registeredAddress || ''}
+                                            onChange={e => setEditingLeadData({ ...editingLeadData, registeredAddress: e.target.value })}
+                                            placeholder="请输入注册地址"
+                                          />
+                                        ) : (
+                                          <div className="text-slate-700 font-medium truncate" title={editingLeadData.registeredAddress}>{editingLeadData.registeredAddress || '-'}</div>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-slate-400 font-bold mb-1">成立日期</label>
-                                        <div className="text-slate-700 font-medium">{editingLeadData.foundingDate || '-'}</div>
+                                        {isEditing ? (
+                                          <input
+                                            type="date"
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            value={editingLeadData.foundingDate || ''}
+                                            onChange={e => setEditingLeadData({ ...editingLeadData, foundingDate: e.target.value })}
+                                          />
+                                        ) : (
+                                          <div className="text-slate-700 font-medium">{editingLeadData.foundingDate || '-'}</div>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-slate-400 font-bold mb-1">经营状态</label>
-                                        <div className="text-slate-700 font-medium">{editingLeadData.operationStatus || '-'}</div>
+                                        {isEditing ? (
+                                          <input
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            value={editingLeadData.operationStatus || ''}
+                                            onChange={e => setEditingLeadData({ ...editingLeadData, operationStatus: e.target.value })}
+                                            placeholder="请输入经营状态"
+                                          />
+                                        ) : (
+                                          <div className="text-slate-700 font-medium">{editingLeadData.operationStatus || '-'}</div>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-slate-400 font-bold mb-1">企业类型</label>
-                                        <div className="text-slate-700 font-medium truncate" title={editingLeadData.companyType}>{editingLeadData.companyType || '-'}</div>
+                                        {isEditing ? (
+                                          <input
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            value={editingLeadData.companyType || ''}
+                                            onChange={e => setEditingLeadData({ ...editingLeadData, companyType: e.target.value })}
+                                            placeholder="请输入企业类型"
+                                          />
+                                        ) : (
+                                          <div className="text-slate-700 font-medium truncate" title={editingLeadData.companyType}>{editingLeadData.companyType || '-'}</div>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-slate-400 font-bold mb-1">发证机构</label>
-                                        <div className="text-slate-700 font-medium truncate" title={editingLeadData.issuingBody}>{editingLeadData.issuingBody || '-'}</div>
+                                        {isEditing ? (
+                                          <input
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            value={editingLeadData.issuingBody || ''}
+                                            onChange={e => setEditingLeadData({ ...editingLeadData, issuingBody: e.target.value })}
+                                            placeholder="请输入发证机构"
+                                          />
+                                        ) : (
+                                          <div className="text-slate-700 font-medium truncate" title={editingLeadData.issuingBody}>{editingLeadData.issuingBody || '-'}</div>
+                                        )}
                                     </div>
                                     <div className="col-span-2">
                                         <label className="block text-slate-400 font-bold mb-1">经营范围</label>
-                                        <div className="text-slate-600 leading-relaxed line-clamp-3" title={editingLeadData.businessScope}>{editingLeadData.businessScope || '-'}</div>
+                                        {isEditing ? (
+                                          <textarea
+                                            rows={3}
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100 resize-none"
+                                            value={editingLeadData.businessScope || ''}
+                                            onChange={e => setEditingLeadData({ ...editingLeadData, businessScope: e.target.value })}
+                                            placeholder="请输入经营范围"
+                                          />
+                                        ) : (
+                                          <div className="text-slate-600 leading-relaxed line-clamp-3" title={editingLeadData.businessScope}>{editingLeadData.businessScope || '-'}</div>
+                                        )}
                                     </div>
                                 </div>
                             </div>

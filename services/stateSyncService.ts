@@ -8,6 +8,15 @@ type SyncPayload = {
   appVersion?: string;
 };
 
+const parseEnvelope = (raw: any) => {
+  const hasCode = Number.isFinite(Number(raw?.code));
+  const code = hasCode ? Number(raw.code) : undefined;
+  const ok = hasCode ? code === 0 : Boolean(raw?.ok);
+  const payload = raw && typeof raw?.data === 'object' ? raw.data : raw;
+  const message = String(raw?.message || raw?.error || '');
+  return { ok, code, payload, message };
+};
+
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let latestPayload: SyncPayload | null = null;
 
@@ -74,16 +83,28 @@ export const stateSyncService = {
     if (!text) return { ok: false, datasets: {}, metadata: {}, error: 'empty response', status: res.status };
     try {
       const data = JSON.parse(text);
-      if (!res.ok) {
+      const parsed = parseEnvelope(data);
+      const payload = parsed.payload || {};
+      if (!res.ok || !parsed.ok) {
         return {
           ok: false,
-          datasets: data?.datasets || {},
-          metadata: data?.metadata || {},
-          error: data?.error || `HTTP ${res.status}`,
-          status: res.status
+          code: parsed.code,
+          datasets: payload?.datasets || {},
+          metadata: payload?.metadata || {},
+          error: parsed.message || `HTTP ${res.status}`,
+          status: res.status,
+          message: parsed.message
         };
       }
-      return { ...data, status: res.status };
+      return {
+        ok: true,
+        code: parsed.code,
+        datasets: payload?.datasets || {},
+        metadata: payload?.metadata || {},
+        mode: payload?.mode,
+        status: res.status,
+        message: parsed.message
+      };
     } catch {
       return { ok: false, datasets: {}, metadata: {}, error: 'invalid json response', status: res.status };
     }
@@ -93,7 +114,9 @@ export const stateSyncService = {
     const text = await res.text();
     if (!text) return { ok: false, error: 'empty response' };
     try {
-      return JSON.parse(text);
+      const data = JSON.parse(text);
+      const parsed = parseEnvelope(data);
+      return parsed.ok ? { ok: true, ...(parsed.payload || {}) } : { ok: false, error: parsed.message || 'health failed' };
     } catch {
       return { ok: false, error: 'invalid json response' };
     }

@@ -1,22 +1,30 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { FileText, Download, Search, X, Upload, Loader2, BrainCircuit, Trash2, Database, Zap, BookOpen, Sparkles, ArrowRight, Bot, ExternalLink, RefreshCw, Lock, Eye, ShieldCheck, FileKey } from 'lucide-react';
-import { KnowledgeDoc, RoleID } from '../types';
+import { FileText, Download, Search, X, Upload, Loader2, BrainCircuit, Trash2, Database, Zap, BookOpen, Sparkles, ArrowRight, Bot, ExternalLink, RefreshCw, Lock, Eye, ShieldCheck, FileKey, Paperclip } from 'lucide-react';
+import { AuditEvidence, AuditIssue, KnowledgeDoc, RoleID } from '../types';
 import { SYSTEM_ROLES } from '../constants';
 import { aiService } from '../services/aiService';
 import { IngestionUploader } from '../components/IngestionUploader';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { extractTextFromDocx } from '../services/documentParsers';
+import { buildKnowledgeDedupeHash, findDuplicateKnowledgeDoc } from '../src/utils/knowledgeDedupe';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { readGlobalSearchQuery } from '../src/modules/global_search';
+import { APP_ROUTES } from '../src/routes';
 
 const Knowledge = () => {
-  const { knowledgeDocs, addKnowledgeDoc, deleteKnowledgeDoc, updateKnowledgeDoc, currentUser, backfillPdcaForPaidContracts } = useApp();
+  const { knowledgeDocs, auditIssues, addKnowledgeDoc, deleteKnowledgeDoc, updateKnowledgeDoc, currentUser, backfillPdcaForPaidContracts } = useApp();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [filter, setFilter] = useState('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isBackfilling, setIsBackfilling] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [dashboardFocus, setDashboardFocus] = useState<any>(null);
+  const [dashboardFocusLabel, setDashboardFocusLabel] = useState('');
   
   const [newDocTitle, setNewDocTitle] = useState('');
   const [newDocCategory, setNewDocCategory] = useState<'Company Profile' | 'Product Service' | 'Standard' | 'Template' | 'Training' | 'PDCA' | 'AI生成' | 'Other'>('Company Profile');
@@ -28,6 +36,7 @@ const Knowledge = () => {
   // Preview Drawer State
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDoc | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [previewEvidence, setPreviewEvidence] = useState<null | { name: string; url: string; kind: 'image' | 'pdf' }>(null);
 
   const allRoles: RoleID[] = ['ADMIN', 'MANAGER', 'CONSULTANT', 'FINANCE'];
   const getRoleLabel = (roleId: RoleID) => SYSTEM_ROLES.find(r => r.id === roleId)?.name || roleId;
@@ -48,7 +57,14 @@ const Knowledge = () => {
 
   const accessibleDocs = knowledgeDocs.filter(canAccessDoc);
   const normalizedQuery = searchTerm.trim().toLowerCase();
-  const filteredDocsBase = filter === 'All' ? accessibleDocs : accessibleDocs.filter(d => d.category === filter);
+  const matchesDashboardFocus = (doc: KnowledgeDoc) => {
+      if (!dashboardFocus?.type) return true;
+      if (dashboardFocus.type === 'ai_ready') return !!doc.aiVisible;
+      if (dashboardFocus.type === 'audit_linked') return doc.linkType === 'audit';
+      if (dashboardFocus.type === 'category') return doc.category === dashboardFocus.category;
+      return true;
+  };
+  const filteredDocsBase = (filter === 'All' ? accessibleDocs : accessibleDocs.filter(d => d.category === filter)).filter(matchesDashboardFocus);
   const filteredDocs = normalizedQuery
     ? filteredDocsBase.filter(doc => {
         const haystack = [
@@ -64,6 +80,10 @@ const Knowledge = () => {
         return haystack.includes(normalizedQuery);
       })
     : filteredDocsBase;
+
+  const auditIssueMap = useMemo<Map<string, AuditIssue>>(() => new Map(auditIssues.map(issue => [issue.id, issue] as const)), [auditIssues]);
+  const resolveLinkedAuditIssue = (doc?: KnowledgeDoc | null): AuditIssue | null => doc?.linkType === 'audit' && doc.linkId ? auditIssueMap.get(doc.linkId) || null : null;
+  const linkedPreviewAudit = useMemo(() => resolveLinkedAuditIssue(previewDoc), [previewDoc, auditIssueMap]);
   
   const learnedDocsCount = accessibleDocs.filter(d => d.aiVisible).length;
 
@@ -77,6 +97,7 @@ const Knowledge = () => {
           case 'Template': return '文档模板';
           case 'Training': return '培训资料';
           case 'AI生成': return 'AI交付';
+          case '证书档案': return '证书档案';
           default: return cat;
       }
   };
@@ -86,6 +107,76 @@ const Knowledge = () => {
       if (cat === 'AI生成') return ['ADMIN', 'MANAGER'];
       return ['ADMIN', 'MANAGER', 'CONSULTANT', 'FINANCE'];
   };
+
+  const getDuplicateAlertMessage = (duplicate: KnowledgeDoc, incomingTitle: string) => {
+      return [
+          '检测到重复文档，已阻止重复入库。',
+          `已存在：${duplicate.title}（${getCategoryLabel(duplicate.category)}）`,
+          `更新日期：${duplicate.updatedAt || '-'}`,
+          `本次上传：${incomingTitle}`,
+          '建议：如需调整分类或权限，请直接编辑已存在文档。'
+      ].join('\n');
+  };
+
+  const tryAddKnowledgeDoc = async (doc: KnowledgeDoc, file?: File): Promise<boolean> => {
+      const dedupeHash = doc.dedupeHash || (file ? await buildKnowledgeDedupeHash(file, doc.title) : '');
+      const normalizedDoc: KnowledgeDoc = {
+          ...doc,
+          dedupeHash: dedupeHash || undefined,
+          originalFileName: doc.originalFileName || file?.name
+      };
+
+      const duplicate = findDuplicateKnowledgeDoc(knowledgeDocs, normalizedDoc);
+      if (duplicate) {
+          alert(getDuplicateAlertMessage(duplicate, normalizedDoc.title));
+          return false;
+      }
+
+      const result = await addKnowledgeDoc(normalizedDoc);
+      if (!result.ok) {
+          const duplicateDoc = knowledgeDocs.find(d => d.id === result.duplicateId);
+          if (duplicateDoc) {
+              alert(getDuplicateAlertMessage(duplicateDoc, normalizedDoc.title));
+          } else {
+              alert('检测到重复文档，已阻止重复入库。');
+          }
+          return false;
+      }
+      return true;
+  };
+
+  useEffect(() => {
+      const q = readGlobalSearchQuery(location.search);
+      if (q) setSearchTerm(q);
+  }, [location.search]);
+
+  useEffect(() => {
+      const state: any = location.state || {};
+      const focus = state.dashboardFocus;
+      if (focus?.type) {
+          setDashboardFocus(focus);
+          if (focus.type === 'ai_ready') {
+              setFilter('All');
+              setDashboardFocusLabel('AI 可用知识');
+          } else if (focus.type === 'audit_linked') {
+              setFilter('All');
+              setDashboardFocusLabel('审计经验知识卡');
+          } else if (focus.type === 'category' && focus.category) {
+              setFilter(String(focus.category));
+              setDashboardFocusLabel(`分类：${getCategoryLabel(String(focus.category))}`);
+          }
+      }
+      const targetId = state.openDetailId;
+      if (targetId) {
+          const targetDoc = accessibleDocs.find(doc => doc.id === targetId) || knowledgeDocs.find(doc => doc.id === targetId);
+          if (targetDoc) {
+              setPreviewDoc(targetDoc);
+          }
+      }
+      if (state.dashboardFocus || state.openDetailId) {
+          window.history.replaceState({}, document.title);
+      }
+  }, [location.state, accessibleDocs, knowledgeDocs]);
 
   useEffect(() => {
       // Auto-generate summary when opening preview if missing
@@ -183,7 +274,8 @@ const Knowledge = () => {
               aiVisible: aiVisible, // V5.0 Security Flag
               accessRoles: visibleRoles
           };
-          addKnowledgeDoc(newDoc);
+          const added = await tryAddKnowledgeDoc(newDoc, file);
+          if (!added) return;
           setIsModalOpen(false);
           setNewDocTitle('');
       } catch (error) {
@@ -205,34 +297,64 @@ const Knowledge = () => {
       setPreviewDoc(doc);
   };
 
+  const triggerDownload = (url: string, name: string) => {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+  };
+
   const handleDownload = (e: React.MouseEvent, doc: KnowledgeDoc) => {
       e.stopPropagation();
       if (!doc.sourceUrl || doc.sourceUrl === '#') {
           if (doc.content) {
               const blob = new Blob([doc.content], { type: 'text/markdown' });
               const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `${doc.title}.md`; 
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
+              triggerDownload(url, `${doc.title}.md`);
               URL.revokeObjectURL(url);
           } else {
               alert('【演示模式】此为纯演示条目，无实体内容。');
           }
       } else {
-          const a = document.createElement('a');
-          a.href = doc.sourceUrl;
-          a.download = doc.title;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
+          triggerDownload(doc.sourceUrl, doc.title);
       }
   };
 
-  const isImage = (fmt: string) => ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(fmt.toLowerCase());
+  const isImage = (fmt: string) => ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'image/svg+xml'].includes(fmt.toLowerCase());
   const isPdf = (fmt: string) => ['pdf'].includes(fmt.toLowerCase());
+  const resolveEvidencePreviewKind = (type: string, url?: string) => {
+      const normalizedType = String(type || '').toLowerCase();
+      const resolvedUrl = String(url || '');
+      if (!resolvedUrl) return null;
+      if (normalizedType.includes('pdf') || resolvedUrl.startsWith('data:application/pdf')) return { kind: 'pdf' as const, url: resolvedUrl };
+      if (normalizedType.includes('image') || isImage(normalizedType) || resolvedUrl.startsWith('data:image')) return { kind: 'image' as const, url: resolvedUrl };
+      return null;
+  };
+
+  const handlePreviewAuditEvidence = (evidence: NonNullable<typeof linkedPreviewAudit>['evidences'][number]) => {
+      const resolved = resolveEvidencePreviewKind(evidence.type, evidence.url);
+      if (!resolved) {
+          alert('当前证据仅支持图片/PDF 在线预览，请改用下载查看。');
+          return;
+      }
+      setPreviewEvidence({ name: evidence.name, url: resolved.url, kind: resolved.kind });
+  };
+
+  const handleDownloadAuditEvidence = (evidence: AuditEvidence) => {
+      if (!evidence.url) {
+          alert('该证据暂无可下载地址。');
+          return;
+      }
+      triggerDownload(evidence.url, evidence.name);
+  };
+
+  const handleOpenLinkedAudit = () => {
+      if (!linkedPreviewAudit) return;
+      setPreviewDoc(null);
+      navigate(APP_ROUTES.AUDIT, { state: { openDetailId: linkedPreviewAudit.id } });
+  };
 
   return (
     <div className="p-6 space-y-6 animate-in fade-in duration-500">
@@ -309,9 +431,29 @@ const Knowledge = () => {
               </div>
           </div>
       </div>
+      {dashboardFocusLabel && (
+          <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+                  工作台焦点：{dashboardFocusLabel}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                    setDashboardFocus(null);
+                    setDashboardFocusLabel('');
+                    setFilter('All');
+                }}
+                className="text-xs font-bold text-gray-500 hover:text-gray-700"
+              >
+                  清除焦点
+              </button>
+          </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredDocs.map(doc => (
+          {filteredDocs.map(doc => {
+              const linkedAudit = resolveLinkedAuditIssue(doc);
+              return (
               <div 
                 key={doc.id} 
                 className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 transition-all hover:shadow-xl hover:-translate-y-1 cursor-pointer group relative"
@@ -345,6 +487,13 @@ const Knowledge = () => {
                       <p className="text-[10px] text-gray-400 mt-1">关联：{doc.linkTitle}</p>
                   )}
                   <p className="text-[10px] text-gray-400 mt-1">可见范围：{getAccessLabel(doc)}</p>
+                  {linkedAudit && (
+                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-bold">
+                          <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">审计经验</span>
+                          <span className="px-2 py-0.5 rounded-full bg-white text-gray-600 border border-gray-200">证据 {(linkedAudit.evidences || []).length} 份</span>
+                          <span className="px-2 py-0.5 rounded-full bg-white text-gray-600 border border-gray-200">状态 {linkedAudit.status}</span>
+                      </div>
+                  )}
                   
                   {/* Summary Snippet */}
                   {doc.summary ? (
@@ -374,8 +523,13 @@ const Knowledge = () => {
                       </div>
                   </div>
               </div>
-          ))}
+          );})}
       </div>
+      {filteredDocs.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-gray-200 bg-white py-10 text-center text-sm text-gray-400">
+              当前筛选下暂无知识文档。
+          </div>
+      )}
 
       {/* Upload Modal with Security Toggle */}
       {isModalOpen && (
@@ -476,7 +630,7 @@ const Knowledge = () => {
                             label="点击或拖拽文件到此处"
                             subLabel="支持 PDF, Word, 图片, 文本 (AI 自动提取摘要)"
                             options={{ aiVisible }}
-                            onSuccess={(result) => {
+                            onSuccess={async (result, file) => {
                                 const doc = result.data;
                                 if (doc) {
                                     const newDoc: KnowledgeDoc = {
@@ -492,7 +646,8 @@ const Knowledge = () => {
                                         aiVisible: aiVisible,
                                         accessRoles: visibleRoles
                                     };
-                                    addKnowledgeDoc(newDoc);
+                                    const added = await tryAddKnowledgeDoc(newDoc, file);
+                                    if (!added) return;
                                     setIsModalOpen(false);
                                     setNewDocTitle('');
                                     alert("✅ 上传成功！AI 已自动处理内容。");
@@ -518,11 +673,16 @@ const Knowledge = () => {
                           </div>
                           <div className="min-w-0">
                               <h2 className="text-lg font-bold text-gray-900 truncate">{previewDoc.title}</h2>
-                              <div className="flex items-center space-x-2 mt-1">
+                              <div className="flex items-center space-x-2 mt-1 flex-wrap">
                                   <span className="text-xs text-gray-500">{getCategoryLabel(previewDoc.category)}</span>
                                   <span className="text-[10px] bg-gray-50 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 font-bold">
                                       可见：{getAccessLabel(previewDoc)}
                                   </span>
+                                  {linkedPreviewAudit && (
+                                      <span className="text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-100 font-bold">
+                                          审计闭环同步
+                                      </span>
+                                  )}
                                   {!previewDoc.aiVisible && (
                                       <span className="flex items-center text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded border border-red-100 font-bold">
                                           <Lock className="w-3 h-3 mr-1" /> 机密模式
@@ -549,7 +709,66 @@ const Knowledge = () => {
                   <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
                       {/* Main Content Area */}
                       <div className="flex-1 overflow-y-auto p-8 bg-gray-50 custom-scrollbar">
-                          <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200 min-h-full">
+                          <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200 min-h-full space-y-6">
+                              {linkedPreviewAudit && (
+                                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-5">
+                                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                                          <div>
+                                              <h3 className="text-base font-black text-gray-900 flex items-center"><Paperclip className="w-4 h-4 mr-2 text-indigo-600" /> 审计证据同步预览</h3>
+                                              <p className="text-xs text-gray-500 mt-1">该知识卡已关联原始审计问题，证据与验证结论会实时同步显示。</p>
+                                          </div>
+                                          <button onClick={handleOpenLinkedAudit} className="inline-flex items-center px-3 py-2 rounded-xl bg-white border border-indigo-100 text-xs font-black text-indigo-700 hover:bg-indigo-100 transition-colors">
+                                              <ExternalLink className="w-3 h-3 mr-1" /> 回到原问题
+                                          </button>
+                                      </div>
+                                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
+                                          <div className="rounded-xl bg-white border border-indigo-100 px-3 py-3">
+                                              <div className="text-gray-400">客户</div>
+                                              <div className="font-black text-gray-900 mt-1">{linkedPreviewAudit.customerName}</div>
+                                          </div>
+                                          <div className="rounded-xl bg-white border border-indigo-100 px-3 py-3">
+                                              <div className="text-gray-400">状态</div>
+                                              <div className="font-black text-gray-900 mt-1">{linkedPreviewAudit.status}</div>
+                                          </div>
+                                          <div className="rounded-xl bg-white border border-indigo-100 px-3 py-3">
+                                              <div className="text-gray-400">严重度</div>
+                                              <div className="font-black text-gray-900 mt-1">{linkedPreviewAudit.severity}</div>
+                                          </div>
+                                          <div className="rounded-xl bg-white border border-indigo-100 px-3 py-3">
+                                              <div className="text-gray-400">证据数</div>
+                                              <div className="font-black text-gray-900 mt-1">{(linkedPreviewAudit.evidences || []).length} 份</div>
+                                          </div>
+                                      </div>
+                                      <div className="mt-4 rounded-2xl border border-white/80 bg-white p-4">
+                                          <div className="text-xs font-black text-gray-400 uppercase tracking-widest">验证关闭结论</div>
+                                          <div className="text-sm text-gray-800 leading-6 mt-2">{linkedPreviewAudit.verification?.notes || '暂未填写验证结论。'}</div>
+                                          <div className="mt-3 text-xs text-gray-500">验证人：{linkedPreviewAudit.verification?.verifiedBy || '-'} · 验证日期：{linkedPreviewAudit.verification?.verifiedAt || '-'}</div>
+                                      </div>
+                                      <div className="mt-4 space-y-3">
+                                          {(linkedPreviewAudit.evidences || []).length > 0 ? linkedPreviewAudit.evidences!.map(evidence => (
+                                              <div key={evidence.id} className="rounded-2xl border border-white/80 bg-white p-4">
+                                                  <div className="flex flex-col lg:flex-row lg:items-start gap-4">
+                                                      <div className="flex-1 min-w-0">
+                                                          <div className="text-sm font-black text-gray-900 truncate">{evidence.name}</div>
+                                                          <div className="mt-2 text-xs text-gray-500">上传：{evidence.uploadDate} · {evidence.uploadedBy || '未记录上传人'}</div>
+                                                          <div className="mt-2 text-xs text-gray-600 leading-5">{evidence.note || '暂无证据说明。'}</div>
+                                                      </div>
+                                                      <div className="flex items-center gap-2 shrink-0">
+                                                          <button type="button" onClick={() => handlePreviewAuditEvidence(evidence)} className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-xs font-black text-gray-700 hover:bg-gray-50 flex items-center">
+                                                              <Eye className="w-3 h-3 mr-1" /> 预览
+                                                          </button>
+                                                          <button type="button" onClick={() => handleDownloadAuditEvidence(evidence)} className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-xs font-black text-gray-700 hover:bg-gray-50">
+                                                              下载
+                                                          </button>
+                                                      </div>
+                                                  </div>
+                                              </div>
+                                          )) : (
+                                              <div className="rounded-2xl border border-dashed border-indigo-200 bg-white/70 py-6 text-center text-sm text-gray-400">当前关联审计问题暂无同步证据。</div>
+                                          )}
+                                      </div>
+                                  </div>
+                              )}
                               {isImage(previewDoc.format) && previewDoc.sourceUrl && previewDoc.sourceUrl !== '#' ? (
                                   <div className="flex flex-col items-center">
                                       <img src={previewDoc.sourceUrl} alt={previewDoc.title} className="max-w-full h-auto rounded-lg shadow-sm" />
@@ -604,6 +823,7 @@ const Knowledge = () => {
                                           <ul className="list-disc list-inside text-xs text-gray-500 space-y-1">
                                               <li>{previewDoc.category === 'Company Profile' ? '公司制度/流程基准' : '内部知识参考'}</li>
                                               <li>{previewDoc.category === 'Standard' ? '合规性检查依据' : '项目交付参考'}</li>
+                                              {linkedPreviewAudit && <li>可结合整改证据与验证结论，直接用于同类问题复盘和 SOP 优化。</li>}
                                           </ul>
                                       </div>
                                   </div>
@@ -611,7 +831,7 @@ const Knowledge = () => {
                                   <div className="text-center py-10">
                                       <p className="text-xs text-gray-400 mb-4">暂无摘要</p>
                                       <button 
-                                        onClick={() => setPreviewDoc({...previewDoc, summary: ''})} // Trigger effect manually
+                                        onClick={() => setPreviewDoc({...previewDoc, summary: ''})}
                                         className="text-xs bg-indigo-50 text-indigo-600 px-3 py-2 rounded-lg font-bold hover:bg-indigo-100 transition-colors"
                                       >
                                           <RefreshCw className="w-3 h-3 inline mr-1" /> 重新生成
@@ -620,6 +840,26 @@ const Knowledge = () => {
                               )}
                           </div>
                       </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {previewEvidence && (
+          <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+              <div className="w-full max-w-5xl bg-white rounded-3xl shadow-2xl overflow-hidden border border-gray-100">
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                      <div className="text-sm font-black text-gray-900 truncate pr-4">{previewEvidence.name}</div>
+                      <button onClick={() => setPreviewEvidence(null)} className="p-2 rounded-full hover:bg-gray-100 text-gray-500">
+                          <X className="w-5 h-5" />
+                      </button>
+                  </div>
+                  <div className="bg-gray-50 p-4 max-h-[80vh] overflow-auto">
+                      {previewEvidence.kind === 'image' ? (
+                          <img src={previewEvidence.url} alt={previewEvidence.name} className="w-full rounded-2xl border border-gray-200 bg-white" />
+                      ) : (
+                          <iframe title={previewEvidence.name} src={previewEvidence.url} className="w-full h-[72vh] rounded-2xl bg-white border border-gray-200" />
+                      )}
                   </div>
               </div>
           </div>

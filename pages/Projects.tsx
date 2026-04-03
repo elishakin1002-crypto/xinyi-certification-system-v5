@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory } from '../types';
+import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog } from '../types';
 import { SERVICE_CATALOG, SERVICE_CATEGORIES, SERVICE_CATEGORY_DELIVERY_MODE, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY } from '../constants';
 import { 
   Briefcase, Search, Plus, Clock, AlertTriangle, 
@@ -11,6 +11,9 @@ import {
   Brain, RefreshCw
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { resolveProjectCapabilities } from '../src/utils/projectCapabilities';
+import { readGlobalSearchQuery } from '../src/modules/global_search';
+import { TASK_STATUS, WORK_LOG_SOURCE } from '../src/constants/status.ts';
 
 const normalizeServiceToken = (value: string) => (value || '')
   .toUpperCase()
@@ -44,7 +47,7 @@ const matchServiceCatalog = (input: string, category?: ServiceCategory | ''): Se
 };
 
 const Projects = () => {
-  const { projects, customers, contracts, marketSignals, toggleReceivableStatus, addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, completeProject, reopenProject, updateProjectCost, convertIntelProjectToLead, bindFollowUpProjectToCustomer, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate, activeRole, currentUser, userProfiles, checkActionPermission, aiDecisionLogs, runProjectDiagnosis } = useApp();
+  const { projects, customers, contracts, marketSignals, projectWorkLogs, auditIssues, toggleReceivableStatus, addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, deleteProjectWorkLog, completeProject, reopenProject, updateProjectCost, convertIntelProjectToLead, bindFollowUpProjectToCustomer, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate, activeRole, currentUser, userProfiles, checkActionPermission, aiDecisionLogs, runProjectDiagnosis } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
@@ -58,6 +61,7 @@ const Projects = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [viewScope, setViewScope] = useState<'all' | 'related'>(() => activeRole === 'CONSULTANT' ? 'related' : 'all');
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [templateModalProjectId, setTemplateModalProjectId] = useState<string | null>(null);
   const [templateSearch, setTemplateSearch] = useState('');
   const [showArchivedTemplates, setShowArchivedTemplates] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
@@ -66,7 +70,18 @@ const Projects = () => {
   const [undoComplete, setUndoComplete] = useState<{ projectId: string; eventId: string; expiresAt: number } | null>(null);
   const [seenAutoCompleteEvents, setSeenAutoCompleteEvents] = useState<string[]>([]);
   const [taskViewMode, setTaskViewMode] = useState<'grouped' | 'flat'>('grouped');
+  const [dashboardFocus, setDashboardFocus] = useState<any>(null);
+  const [dashboardFocusLabel, setDashboardFocusLabel] = useState('');
   const [followUpCustomerBinding, setFollowUpCustomerBinding] = useState<Record<string, string>>({});
+  const [workLogDrafts, setWorkLogDrafts] = useState<Record<string, {
+    logDate: string;
+    serviceItemId: string;
+    taskId: string;
+    actualHours: string;
+    workContent: string;
+    issueNote: string;
+    nextPlan: string;
+  }>>({});
   const [serviceDraft, setServiceDraft] = useState<{
     projectId: string;
     rawName: string;
@@ -86,18 +101,6 @@ const Projects = () => {
     const t = d ? new Date(d).getTime() : 0;
     return Number.isFinite(t) ? t : 0;
   };
-
-  const sortedActiveTemplates = taskTemplates
-    .filter(t => !t.archived)
-    .slice()
-    .sort((a, b) => {
-      const au = dateKey(a.lastUsedAt);
-      const bu = dateKey(b.lastUsedAt);
-      if (au !== bu) return bu - au;
-      const ac = dateKey(a.createdAt);
-      const bc = dateKey(b.createdAt);
-      return bc - ac;
-    });
 
   const filteredTemplatesForModal = taskTemplates
     .filter(t => showArchivedTemplates ? true : !t.archived)
@@ -140,73 +143,160 @@ const Projects = () => {
     }
   };
 
+  const templateModalProject = templateModalProjectId
+    ? projects.find(p => p.id === templateModalProjectId) || null
+    : null;
+
   const [formData, setFormData] = useState<Partial<Project>>({
     name: '', manager: '', deadline: '', duration: 30, projectType: 'Self-Operated', projectCategory: 'Delivery'
   });
+  const defaultWorkLogDraft = () => ({
+    logDate: new Date().toISOString().split('T')[0],
+    serviceItemId: '',
+    taskId: '',
+    actualHours: '1',
+    workContent: '',
+    issueNote: '',
+    nextPlan: ''
+  });
+
+  const assignableManagers = Array.from(new Set(
+    userProfiles
+      .filter(u => u.id !== 'AI-WORKER')
+      .map(u => String(u.name || '').trim())
+      .filter(Boolean)
+  ));
+  const managerOptions = ['待指派', ...assignableManagers];
+  const isValidManager = (value: string) => value === '待指派' || assignableManagers.includes(value);
+
+  const openCreateModal = () => {
+    const defaultManager = String(currentUser?.name || '').trim() || '待指派';
+    setFormData({
+      name: '',
+      manager: defaultManager,
+      deadline: '',
+      duration: 30,
+      projectType: 'Self-Operated',
+      projectCategory: 'Delivery'
+    });
+    setIsModalOpen(true);
+  };
+
+  const now = new Date();
+  const monthKey = now.toISOString().slice(0, 7);
+  const weekStartMs = (() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 6);
+    date.setHours(0, 0, 0, 0);
+    return date.getTime();
+  })();
+  const isMineProject = (project: Project) => project.manager === currentUser.name || (project.tasks || []).some(task => String(task.owner || '') === currentUser.name);
+  const isOpenTask = (task: ProjectTask) => task.status !== 'Completed';
+  const isOverdueTask = (task: ProjectTask) => isOpenTask(task) && new Date(String(task.deadline || '')).getTime() < Date.now();
+  const isDueSoonTask = (task: ProjectTask) => {
+    const diff = Math.ceil((new Date(String(task.deadline || '')).getTime() - Date.now()) / (24 * 3600 * 1000));
+    return isOpenTask(task) && diff >= 0 && diff <= 7;
+  };
+  const isRevenueProject = (project: Project) => {
+    const capability = resolveProjectCapabilities(project);
+    if (capability.projectMode !== 'delivery') return false;
+    if (project.status !== Status.Completed) return false;
+    if ((project as any).isRevenueProject === false) return false;
+    return true;
+  };
+  const projectCompletedMonth = (project: Project) => {
+    const actualEndDate = String(project.completionRecord?.actualEndDate || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(actualEndDate)) return actualEndDate.slice(0, 7);
+    const completedAt = String(project.completionRecord?.completedAt || '').trim();
+    const completedTs = Date.parse(completedAt);
+    return Number.isFinite(completedTs) ? new Date(completedTs).toISOString().slice(0, 7) : '';
+  };
+  const hasHighRisk = (project: Project) => project.status === Status.Risk || project.aiInsight?.riskLevel === 'High';
+  const matchesProjectFocus = (project: Project) => {
+    if (!dashboardFocus?.type) return true;
+    if (dashboardFocus.owner === 'me' && !isMineProject(project)) return false;
+
+    if (dashboardFocus.type === 'revenue_completed') return isRevenueProject(project) && (!dashboardFocus.month || projectCompletedMonth(project) === dashboardFocus.month);
+    if (dashboardFocus.type === 'high_risk') return hasHighRisk(project);
+    if (dashboardFocus.type === 'overdue_tasks') return (project.tasks || []).some(task => dashboardFocus.owner === 'me' ? String(task.owner || '') === currentUser.name && isOverdueTask(task) : isOverdueTask(task));
+    if (dashboardFocus.type === 'due_7d') return (project.tasks || []).some(task => dashboardFocus.owner === 'me' ? String(task.owner || '') === currentUser.name && isDueSoonTask(task) : isDueSoonTask(task));
+    if (dashboardFocus.type === 'completed_7d') return projectWorkLogs.some(log => log.projectId === project.id && log.source === WORK_LOG_SOURCE.TASK_TRANSITION && String(log.operatorName || '') === currentUser.name && new Date(String(log.logDate || '')).getTime() >= weekStartMs);
+    if (dashboardFocus.type === 'customer_confirm') return (project.tasks || []).some(task => String(task.owner || '') === currentUser.name && isOpenTask(task) && /确认|回传|审核|签字|盖章/.test(String(task.title || '')));
+    if (dashboardFocus.type === 'progress_lt_50') return project.status === Status.Active && Number(project.progress || 0) < 50;
+    if (dashboardFocus.type === 'missing_contract_amount') return project.projectCategory === 'Delivery' && Number(project.projectAmount || 0) <= 0;
+    if (dashboardFocus.type === 'delay') return (project.tasks || []).some(task => isOverdueTask(task));
+    if (dashboardFocus.type === 'logs') return projectWorkLogs.some(log => log.projectId === project.id && (!dashboardFocus.owner || String(log.operatorName || '') === currentUser.name) && (!dashboardFocus.range || new Date(String(log.logDate || '')).getTime() >= weekStartMs));
+    if (dashboardFocus.type === 'busiest_owner') return (project.tasks || []).some(task => String(task.owner || '') === currentUser.name && isOpenTask(task));
+    if (dashboardFocus.type === 'team_overview') return project.status === Status.Active;
+    if (dashboardFocus.type === 'active_projects') return project.status === Status.Active;
+    return true;
+  };
 
   useEffect(() => {
     const state: any = location.state || {};
+    const focus = state.dashboardFocus;
+
     if (state.openDetailId) {
       setExpandedProject(state.openDetailId);
-      return;
     }
 
-    const focus = state.dashboardFocus;
-    if (!focus || !focus.type) return;
-
-    const now = new Date();
-    const isOverdue = (t: any) => t && t.status !== 'Completed' && new Date(t.deadline) < now;
-    const isOpen = (t: any) => t && t.status !== 'Completed';
-    const overdueCount = (p: any) => (p.tasks || []).filter((t: any) => isOverdue(t)).length;
-    const openCountForOwner = (p: any, owner: string) => (p.tasks || []).filter((t: any) => isOpen(t) && String(t.owner || '') === owner).length;
-
-    // Default: show active projects.
-    setFilterStatus('Active');
-
-    if (focus.type === 'overdue_tasks') {
+    if (focus?.type) {
+      setDashboardFocus(focus);
       setSearchTerm('');
-      setViewScope(activeRole === 'CONSULTANT' ? 'related' : 'all');
-      setTaskViewMode('flat');
-      const candidate = projects
-        .filter(p => p.status === Status.Active)
-        .slice()
-        .sort((a, b) => overdueCount(b) - overdueCount(a))[0];
-      if (candidate?.id) setExpandedProject(candidate.id);
-      window.history.replaceState({}, document.title);
-      return;
+      setTaskViewMode(['overdue_tasks', 'due_7d', 'customer_confirm', 'busiest_owner'].includes(focus.type) ? 'flat' : 'grouped');
+      setViewScope(focus.owner === 'me' || activeRole === 'CONSULTANT' ? 'related' : 'all');
+      setFilterStatus(['revenue_completed', 'completed_7d'].includes(focus.type) ? 'Completed' : focus.type === 'team_overview' ? 'All' : 'Active');
+
+      if (focus.type === 'revenue_completed') setDashboardFocusLabel(focus.owner === 'me' ? '我的本月营收项目' : '本月营收项目');
+      else if (focus.type === 'high_risk') setDashboardFocusLabel(focus.owner === 'me' ? '我的高风险项目' : '高风险项目');
+      else if (focus.type === 'overdue_tasks') setDashboardFocusLabel(focus.owner === 'me' ? '我的逾期任务项目' : '逾期任务项目');
+      else if (focus.type === 'due_7d') setDashboardFocusLabel(focus.owner === 'me' ? '我 7 天内到期任务' : '7 天内到期任务');
+      else if (focus.type === 'completed_7d') setDashboardFocusLabel('我本周完成任务涉及项目');
+      else if (focus.type === 'customer_confirm') setDashboardFocusLabel('客户待确认事项');
+      else if (focus.type === 'progress_lt_50') setDashboardFocusLabel('服务进度低于 50% 项目');
+      else if (focus.type === 'missing_contract_amount') setDashboardFocusLabel('合同金额缺失项目');
+      else if (focus.type === 'delay') setDashboardFocusLabel('项目延误清单');
+      else if (focus.type === 'logs') setDashboardFocusLabel(focus.metric === 'hours' ? '本周工时日志项目' : '本周日志覆盖项目');
+      else if (focus.type === 'busiest_owner') setDashboardFocusLabel('任务堆积最多项目');
+      else if (focus.type === 'team_overview') setDashboardFocusLabel('团队项目总览');
+      else if (focus.type === 'active_projects') setDashboardFocusLabel(focus.owner === 'me' ? '我负责的进行中项目' : '进行中项目');
     }
 
-    if (focus.type === 'busiest_owner') {
-      const owner = String(focus.owner || '').trim();
-      setTaskViewMode('flat');
-      if (owner) setSearchTerm(owner);
-      const candidate = projects
-        .filter(p => p.status === Status.Active)
-        .slice()
-        .sort((a, b) => openCountForOwner(b, owner) - openCountForOwner(a, owner))[0];
-      if (candidate?.id) setExpandedProject(candidate.id);
+    if (state.dashboardFocus || state.openDetailId) {
       window.history.replaceState({}, document.title);
-      return;
     }
+  }, [location.state, activeRole]);
 
-    window.history.replaceState({}, document.title);
-  }, [location.state, projects, activeRole]);
+  useEffect(() => {
+    const q = readGlobalSearchQuery(location.search);
+    setSearchTerm(q);
+  }, [location.search]);
 
   useEffect(() => {
     setViewScope(activeRole === 'CONSULTANT' ? 'related' : 'all');
   }, [activeRole]);
 
   useEffect(() => {
+    if (undoComplete) return;
+    const nowMs = Date.now();
     const nextAuto = projects.find(p => {
-      const eventId = (p as any).completionRecord?.eventId;
-      const autoCompleted = Boolean((p as any).completionRecord?.autoCompleted);
-      return p.status === Status.Completed && autoCompleted && typeof eventId === 'string' && !seenAutoCompleteEvents.includes(eventId);
+      const record: any = (p as any).completionRecord;
+      const eventId = record?.eventId;
+      const autoCompleted = Boolean(record?.autoCompleted);
+      if (p.status !== Status.Completed || !autoCompleted || typeof eventId !== 'string') return false;
+      if (seenAutoCompleteEvents.includes(eventId)) return false;
+      const completedAt = record?.completedAt;
+      const completedMs = typeof completedAt === 'string' ? new Date(completedAt).getTime() : NaN;
+      if (!Number.isFinite(completedMs)) return false;
+      return nowMs < (completedMs + 30_000);
     });
     if (!nextAuto) return;
-    const eventId = (nextAuto as any).completionRecord.eventId as string;
+    const record: any = (nextAuto as any).completionRecord;
+    const eventId = record.eventId as string;
+    const expiresAt = new Date(record.completedAt).getTime() + 30_000;
     setSeenAutoCompleteEvents(prev => prev.includes(eventId) ? prev : [...prev, eventId]);
-    setUndoComplete({ projectId: nextAuto.id, eventId, expiresAt: Date.now() + 30_000 });
-  }, [projects, seenAutoCompleteEvents]);
+    setUndoComplete({ projectId: nextAuto.id, eventId, expiresAt });
+  }, [projects, seenAutoCompleteEvents, undoComplete]);
 
   useEffect(() => {
     if (!undoComplete) return;
@@ -218,21 +308,20 @@ const Projects = () => {
 
   const [filterStatus, setFilterStatus] = useState<'Active' | 'Completed' | 'All'>('Active');
   
-  const filteredProjects = projects
+  const filteredProjects = useMemo(() => projects
     .filter(p => {
-      // 1. 状态筛选
       if (filterStatus === 'Active' && p.status === Status.Completed) return false;
       if (filterStatus === 'Completed' && p.status !== Status.Completed) return false;
 
-      // 2. 角色数据范围筛选 (Role-based Data Scope)
-      // ... (原有逻辑)
-      const capability = activeRole === 'CONSULTANT' ? { dataScope: 'OWN' } : { dataScope: 'ALL' }; // 简化模拟
-      if (capability.dataScope === 'OWN') {
-          return p.manager === currentUser.name;
-      }
-      return true;
-    })
-    .filter(p => p.name.includes(searchTerm) || p.manager.includes(searchTerm));
+      const capability = activeRole === 'CONSULTANT' ? { dataScope: 'OWN' } : { dataScope: 'ALL' };
+      if (capability.dataScope === 'OWN' && !isMineProject(p)) return false;
+      if (viewScope === 'related' && !isMineProject(p)) return false;
+      if (!matchesProjectFocus(p)) return false;
+
+      const q = searchTerm.trim();
+      if (!q) return true;
+      return p.name.includes(q) || p.manager.includes(q);
+    }), [projects, filterStatus, activeRole, viewScope, searchTerm, dashboardFocus, currentUser.name, projectWorkLogs]);
 
   const getStatusBadge = (status: Status) => {
     switch(status) {
@@ -249,21 +338,62 @@ const Projects = () => {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.manager || formData.manager.trim() === '') {
+    const manager = String(formData.manager || '').trim();
+    if (!manager) {
         alert("必须指定执行负责人！");
         return;
     }
-    addProject(formData);
+    if (!isValidManager(manager)) {
+      alert('执行负责人请从列表选择（或选择“待指派”）。');
+      return;
+    }
+    addProject({ ...formData, manager });
     setIsModalOpen(false);
   };
 
+  const getWorkLogDraft = (projectId: string) => workLogDrafts[projectId] || defaultWorkLogDraft();
+  const patchWorkLogDraft = (projectId: string, patch: Partial<ReturnType<typeof defaultWorkLogDraft>>) => {
+    setWorkLogDrafts(prev => ({ ...prev, [projectId]: { ...getWorkLogDraft(projectId), ...patch } }));
+  };
+  const resetWorkLogDraft = (projectId: string) => {
+    setWorkLogDrafts(prev => ({ ...prev, [projectId]: defaultWorkLogDraft() }));
+  };
+  const getTaskName = (tasks: ProjectTask[], taskId?: string) => {
+    if (!taskId) return '';
+    return tasks.find(t => t.id === taskId)?.title || '';
+  };
+  const getServiceName = (project: Project, serviceItemId?: string) => {
+    const serviceItems = Array.isArray(project.serviceItems) ? project.serviceItems : [];
+    if (!serviceItemId) return '';
+    return serviceItems.find(s => s.id === serviceItemId)?.name || '';
+  };
+
   const renderProjectDetail = (project: Project) => {
-    const isFollowUpProject = (project as any).projectCategory === 'FollowUp';
-    const isIntelFollowUpProject = isFollowUpProject && (project.contractRef || '').startsWith('INTEL:');
-    const sourceSignalId = isIntelFollowUpProject ? (project.contractRef || '').split(':')[1] : '';
+    const projectCaps = resolveProjectCapabilities(project);
+    const isFollowUpProject = projectCaps.isFollowUpProject;
+    const isIntelFollowUpProject = projectCaps.isIntelOrigin && projectCaps.isFollowUpProject;
+    const sourceSignalId = isIntelFollowUpProject ? projectCaps.sourceRef : '';
     const sourceSignal = sourceSignalId ? marketSignals.find(s => s.id === sourceSignalId) : undefined;
     const selectedCustomerId = followUpCustomerBinding[project.id] || project.customerId || '';
     const linkedContract = contracts.find(c => c.id === project.contractRef || c.contractNo === project.contractRef);
+    const linkedCustomer = selectedCustomerId
+      ? customers.find(customer => customer.id === selectedCustomerId)
+      : linkedContract?.customerId
+        ? customers.find(customer => customer.id === linkedContract.customerId)
+        : undefined;
+    const projectAuditIssues = auditIssues
+      .filter(issue => {
+        if (issue.projectId) return issue.projectId === project.id;
+        if (issue.contractId && linkedContract?.id) return issue.contractId === linkedContract.id;
+        if (issue.contractRef) return issue.contractRef === linkedContract?.id || issue.contractRef === linkedContract?.contractNo;
+        return false;
+      })
+      .sort((a, b) => {
+        const statusRank = (issue: typeof a) => issue.status === 'Closed' ? 1 : 0;
+        const statusDiff = statusRank(a) - statusRank(b);
+        if (statusDiff !== 0) return statusDiff;
+        return String(b.deadline || b.createDate || '').localeCompare(String(a.deadline || a.createDate || ''));
+      });
     const receivables = linkedContract?.receivables || [];
     const contractIdForReceivables = linkedContract?.id;
     const projectAmount = Number.isFinite(Number(project.projectAmount)) ? Number(project.projectAmount) : 0;
@@ -288,45 +418,72 @@ const Projects = () => {
       service: si,
       tasks: allTasks.filter(t => t.serviceItemId === si.id)
     })).filter(group => group.tasks.length > 0);
+    const draft = getWorkLogDraft(project.id);
+    const canWriteStructuredLog = serviceItems.length > 0 || allTasks.length > 0;
+    const projectLogs = projectWorkLogs
+      .filter(log => log.projectId === project.id)
+      .slice()
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const weekStart = (() => {
+      const now = new Date();
+      const day = now.getDay();
+      const diff = day === 0 ? 6 : day - 1;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - diff);
+      monday.setHours(0, 0, 0, 0);
+      return monday.getTime();
+    })();
+    const weekLogs = projectLogs.filter(log => new Date(log.logDate).getTime() >= weekStart);
+    const weekTotalHours = weekLogs.reduce((sum, log) => sum + Number(log.actualHours || 0), 0);
+    const weekContributors = Array.from(new Set(weekLogs.map(log => log.operatorName).filter(Boolean)));
+    const weekByUser = weekLogs.reduce<Record<string, { hours: number; count: number }>>((acc, log) => {
+      const key = log.operatorName || '未知';
+      if (!acc[key]) acc[key] = { hours: 0, count: 0 };
+      acc[key].hours += Number(log.actualHours || 0);
+      acc[key].count += 1;
+      return acc;
+    }, {});
+
+    const submitWorkLog = () => {
+      if (!canWriteStructuredLog) {
+        alert('请先建立服务项或任务，再录入日志。');
+        return;
+      }
+      const task = draft.taskId ? allTasks.find(t => t.id === draft.taskId) : undefined;
+      const serviceItemId = draft.serviceItemId || task?.serviceItemId || '';
+      const res = addProjectWorkLog({
+        projectId: project.id,
+        serviceItemId: serviceItemId || undefined,
+        taskId: draft.taskId || undefined,
+        logDate: draft.logDate,
+        workContent: draft.workContent,
+        actualHours: Number(draft.actualHours || 0),
+        issueNote: draft.issueNote,
+        nextPlan: draft.nextPlan
+      });
+      if (!res.ok) {
+        alert(res.reason || '日志保存失败');
+        return;
+      }
+      resetWorkLogDraft(project.id);
+    };
 
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-8 animate-in slide-in-from-top duration-300">
-        {/* 顶部状态与进度 */}
-        <div className="flex flex-col md:flex-row items-center justify-between pb-6 border-b border-gray-50 gap-4">
-           <div className="flex items-center space-x-4">
-              <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 font-black"> {project.manager[0]} </div>
-              <div>
-                <h4 className="text-lg font-bold text-gray-900">{project.name}</h4>
-                <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-1">负责人: {project.manager} • 周期: {project.duration || 30}天</p>
-              </div>
-           </div>
-           <div className="flex-1 max-w-xs mx-4">
-              <div className="flex justify-between text-[10px] font-black text-gray-400 mb-1.5 uppercase">
-                <span>自动化进度 (核心任务占比)</span>
-                <span className="text-indigo-600">{project.progress}%</span>
-              </div>
-              <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                <div className="bg-indigo-600 h-full transition-all duration-1000" style={{ width: `${project.progress}%` }}></div>
-              </div>
-           </div>
-           <div className="flex items-center space-x-2">
-              {getCategoryBadge((project as any).projectCategory)}
-              {getStatusBadge(project.status)}
-              {canAssign && (
-                <button
-                  onClick={() => {
-                    setAssignProjectId(project.id);
-                    setAssignManager(project.manager);
-                    setIsAssignModalOpen(true);
-                  }}
-                  className="px-3 py-2 text-xs font-black bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50"
-                >
-                  指派负责人
-                </button>
-              )}
-              <button className="p-2 text-gray-400 hover:text-gray-600"><MoreHorizontal className="w-5 h-5" /></button>
-           </div>
-        </div>
+        {canAssign && (
+          <div className="flex justify-end pb-4 border-b border-gray-50">
+            <button
+              onClick={() => {
+                setAssignProjectId(project.id);
+                setAssignManager(assignableManagers.includes(project.manager) ? project.manager : (assignableManagers[0] || ''));
+                setIsAssignModalOpen(true);
+              }}
+              className="px-3 py-2 text-xs font-black bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50"
+            >
+              指派负责人
+            </button>
+          </div>
+        )}
 
         {/* AI 深度诊断面板 */}
         <div className="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl border border-indigo-100 p-5 mb-8 relative overflow-hidden">
@@ -407,7 +564,7 @@ const Projects = () => {
             </div>
         </div>
 
-        {isFollowUpProject && (
+        {isIntelFollowUpProject && (
           <div className="bg-amber-50/70 rounded-2xl border border-amber-100 p-5 space-y-4">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
@@ -447,69 +604,67 @@ const Projects = () => {
               </div>
             </div>
 
-            {isIntelFollowUpProject && (
-              <div className="bg-white rounded-xl border border-amber-100 p-4 space-y-3">
-                <p className="text-xs font-bold text-gray-600">
-                  来源情报：{sourceSignal?.title || '未找到来源信号'} {sourceSignal?.publishedAt ? `（${sourceSignal.publishedAt}）` : ''}
-                </p>
-                <div className="flex flex-col md:flex-row md:items-center gap-3">
+            <div className="bg-white rounded-xl border border-amber-100 p-4 space-y-3">
+              <p className="text-xs font-bold text-gray-600">
+                来源情报：{sourceSignal?.title || '未找到来源信号'} {sourceSignal?.publishedAt ? `（${sourceSignal.publishedAt}）` : ''}
+              </p>
+              <div className="flex flex-col md:flex-row md:items-center gap-3">
+                <button
+                  onClick={() => {
+                    const res = convertIntelProjectToLead(project.id);
+                    if (!res.ok) {
+                      alert(res.reason || '转线索失败');
+                      return;
+                    }
+                    alert('已转为线索跟进，可在客户经营 > 线索管理继续完善。');
+                    navigate('/leads');
+                  }}
+                  className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-black hover:bg-gray-50"
+                >
+                  转为线索
+                </button>
+                <div className="flex items-center gap-2 flex-1">
+                  <select
+                    value={selectedCustomerId}
+                    onChange={e => setFollowUpCustomerBinding(prev => ({ ...prev, [project.id]: e.target.value }))}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none"
+                  >
+                    <option value="">选择要绑定的客户</option>
+                    {customers.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
                   <button
                     onClick={() => {
-                      const res = convertIntelProjectToLead(project.id);
-                      if (!res.ok) {
-                        alert(res.reason || '转线索失败');
+                      if (!selectedCustomerId) {
+                        alert('请先选择客户');
                         return;
                       }
-                      alert('已转为线索跟进，可在客户经营 > 线索管理继续完善。');
-                      navigate('/leads');
+                      const res = bindFollowUpProjectToCustomer(project.id, selectedCustomerId);
+                      if (!res.ok) {
+                        alert(res.reason || '绑定失败');
+                        return;
+                      }
+                      alert('已绑定客户。签约后请在合同管理录入合同并自动立项交付项目。');
                     }}
-                    className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-black hover:bg-gray-50"
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black hover:bg-indigo-700 whitespace-nowrap"
                   >
-                    转为线索
-                  </button>
-                  <div className="flex items-center gap-2 flex-1">
-                    <select
-                      value={selectedCustomerId}
-                      onChange={e => setFollowUpCustomerBinding(prev => ({ ...prev, [project.id]: e.target.value }))}
-                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none"
-                    >
-                      <option value="">选择要绑定的客户</option>
-                      {customers.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={() => {
-                        if (!selectedCustomerId) {
-                          alert('请先选择客户');
-                          return;
-                        }
-                        const res = bindFollowUpProjectToCustomer(project.id, selectedCustomerId);
-                        if (!res.ok) {
-                          alert(res.reason || '绑定失败');
-                          return;
-                        }
-                        alert('已绑定客户。签约后请在合同管理录入合同并自动立项交付项目。');
-                      }}
-                      className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black hover:bg-indigo-700 whitespace-nowrap"
-                    >
-                      绑定客户
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => navigate('/contracts')}
-                    className="px-4 py-2 bg-white border border-indigo-200 text-indigo-700 rounded-xl text-xs font-black hover:bg-indigo-50"
-                  >
-                    去合同管理立项
+                    绑定客户
                   </button>
                 </div>
+                <button
+                  onClick={() => navigate('/contracts')}
+                  className="px-4 py-2 bg-white border border-indigo-200 text-indigo-700 rounded-xl text-xs font-black hover:bg-indigo-50"
+                >
+                  去合同管理立项
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )}
 
         {/* 核心保全：项目结算中心 & 费用信息区块 (T-002) */}
-        {!isFollowUpProject && (
+        {projectCaps.showFinancePanel && (
         <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4 md:p-6 space-y-6">
           
           {/* T-002: 费用信息区块 (Hard Patch) */}
@@ -727,7 +882,7 @@ const Projects = () => {
         </div>
         )}
 
-        {!isFollowUpProject && (
+        {projectCaps.showServicePanel && (
         <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4 md:p-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-5">
             <h3 className="font-black text-gray-900 flex items-center"> <LayoutGrid className="w-5 h-5 mr-2 text-indigo-600" /> 服务清单（项目可承载多服务） </h3>
@@ -938,6 +1093,89 @@ const Projects = () => {
         </div>
         )}
 
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <h3 className="font-black text-gray-900 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+                不符合项与整改任务
+              </h3>
+              <p className="text-xs text-gray-400 font-bold mt-1">
+                {linkedCustomer?.name || '当前项目'}的质量问题会自动生成整改任务，并在这里集中回看。
+              </p>
+            </div>
+            <button
+              onClick={() => navigate('/audit')}
+              className="px-3 py-1.5 bg-white text-amber-700 text-xs font-bold rounded-lg border border-amber-200 hover:bg-amber-50 transition-all shrink-0"
+            >
+              进入审计中心
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+              <div className="text-[10px] font-black text-gray-400 uppercase">问题总数</div>
+              <div className="text-xl font-black text-gray-900">{projectAuditIssues.length}</div>
+            </div>
+            <div className="rounded-xl border border-red-100 bg-red-50 p-3">
+              <div className="text-[10px] font-black text-red-500 uppercase">待闭环</div>
+              <div className="text-xl font-black text-red-700">{projectAuditIssues.filter(issue => issue.status !== 'Closed').length}</div>
+            </div>
+            <div className="rounded-xl border border-amber-100 bg-amber-50 p-3">
+              <div className="text-[10px] font-black text-amber-600 uppercase">重大问题</div>
+              <div className="text-xl font-black text-amber-800">{projectAuditIssues.filter(issue => issue.severity === 'Major' && issue.status !== 'Closed').length}</div>
+            </div>
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3">
+              <div className="text-[10px] font-black text-indigo-600 uppercase">已挂整改任务</div>
+              <div className="text-xl font-black text-indigo-800">{projectAuditIssues.filter(issue => issue.rectificationTaskId).length}</div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {projectAuditIssues.slice(0, 5).map(issue => {
+              const linkedTask = allTasks.find(task => task.id === issue.rectificationTaskId);
+              const severityTone = issue.severity === 'Major'
+                ? 'bg-red-50 text-red-700 border-red-100'
+                : issue.severity === 'Minor'
+                ? 'bg-amber-50 text-amber-700 border-amber-100'
+                : 'bg-blue-50 text-blue-700 border-blue-100';
+              const statusTone = issue.status === 'Closed'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                : 'bg-gray-50 text-gray-700 border-gray-200';
+              return (
+                <div key={issue.id} className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-3">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${severityTone}`}>{issue.severity}</span>
+                        <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${statusTone}`}>{issue.status}</span>
+                        {linkedTask && <span className="text-[11px] font-black px-2 py-1 rounded-full border border-indigo-100 bg-indigo-50 text-indigo-700">任务：{linkedTask.status === 'Completed' ? '已完成' : '进行中'}</span>}
+                      </div>
+                      <div className="text-sm font-bold text-gray-900 mt-2 line-clamp-2">{issue.findings}</div>
+                      <div className="text-[11px] text-gray-500 mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                        <span>客户：{issue.customerName || linkedCustomer?.name || '-'}</span>
+                        <span>整改截止：{issue.deadline || '-'}</span>
+                        <span>整改任务：{linkedTask?.title || '待系统生成'}</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => navigate('/audit', { state: { openDetailId: issue.id } })}
+                      className="text-[11px] font-bold px-2 py-1 rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-100 shrink-0"
+                    >
+                      查看问题
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {projectAuditIssues.length === 0 && (
+              <div className="py-8 text-center text-gray-300 border-2 border-dashed border-gray-100 rounded-3xl">
+                <p className="text-sm font-bold">当前项目暂无关联不符合项，后续登记后会自动挂整改任务。</p>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* 核心新增：交付任务看板 */}
         <div className="space-y-6">
            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -959,16 +1197,8 @@ const Projects = () => {
                      </button>
                    </div>
                  )}
-                 {sortedActiveTemplates.map(tpl => (
-                   <button key={tpl.id} onClick={() => applyTemplateToProject(project.id, tpl.id)} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-lg border border-indigo-100 hover:bg-indigo-100 transition-all flex items-center shrink-0">
-                     <LayoutGrid className="w-3 h-3 mr-1" /> 应用{tpl.name}
-                   </button>
-                 ))}
-                 <button onClick={() => handleSaveAsTemplate(project)} className="px-3 py-1.5 bg-white text-gray-600 text-xs font-bold rounded-lg border border-gray-200 hover:bg-gray-50 transition-all flex items-center shrink-0">
-                    <LayoutGrid className="w-3 h-3 mr-1" /> 另存为模版
-                 </button>
-                 <button onClick={() => { setIsTemplateModalOpen(true); resetTemplateEditor(); }} className="px-3 py-1.5 bg-white text-gray-600 text-xs font-bold rounded-lg border border-gray-200 hover:bg-gray-50 transition-all flex items-center shrink-0">
-                    <MoreHorizontal className="w-3.5 h-3.5 mr-1" /> 模版管理
+                 <button onClick={() => { setTemplateModalProjectId(project.id); setIsTemplateModalOpen(true); resetTemplateEditor(); }} className="px-3 py-1.5 bg-white text-gray-600 text-xs font-bold rounded-lg border border-gray-200 hover:bg-gray-50 transition-all flex items-center shrink-0">
+                    <MoreHorizontal className="w-3.5 h-3.5 mr-1" /> 模板管理
                  </button>
                  <button onClick={() => addProjectTask(project.id, { title: '新任务', deadline: today.toISOString().split('T')[0], status: 'Pending', priority: 'Medium', category: 'Auxiliary', owner: project.manager })} className="p-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 shrink-0">
                     <Plus className="w-4 h-4" />
@@ -1184,6 +1414,188 @@ const Projects = () => {
              )}
            </div>
         </div>
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-5">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <h3 className="font-black text-gray-900 flex items-center gap-2">
+                <Clock className="w-5 h-5 text-indigo-600" />
+                工作日志（关联服务/任务）
+              </h3>
+              <p className="text-xs text-gray-400 font-bold mt-1">
+                日志属于交付过程数据，不做字数考核；用于项目推进、卡点定位与复盘证据。
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center min-w-[260px]">
+              <div className="bg-gray-50 rounded-xl px-3 py-2">
+                <div className="text-[10px] text-gray-400 font-black">本周日志</div>
+                <div className="text-sm font-black text-gray-900">{weekLogs.length}</div>
+              </div>
+              <div className="bg-gray-50 rounded-xl px-3 py-2">
+                <div className="text-[10px] text-gray-400 font-black">本周工时</div>
+                <div className="text-sm font-black text-gray-900">{weekTotalHours.toFixed(1)}h</div>
+              </div>
+              <div className="bg-gray-50 rounded-xl px-3 py-2">
+                <div className="text-[10px] text-gray-400 font-black">参与人数</div>
+                <div className="text-sm font-black text-gray-900">{weekContributors.length}</div>
+              </div>
+            </div>
+          </div>
+
+          {!canWriteStructuredLog && (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs font-bold text-amber-800">
+              当前项目还没有服务项/任务。请先在上方创建服务项或任务后再录入日志，避免“纯文字日报”。
+            </div>
+          )}
+
+          <div className="bg-gray-50 border border-gray-100 rounded-2xl p-4 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">日志日期</label>
+                <input
+                  type="date"
+                  className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none"
+                  value={draft.logDate}
+                  onChange={e => patchWorkLogDraft(project.id, { logDate: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">关联任务</label>
+                <select
+                  className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none"
+                  value={draft.taskId}
+                  onChange={e => {
+                    const taskId = e.target.value;
+                    const selectedTask = allTasks.find(t => t.id === taskId);
+                    patchWorkLogDraft(project.id, {
+                      taskId,
+                      serviceItemId: selectedTask?.serviceItemId || draft.serviceItemId
+                    });
+                  }}
+                >
+                  <option value="">请选择任务</option>
+                  {allTasks.map(task => (
+                    <option key={task.id} value={task.id}>
+                      {task.title}（{task.status === TASK_STATUS.COMPLETED ? '已完成' : '进行中'}）
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">关联服务</label>
+                <select
+                  className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none"
+                  value={draft.serviceItemId}
+                  onChange={e => patchWorkLogDraft(project.id, { serviceItemId: e.target.value })}
+                >
+                  <option value="">请选择服务项</option>
+                  {serviceItems.map(item => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">实际耗时(h)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none"
+                  value={draft.actualHours}
+                  onChange={e => patchWorkLogDraft(project.id, { actualHours: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <textarea
+                className="md:col-span-2 bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none resize-none"
+                rows={3}
+                value={draft.workContent}
+                onChange={e => patchWorkLogDraft(project.id, { workContent: e.target.value })}
+                placeholder="工作内容（必填）"
+              />
+              <textarea
+                className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none resize-none"
+                rows={3}
+                value={draft.issueNote}
+                onChange={e => patchWorkLogDraft(project.id, { issueNote: e.target.value })}
+                placeholder="问题记录（可选）"
+              />
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center gap-3">
+              <input
+                className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none"
+                value={draft.nextPlan}
+                onChange={e => patchWorkLogDraft(project.id, { nextPlan: e.target.value })}
+                placeholder="明日计划（可选）"
+              />
+              <button
+                onClick={submitWorkLog}
+                className="px-5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black hover:bg-indigo-700 disabled:bg-gray-300"
+                disabled={!canWriteStructuredLog}
+              >
+                提交日志
+              </button>
+            </div>
+          </div>
+
+          {Object.keys(weekByUser).length > 0 && (
+            <div className="bg-gray-50 border border-gray-100 rounded-2xl p-4">
+              <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">本周按人汇总（弱绑定，仅作管理参考）</div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                {Object.entries(weekByUser).map(([name, stat]) => (
+                  <div key={name} className="bg-white border border-gray-100 rounded-xl p-3">
+                    <div className="text-xs font-black text-gray-900">{name}</div>
+                    <div className="text-[11px] text-gray-500 font-bold mt-1">日志 {stat.count} 条 · 工时 {stat.hours.toFixed(1)}h</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+            {projectLogs.map((log: ProjectWorkLog) => {
+              const taskName = getTaskName(allTasks, log.taskId);
+              const serviceName = getServiceName(project, log.serviceItemId);
+              const canDelete = log.operatorUserId === currentUser.id || activeRole === 'ADMIN' || activeRole === 'MANAGER';
+              return (
+                <div key={log.id} className="bg-white border border-gray-100 rounded-2xl p-4">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
+                      <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">{log.logDate}</span>
+                      <span className="px-2 py-0.5 rounded-full bg-gray-50 text-gray-600">{log.operatorName}</span>
+                      <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{Number(log.actualHours || 0).toFixed(1)}h</span>
+                      <span className={`px-2 py-0.5 rounded-full ${log.source === WORK_LOG_SOURCE.TASK_TRANSITION ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                        {log.source === WORK_LOG_SOURCE.TASK_TRANSITION ? '任务自动记录' : '手工记录'}
+                      </span>
+                      {taskName && <span className="px-2 py-0.5 rounded-full bg-purple-50 text-purple-700">任务：{taskName}</span>}
+                      {serviceName && <span className="px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700">服务：{serviceName}</span>}
+                    </div>
+                    {canDelete && (
+                      <button
+                        onClick={() => {
+                          const res = deleteProjectWorkLog(log.id);
+                          if (!res.ok) alert(res.reason || '删除失败');
+                        }}
+                        className="text-xs font-black text-gray-400 hover:text-red-500"
+                      >
+                        删除
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-sm text-gray-800 font-bold mt-2 whitespace-pre-wrap">{log.workContent}</div>
+                  {log.issueNote && <div className="text-xs text-amber-700 font-bold mt-2">问题：{log.issueNote}</div>}
+                  {log.nextPlan && <div className="text-xs text-gray-500 font-bold mt-1">明日计划：{log.nextPlan}</div>}
+                </div>
+              );
+            })}
+            {projectLogs.length === 0 && (
+              <div className="py-8 text-center text-gray-300 border-2 border-dashed border-gray-100 rounded-3xl">
+                <p className="text-sm font-bold">暂无工作日志，建议从任务完成时开始沉淀执行记录</p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     );
   };
@@ -1195,22 +1607,23 @@ const Projects = () => {
            <h1 className="text-2xl font-bold text-gray-900">交付工作台</h1>
            <p className="text-sm text-gray-500 mt-1">项目立项中心：不强制关联合同，任务自动驱动进度</p>
         </div>
-        <button onClick={() => setIsModalOpen(true)} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all active:scale-95 font-bold text-sm"><Plus className="w-4 h-4 mr-2" /> 新建项目</button>
+        <button onClick={openCreateModal} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all active:scale-95 font-bold text-sm"><Plus className="w-4 h-4 mr-2" /> 新建项目</button>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
-        <div className="flex items-center space-x-2 w-full md:w-auto overflow-x-auto">
-           <button onClick={() => setFilterStatus('Active')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'Active' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>进行中</button>
-           <button onClick={() => setFilterStatus('Completed')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'Completed' ? 'bg-green-600 text-white shadow-md shadow-green-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>已完成</button>
-           <button onClick={() => setFilterStatus('All')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'All' ? 'bg-gray-800 text-white shadow-md' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>全部项目</button>
-        </div>
-        
-        <div className="flex items-center space-x-3 w-full md:w-auto">
-          <div className="relative flex-1 md:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-                <input type="text" placeholder="搜索项目..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 bg-white outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-            </div>
-            <div className="flex w-full md:w-auto justify-center md:justify-start items-center bg-white border border-gray-200 rounded-xl p-1 shadow-sm">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6 flex flex-col gap-4">
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex items-center space-x-2 w-full md:w-auto overflow-x-auto">
+             <button onClick={() => setFilterStatus('Active')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'Active' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>进行中</button>
+             <button onClick={() => setFilterStatus('Completed')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'Completed' ? 'bg-green-600 text-white shadow-md shadow-green-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>已完成</button>
+             <button onClick={() => setFilterStatus('All')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'All' ? 'bg-gray-800 text-white shadow-md' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>全部项目</button>
+          </div>
+          
+          <div className="flex items-center space-x-3 w-full md:w-auto">
+            <div className="relative flex-1 md:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                  <input type="text" placeholder="搜索项目..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 bg-white outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+              </div>
+              <div className="flex w-full md:w-auto justify-center md:justify-start items-center bg-white border border-gray-200 rounded-xl p-1 shadow-sm">
               <button
                 onClick={() => setViewScope('related')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${viewScope === 'related' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
@@ -1224,7 +1637,29 @@ const Projects = () => {
                 全部项目
               </button>
             </div>
+          </div>
         </div>
+        {dashboardFocusLabel && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+              工作台焦点：{dashboardFocusLabel}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setDashboardFocus(null);
+                setDashboardFocusLabel('');
+                setSearchTerm('');
+                setFilterStatus('Active');
+                setTaskViewMode('grouped');
+                setViewScope(activeRole === 'CONSULTANT' ? 'related' : 'all');
+              }}
+              className="text-xs font-bold text-gray-500 hover:text-gray-700"
+            >
+              清除焦点
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -1334,7 +1769,16 @@ const Projects = () => {
                       <div className="grid grid-cols-2 gap-4">
                           <div>
                               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">执行负责人</label>
-                              <input required className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none" value={formData.manager} onChange={e => setFormData({...formData, manager: e.target.value})} />
+                              <select
+                                required
+                                className="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                                value={String(formData.manager || '').trim()}
+                                onChange={e => setFormData({ ...formData, manager: e.target.value })}
+                              >
+                                {managerOptions.map(name => (
+                                  <option key={name} value={name}>{name}</option>
+                                ))}
+                              </select>
                           </div>
                           <div>
                               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">交付周期(天)</label>
@@ -1468,7 +1912,7 @@ const Projects = () => {
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl p-6 md:p-8 border border-gray-100">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl md:text-2xl font-black text-gray-900">模版管理</h2>
-              <button onClick={() => { setIsTemplateModalOpen(false); resetTemplateEditor(); }} className="p-2 hover:bg-gray-100 rounded-full">
+              <button onClick={() => { setIsTemplateModalOpen(false); setTemplateModalProjectId(null); resetTemplateEditor(); }} className="p-2 hover:bg-gray-100 rounded-full">
                 <X className="w-6 h-6 text-gray-400"/>
               </button>
             </div>
@@ -1490,6 +1934,23 @@ const Projects = () => {
                   显示已归档
                 </label>
               </div>
+
+              {templateModalProject && (
+                <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black text-indigo-900">当前项目：{templateModalProject.name}</p>
+                    <p className="text-[11px] text-indigo-600 font-bold mt-1">
+                      模板操作已统一收纳在此窗口：应用模板、另存模板都在这里完成。
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleSaveAsTemplate(templateModalProject)}
+                    className="px-3 py-2 bg-white border border-indigo-200 text-indigo-700 rounded-xl text-xs font-black hover:bg-indigo-100 whitespace-nowrap"
+                  >
+                    将当前项目另存为模板
+                  </button>
+                </div>
+              )}
 
               {editingTemplateId && (
                 <div className="bg-gray-50/60 border border-gray-100 rounded-2xl p-4 space-y-3">
@@ -1608,6 +2069,17 @@ const Projects = () => {
                         </div>
 
                         <div className="flex items-center gap-2 flex-wrap">
+                          {templateModalProject && !tpl.archived && (
+                            <button
+                              onClick={() => {
+                                applyTemplateToProject(templateModalProject.id, tpl.id);
+                                alert(`已将模板「${tpl.name}」应用到项目「${templateModalProject.name}」`);
+                              }}
+                              className="px-3 py-2 bg-green-50 text-green-700 rounded-xl text-xs font-black hover:bg-green-100"
+                            >
+                              应用到当前项目
+                            </button>
+                          )}
                           <button
                             onClick={() => {
                               const name = prompt('复制为新模版名称', `${tpl.name}（副本）`);

@@ -1,7 +1,7 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ToggleLeft, ToggleRight, Sliders, AlertCircle, ShieldCheck, Lock, EyeOff, FileKey, Activity, Database, ArrowRight, Users, Plus, Trash2, Save } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { RoleID, UserProfile } from '../types';
 import { SYSTEM_ROLES } from '../constants';
@@ -10,7 +10,10 @@ const AICenter = () => {
   const [piiMasking, setPiiMasking] = useState(true);
   const [auditLog, setAuditLog] = useState(true);
   const [dataRetention, setDataRetention] = useState(false);
+  const [activePanel, setActivePanel] = useState<'training-data' | 'model-status' | 'security' | 'members' | ''>('');
+  const [dashboardFocusLabel, setDashboardFocusLabel] = useState('');
   const navigate = useNavigate();
+  const location = useLocation();
   const { userProfiles, updateUserProfile, addUserProfile, deleteUserProfile } = useApp();
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [newUser, setNewUser] = useState<UserProfile>({
@@ -41,17 +44,51 @@ const AICenter = () => {
     return Array.from(new Set(tags));
   };
 
+  useEffect(() => {
+    const state: any = location.state || {};
+    const panelFromState = String(state.dashboardFocus?.panel || '').trim();
+    const panelFromQuery = String(new URLSearchParams(location.search).get('panel') || '').trim();
+    const nextPanel = (panelFromState || panelFromQuery) as 'training-data' | 'model-status' | 'security' | 'members' | '';
+    if (!nextPanel) return;
+    setActivePanel(nextPanel);
+    if (nextPanel === 'training-data') setDashboardFocusLabel('AI 训练数据');
+    else if (nextPanel === 'model-status') setDashboardFocusLabel('模型状态与运行健康度');
+    else if (nextPanel === 'security') setDashboardFocusLabel('安全与隐私策略');
+    else if (nextPanel === 'members') setDashboardFocusLabel('成员与岗位治理');
+
+    if (state.dashboardFocus) {
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state, location.search]);
+
   return (
     <div className="p-6">
        <div className="mb-6">
             <h1 className="text-2xl font-bold text-gray-900">AI 配置与安全中心</h1>
             <p className="text-sm text-gray-500 mt-1">管理模型策略、数据隐私保护与合规性审计</p>
       </div>
+      {dashboardFocusLabel && (
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+            工作台焦点：{dashboardFocusLabel}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setActivePanel('');
+              setDashboardFocusLabel('');
+            }}
+            className="text-xs font-bold text-gray-500 hover:text-gray-700"
+          >
+            清除焦点
+          </button>
+        </div>
+      )}
 
       {/* Quick Action for Training Data */}
       <div 
-        onClick={() => navigate('/knowledge')}
-        className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl p-6 text-white mb-6 flex justify-between items-center cursor-pointer shadow-lg hover:shadow-xl transition-shadow"
+        onClick={() => navigate('/knowledge', { state: { dashboardFocus: { type: 'ai_ready' } } })}
+        className={`bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl p-6 text-white mb-6 flex justify-between items-center cursor-pointer shadow-lg hover:shadow-xl transition-shadow ${activePanel === 'training-data' ? 'ring-2 ring-indigo-300 ring-offset-2' : ''}`}
       >
           <div className="flex items-center">
               <div className="p-3 bg-white/20 rounded-lg mr-4">
@@ -68,7 +105,7 @@ const AICenter = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
           {/* Status Panel */}
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className={`bg-white p-6 rounded-xl shadow-sm border ${activePanel === 'model-status' ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-gray-100'}`}>
               <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
                   <Activity className="w-5 h-5 mr-2 text-blue-600" />
                   系统健康度与模型状态
@@ -112,7 +149,7 @@ const AICenter = () => {
           </div>
 
           {/* Security & Compliance Configuration */}
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className={`bg-white p-6 rounded-xl shadow-sm border ${activePanel === 'security' ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-gray-100'}`}>
               <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
                   <Lock className="w-5 h-5 mr-2 text-indigo-600" />
                   安全与隐私策略 (Security Policy)
@@ -193,7 +230,7 @@ const AICenter = () => {
               </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
+          <div className={`bg-white p-6 rounded-xl shadow-sm border lg:col-span-2 ${activePanel === 'members' ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-gray-100'}`}>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-bold text-gray-900 flex items-center">
                   <Users className="w-5 h-5 mr-2 text-blue-600" />

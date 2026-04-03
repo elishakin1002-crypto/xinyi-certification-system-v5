@@ -25,6 +25,7 @@ export const ROLE_CAPABILITIES: Record<RoleID, RoleCapability> = {
   CONSULTANT: {
     actions: [
       'TASK_CREATE', 'TASK_COMPLETE',
+      'CONTRACT_CREATE',
       'CUSTOMER_CREATE'
     ],
     dataScope: 'OWN'

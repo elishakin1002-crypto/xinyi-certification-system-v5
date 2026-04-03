@@ -6,6 +6,13 @@ import { aiService } from '../services/aiService';
 import { dataService } from '../services/dataService';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { buildSystemGuideReply } from '../src/modules/ai_center';
+import {
+  buildGlobalSearchGroups,
+  buildGlobalSearchReplyMarkdown,
+  detectGlobalSearchIntent,
+  resolveSearchScopesByPermissions
+} from '../src/modules/global_search';
 
 // Add global definition for Web Speech API & library mocks
 declare global {
@@ -82,7 +89,20 @@ const hasKnowledgeIntent = (query: string) => {
 };
 
 const AIChatWidget = () => {
-  const { addContract, addReminder, addCustomer, knowledgeDocs, checkActionPermission, currentUser } = useApp();
+  const {
+    addContract,
+    addReminder,
+    addCustomer,
+    leads,
+    customers,
+    contracts,
+    projects,
+    knowledgeDocs,
+    checkActionPermission,
+    currentUser,
+    activeRole,
+    userPermissions
+  } = useApp();
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(() => {
       const saved = dataService.get<any[]>('chat_history', []);
@@ -390,6 +410,86 @@ const AIChatWidget = () => {
     setIsLoading(true);
 
     try {
+      // 系统导览问题优先走本地知识引擎，保证稳定、可跳转、可复用。
+      if (!currentFile) {
+        const guideReply = buildSystemGuideReply(currentText, {
+          activeRole,
+          userName: currentUser.name,
+          userId: currentUser.id,
+          userPermissions
+        });
+        if (guideReply) {
+          setMessages(prev => [...prev, {
+            id: (Date.now() + 1).toString(),
+            role: 'model',
+            text: guideReply,
+            timestamp: new Date(),
+            requestMeta: {
+              model: 'local-system-guide',
+              budgetTokens: 0,
+              estimatedTokens: 0,
+              usagePct: 0,
+              sourceSummary: '本地导览知识库',
+              systemPromptChars: 0,
+              historyMessages: 0,
+              historyChars: 0,
+              userInputChars: currentText.length,
+              ragDocsCount: 0,
+              ragChars: 0,
+              ragDocTitles: [],
+              webSearchEnabled: false,
+              fileAttached: false,
+              notes: ['命中系统导览意图，已走本地稳定回答路径。']
+            }
+          }]);
+          return;
+        }
+
+        const searchIntent = detectGlobalSearchIntent(currentText);
+        if (searchIntent) {
+          const allowedKnowledgeDocs = knowledgeDocs.filter(doc => {
+            if (doc.accessUserIds && doc.accessUserIds.length > 0 && !doc.accessUserIds.includes(currentUser.id)) return false;
+            if (doc.accessRoles && doc.accessRoles.length > 0 && !doc.accessRoles.some(role => currentUser.roles.includes(role))) return false;
+            return true;
+          });
+
+          const searchableScopes = resolveSearchScopesByPermissions(userPermissions);
+          const forcedScopes = searchIntent.scope ? [searchIntent.scope] : searchableScopes;
+          const groups = buildGlobalSearchGroups(
+            searchIntent.query,
+            { leads, customers, contracts, projects, knowledgeDocs: allowedKnowledgeDocs },
+            { includeScopes: forcedScopes, maxPerScope: 3 }
+          );
+          const replyText = buildGlobalSearchReplyMarkdown(searchIntent, groups);
+          const matchedCount = groups.reduce((sum, group) => sum + group.count, 0);
+
+          setMessages(prev => [...prev, {
+            id: (Date.now() + 1).toString(),
+            role: 'model',
+            text: replyText,
+            timestamp: new Date(),
+            requestMeta: {
+              model: 'local-global-search',
+              budgetTokens: 0,
+              estimatedTokens: 0,
+              usagePct: 0,
+              sourceSummary: '本地全局索引',
+              systemPromptChars: 0,
+              historyMessages: 0,
+              historyChars: 0,
+              userInputChars: currentText.length,
+              ragDocsCount: 0,
+              ragChars: 0,
+              ragDocTitles: [],
+              webSearchEnabled: false,
+              fileAttached: false,
+              notes: [`命中范围：${searchableScopes.join(' / ')}`, `检索结果：${matchedCount} 条`]
+            }
+          }]);
+          return;
+        }
+      }
+
       const today = new Date();
       const dateContext = `当前日期：${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日 (周${['日','一','二','三','四','五','六'][today.getDay()]})`;
 

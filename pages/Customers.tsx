@@ -1,16 +1,18 @@
 
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { Customer, ContactPerson, Status, Contract, Project, CertificateDetail, AuditNode, FollowUpRecord, UserProfile, KnowledgeDoc, RoleID } from '../types';
+import { Customer, ContactPerson, Status, Contract, Project, CertificateDetail, AuditNode, FollowUpRecord, UserProfile, KnowledgeDoc, RoleID, AuditIssue } from '../types';
 import { Search, MoreHorizontal, ShieldAlert, BadgeCheck, X, Building, FileText, Briefcase, Globe, Users, Phone, MessageCircle, MapPin, Wallet, Edit3, Save, Plus, Trash2, CalendarClock, Send, Sparkles, Loader2, FileCheck, ArrowRight, Activity, Layers, Target, ChevronRight, Hash, CreditCard, AlignLeft, ScanLine, Eye, Download, Zap, RefreshCw, BellRing, BrainCircuit, MessageSquare, ListTree, Clock, CheckCircle, UploadCloud, Lock } from 'lucide-react';
 import { aiService } from '../services/aiService';
 import { COMPANY_SERVICES, CERT_LIFECYCLE_RULES } from '../constants';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { IngestionUploader } from '../components/IngestionUploader';
+import { readGlobalSearchQuery } from '../src/modules/global_search';
+import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
 
 const Customers = () => {
-  const { customers, updateCustomer, addCustomer, addCustomerFollowUp, contracts, projects, addReminder, runSystemScans, generateAuditPlan, updateCertificateAuditStatus, createFollowUpProjectFromCustomer, currentUser, knowledgeDocs, addKnowledgeDoc } = useApp();
+  const { customers, updateCustomer, addCustomer, addCustomerFollowUp, contracts, projects, auditIssues, addReminder, runSystemScans, generateAuditPlan, updateCertificateAuditStatus, createFollowUpProjectFromCustomer, currentUser, knowledgeDocs, addKnowledgeDoc, visibleReminders } = useApp();
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [editingData, setEditingData] = useState<Customer | null>(null);
@@ -20,6 +22,9 @@ const Customers = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'contracts' | 'projects' | 'conversion'>('overview');
   const [isEditing, setIsEditing] = useState(false);
   const [expandedPhonesByCustomerId, setExpandedPhonesByCustomerId] = useState<Record<string, boolean>>({});
+  const [searchTerm, setSearchTerm] = useState('');
+  const [dashboardFocus, setDashboardFocus] = useState<any>(null);
+  const [dashboardFocusLabel, setDashboardFocusLabel] = useState('');
   
   // 可转化池逻辑：合作中且（证书即将到期 或 服务满1年）
   const conversionPool = customers.filter(c => {
@@ -75,6 +80,90 @@ const Customers = () => {
   };
 
   const pdcaDocs = selectedCustomer ? getCustomerPdcaDocs(selectedCustomer.id) : [];
+  const getCustomerCertificateArchiveDocs = (customerId: string) => knowledgeDocs
+    .filter(canAccessDoc)
+    .filter(doc => doc.linkType === 'customer' && doc.linkId === customerId && ((doc.category || '') === '证书档案' || (doc.tags || []).some(tag => tag.startsWith('certificate:'))))
+    .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  const certificateArchiveDocs = selectedCustomer ? getCustomerCertificateArchiveDocs(selectedCustomer.id) : [];
+
+  const formatFileSize = (bytes: number) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB';
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  };
+
+  const getFileFormatLabel = (file?: File) => {
+    if (!file) return 'FILE';
+    const ext = file.name.split('.').pop() || file.type.split('/').pop() || 'file';
+    return ext.toUpperCase();
+  };
+
+  const getCertificateArchiveDocs = (customerId: string, certId: string) => getCustomerCertificateArchiveDocs(customerId)
+    .filter(doc => (doc.tags || []).includes(`certificate:${certId}`));
+
+  const getDaysUntil = (dateText?: string) => {
+    const ts = Date.parse(String(dateText || ''));
+    if (!Number.isFinite(ts)) return null;
+    return Math.ceil((ts - Date.now()) / (1000 * 3600 * 24));
+  };
+
+  const getCertificateStatusMeta = (cert: CertificateDetail) => {
+    const days = getDaysUntil(cert.expiryDate);
+    if (days === null) return { label: '待补日期', tone: 'bg-gray-100 text-gray-600 border-gray-200', summary: '请补充到期日期' };
+    if (days < 0) return { label: '已过期', tone: 'bg-red-100 text-red-700 border-red-200', summary: `已过期 ${Math.abs(days)} 天` };
+    if (days <= 30) return { label: '紧急续证', tone: 'bg-red-100 text-red-700 border-red-200', summary: `${days} 天内到期` };
+    if (days <= 90) return { label: '临期', tone: 'bg-amber-100 text-amber-700 border-amber-200', summary: `${days} 天内到期` };
+    return { label: '有效', tone: 'bg-green-100 text-green-700 border-green-200', summary: `剩余 ${days} 天` };
+  };
+
+  const getCustomerCertificateProject = (customerId: string, certId: string) => {
+    const ref = `CUSTCERT:${customerId}:${certId}`;
+    return projects.find(project => project.projectCategory === 'FollowUp' && project.contractRef === ref && project.status === Status.Active);
+  };
+
+  const getCertificateReminders = (customerId: string, certName: string, linkedProjectId?: string) => visibleReminders
+    .filter(reminder => {
+      if (linkedProjectId && reminder.linkType === 'project' && reminder.linkId === linkedProjectId) return true;
+      if (reminder.linkType === 'customer' && reminder.linkId === customerId) {
+        const text = `${reminder.title || ''} ${reminder.content || ''}`;
+        return text.includes(certName) || text.includes('证书') || text.includes('续期');
+      }
+      return false;
+    })
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+
+  const handleArchiveCertificateDoc = async (customer: Customer, cert: CertificateDetail, file: File, sourceLabel = '手动归档') => {
+    const archiveDoc: KnowledgeDoc = {
+      id: `DOC-CERT-${Date.now()}`,
+      title: `证书档案｜${customer.name}｜${cert.name}`,
+      category: '证书档案',
+      format: getFileFormatLabel(file),
+      size: formatFileSize(file.size),
+      updatedAt: new Date().toISOString().split('T')[0],
+      summary: `${sourceLabel}：${cert.name}${cert.number ? `（编号 ${cert.number}）` : ''}，用于客户证书原件与版本留存。`,
+      aiVisible: false,
+      source: 'manual',
+      autoGenerated: false,
+      originalFileName: file.name,
+      linkType: 'customer',
+      linkId: customer.id,
+      linkTitle: customer.name,
+      tags: ['证书档案', cert.name, `certificate:${cert.id}`],
+      accessRoles: ['ADMIN', 'MANAGER', 'CONSULTANT', 'FINANCE'] as RoleID[]
+    };
+    const res = await addKnowledgeDoc(archiveDoc);
+    if (!res.ok) {
+      alert('证书档案已存在，无需重复归档。');
+      return false;
+    }
+    return true;
+  };
+
+  const handleManualCertificateArchive = async (cert: CertificateDetail, file?: File) => {
+    if (!selectedCustomer || !file) return;
+    const ok = await handleArchiveCertificateDoc(selectedCustomer, cert, file, '手动上传原件');
+    alert(ok ? '✅ 已归档到知识中心，可按客户或证书检索。' : '证书档案已存在，无需重复归档。');
+  };
   
   const [filterStatus, setFilterStatus] = useState<'all' | 'paid' | 'unpaid' | 'overdue'>('all');
   const [settlementTypeFilter, setSettlementTypeFilter] = useState<'All' | 'Internal' | 'External'>('All');
@@ -89,6 +178,14 @@ const Customers = () => {
   // Follow-up State
   const [newFollowUpContent, setNewFollowUpContent] = useState('');
   const [newFollowUpType, setNewFollowUpType] = useState<'call' | 'visit' | 'wechat' | 'email'>('call');
+
+  const normalizeNameKey = (val: unknown) =>
+    String(val || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[（(].*?[）)]/g, '')
+      .replace(/股份有限公司|有限责任公司|有限公司|集团|公司/g, '')
+      .replace(/[\s\-_/]/g, '');
 
   const handleCreateFollowUpProject = () => {
     if (!selectedCustomer) return;
@@ -197,22 +294,255 @@ const Customers = () => {
     return unique;
   };
 
+  const normalizeContactText = (val: unknown) => String(val || '').trim();
+
+  const buildContactDraftList = (seed?: Partial<Customer> | null): ContactPerson[] => {
+    const source = Array.isArray(seed?.contacts) ? seed!.contacts : [];
+    const normalized = source.map((contact, index) => ({
+      id: normalizeContactText(contact.id) || `cp-${Date.now()}-${index}`,
+      name: normalizeContactText(contact.name),
+      mobile: normalizeContactText(contact.mobile) || undefined,
+      wechat: normalizeContactText(contact.wechat) || undefined,
+      position: normalizeContactText(contact.position) || undefined,
+      isPrimary: Boolean(contact.isPrimary)
+    }));
+
+    if (normalized.length === 0) {
+      return [
+        {
+          id: `cp-seed-${Date.now()}`,
+          name: normalizeContactText(seed?.contactPerson) || '待补充联系人',
+          mobile: normalizeContactText(seed?.mobile) || undefined,
+          isPrimary: true
+        }
+      ];
+    }
+
+    if (!normalized.some(contact => contact.isPrimary)) {
+      normalized[0] = { ...normalized[0], isPrimary: true };
+    }
+
+    return normalized;
+  };
+
+  const customerContracts = useMemo(() => {
+    if (!selectedCustomer) return [] as Contract[];
+    const customerNameKey = normalizeNameKey(selectedCustomer.name);
+    return contracts
+      .filter(contract => {
+        if (contract.customerId) return contract.customerId === selectedCustomer.id;
+        return normalizeNameKey(contract.customerName) === customerNameKey;
+      })
+      .sort((a, b) => String(b.signDate || '').localeCompare(String(a.signDate || '')));
+  }, [contracts, selectedCustomer]);
+
+  const customerProjects = useMemo(() => {
+    if (!selectedCustomer) return [] as Project[];
+    const contractIds = new Set(customerContracts.flatMap(contract => [contract.id, contract.contractNo].filter(Boolean) as string[]));
+    return projects
+      .filter(project => project.customerId === selectedCustomer.id || contractIds.has(project.contractRef))
+      .sort((a, b) => String(b.deadline || '').localeCompare(String(a.deadline || '')));
+  }, [projects, selectedCustomer, customerContracts]);
+
+  const customerAuditIssues = useMemo(() => {
+    if (!selectedCustomer) return [] as AuditIssue[];
+    const customerNameKey = normalizeNameKey(selectedCustomer.name);
+    const projectIds = new Set(customerProjects.map(project => project.id));
+    const contractIds = new Set(customerContracts.map(contract => contract.id));
+    const contractRefs = new Set(customerContracts.flatMap(contract => [contract.id, contract.contractNo].filter(Boolean) as string[]));
+    return auditIssues
+      .filter(issue => {
+        if (issue.customerId) return issue.customerId === selectedCustomer.id;
+        if (issue.projectId && projectIds.has(issue.projectId)) return true;
+        if (issue.contractId && contractIds.has(issue.contractId)) return true;
+        if (issue.contractRef && contractRefs.has(issue.contractRef)) return true;
+        return normalizeNameKey(issue.customerName) === customerNameKey;
+      })
+      .sort((a, b) => {
+        const statusRank = (issue: AuditIssue) => issue.status === 'Closed' ? 1 : 0;
+        const statusDiff = statusRank(a) - statusRank(b);
+        if (statusDiff !== 0) return statusDiff;
+        return String(b.deadline || b.createDate || '').localeCompare(String(a.deadline || a.createDate || ''));
+      });
+  }, [auditIssues, customerContracts, customerProjects, selectedCustomer]);
+
+  const contractSummary = useMemo(() => {
+    const total = customerContracts.length;
+    const archived = customerContracts.filter(contract => contract.archiveStatus === ARCHIVE_STATUS.ARCHIVED).length;
+    const active = customerContracts.filter(contract => contract.archiveStatus !== ARCHIVE_STATUS.ARCHIVED && contract.status === Status.Active).length;
+    const risk = customerContracts.filter(contract =>
+      contract.archiveStatus !== ARCHIVE_STATUS.ARCHIVED &&
+      (contract.riskLevel === 'High' || contract.status === Status.Risk || (contract.receivables || []).some(receivable => receivable.status === RECEIVABLE_STATUS.OVERDUE))
+    ).length;
+    const receivableTotal = customerContracts.reduce((sum, contract) => (
+      sum + (contract.receivables || []).reduce((inner, receivable) => inner + Number(receivable.amount || 0), 0)
+    ), 0);
+    const receivedTotal = customerContracts.reduce((sum, contract) => (
+      sum + (contract.receivables || []).filter(receivable => receivable.status === RECEIVABLE_STATUS.PAID).reduce((inner, receivable) => inner + Number(receivable.amount || 0), 0)
+    ), 0);
+    return { total, active, risk, archived, receivableTotal, receivedTotal };
+  }, [customerContracts]);
+
+  const pdcaSummary = useMemo(() => {
+    const latestContract = customerContracts[0];
+    const storedTotalAmount = Number(editingData?.totalAmount || 0);
+    const totalAmount = Math.max(storedTotalAmount, contractSummary.receivedTotal);
+    const expiringCert = (editingData?.certificates || []).find(cert => {
+      const days = getDaysUntil(cert.expiryDate);
+      return days !== null && days <= 180;
+    });
+    const level: 'A' | 'B' | 'C' = totalAmount >= 100000 ? 'A' : totalAmount >= 30000 ? 'B' : 'C';
+
+    return {
+      totalAmount,
+      lastProjectType: editingData?.lastProjectType || latestContract?.serviceLine || latestContract?.title || '暂无',
+      lastProjectAt: editingData?.lastProjectAt || latestContract?.signDate || '-',
+      nextOpportunity: editingData?.nextOpportunity || (expiringCert ? `${expiringCert.name}续证` : '待评估'),
+      level
+    };
+  }, [contractSummary.receivedTotal, customerContracts, editingData]);
+
+  const certificateSummary = useMemo(() => {
+    const certs = editingData?.certificates || [];
+    const expiring = certs.filter(cert => {
+      const days = getDaysUntil(cert.expiryDate);
+      return days !== null && days >= 0 && days <= 90;
+    }).length;
+    const overdue = certs.filter(cert => {
+      const days = getDaysUntil(cert.expiryDate);
+      return days !== null && days < 0;
+    }).length;
+    const followUpProjects = selectedCustomer
+      ? certs.filter(cert => Boolean(getCustomerCertificateProject(selectedCustomer.id, cert.id))).length
+      : 0;
+    return {
+      total: certs.length,
+      expiring,
+      overdue,
+      followUpProjects,
+      archives: certificateArchiveDocs.length
+    };
+  }, [editingData, selectedCustomer, projects, certificateArchiveDocs]);
+
+  const openContractDetail = (contract: Contract) => {
+    setSelectedCustomer(null);
+    setIsCreating(false);
+    navigate('/contracts', { state: { openDetailId: contract.id } });
+  };
+
+  const openCustomerContracts = () => {
+    if (!selectedCustomer) return;
+    const params = new URLSearchParams();
+    params.set('customerId', selectedCustomer.id);
+    params.set('customer', selectedCustomer.name);
+    setSelectedCustomer(null);
+    setIsCreating(false);
+    navigate(`/contracts?${params.toString()}`);
+  };
+
+  const createContractForCustomer = () => {
+    if (!selectedCustomer) return;
+    setSelectedCustomer(null);
+    setIsCreating(false);
+    navigate('/contracts', {
+      state: {
+        openModal: true,
+        fromCustomer: {
+          id: selectedCustomer.id,
+          name: selectedCustomer.name,
+          contactPerson: editingData?.contactPerson || selectedCustomer.contactPerson || ''
+        }
+      }
+    });
+  };
+
+  const getLatestFollowUpTs = (customer: Customer, ownerOnly = false) => {
+    const records = ownerOnly
+      ? (customer.followUpRecords || []).filter(record => String(record.operator || '') === currentUser.name)
+      : (customer.followUpRecords || []);
+    const latest = [...records].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0];
+    const ts = Date.parse(String(latest?.date || ''));
+    return Number.isFinite(ts) ? ts : 0;
+  };
+
+  const matchesDashboardFocus = (customer: Customer) => {
+    if (!dashboardFocus?.type) return true;
+    if (dashboardFocus.type === 'churn') {
+      const latest = getLatestFollowUpTs(customer);
+      return !latest || (Date.now() - latest) / (24 * 3600 * 1000) > 45;
+    }
+    if (dashboardFocus.type === 'sleeping30') {
+      const latest = getLatestFollowUpTs(customer, dashboardFocus.owner === 'me');
+      return Boolean(latest) && (Date.now() - latest) / (24 * 3600 * 1000) > 30;
+    }
+    if (dashboardFocus.type === 'repurchase') {
+      return Number(customer.serviceCount || 0) >= 2 || Number(customer.cooperationCount || 0) >= 2;
+    }
+    if (dashboardFocus.type === 'owner_followups') {
+      const monthKey = String(dashboardFocus.month || new Date().toISOString().slice(0, 7));
+      return (customer.followUpRecords || []).some(record => String(record.operator || '') === currentUser.name && String(record.date || '').startsWith(monthKey));
+    }
+    return true;
+  };
+
+  const filteredCustomers = useMemo(() => {
+    const baseSource = activeTab === 'conversion' ? conversionPool : customers;
+    const source = baseSource.filter(matchesDashboardFocus);
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return source;
+    return source.filter(cust => {
+      const phones = getCustomerPhones(cust).join(' ');
+      const hay = [
+        cust.name,
+        cust.contactPerson,
+        phones,
+        cust.industry,
+        cust.unifiedSocialCreditCode,
+        cust.legalRepresentative,
+        (cust.existingCertifications || []).join(' '),
+        (cust.followUpRecords || []).map(record => `${record.operator || ''} ${record.content || ''}`).join(' ')
+      ]
+        .map(v => String(v || '').toLowerCase())
+        .join(' ');
+      return hay.includes(q);
+    });
+  }, [activeTab, conversionPool, customers, searchTerm, dashboardFocus, currentUser.name]);
+
   useEffect(() => {
-      if (location.state && location.state.openDetailId) {
-          const targetCustomer = customers.find(c => c.id === location.state.openDetailId);
+      const state: any = location.state || {};
+      const focus = state.dashboardFocus;
+      if (focus?.type) {
+          setDashboardFocus(focus);
+          if (focus.type === 'repurchase') setActiveTab('conversion');
+          if (focus.type === 'churn') setDashboardFocusLabel('客户流失预警');
+          else if (focus.type === 'sleeping30') setDashboardFocusLabel(focus.owner === 'me' ? '我跟进的沉睡客户（30天）' : '沉睡客户（30天）');
+          else if (focus.type === 'repurchase') setDashboardFocusLabel('可复购客户');
+          else if (focus.type === 'owner_followups') setDashboardFocusLabel('我本月有效跟进客户');
+      }
+      if (state.openDetailId) {
+          const targetCustomer = customers.find(c => c.id === state.openDetailId);
           if (targetCustomer) {
               openDetail(targetCustomer);
-              window.history.replaceState({}, document.title);
           }
       }
-  }, [location, customers]);
+      if (state.dashboardFocus || state.openDetailId) {
+          window.history.replaceState({}, document.title);
+      }
+  }, [location.state, customers]);
+
+  useEffect(() => {
+    const q = readGlobalSearchQuery(location.search);
+    setSearchTerm(q);
+  }, [location.search]);
 
   useEffect(() => {
       if (selectedCustomer && !isCreating) {
           const updated = customers.find(c => c.id === selectedCustomer.id);
           if (updated) {
               setSelectedCustomer(updated);
-              if (!isEditing) setEditingData(updated);
+              if (!isEditing) {
+                setEditingData({ ...updated, contacts: buildContactDraftList(updated) });
+              }
           }
       }
   }, [customers, isCreating, isEditing, selectedCustomer]);
@@ -222,18 +552,98 @@ const Customers = () => {
       setIsCreating(false);
       setEditingData({
           ...cust,
-          contacts: cust.contacts && cust.contacts.length > 0 ? cust.contacts : [{
-              id: `c-init-${Date.now()}`,
-              name: cust.contactPerson,
-              mobile: cust.mobile,
-              isPrimary: true
-          }]
+          contacts: buildContactDraftList(cust)
       });
       setIsEditing(false);
       setActiveTab('overview');
   };
 
-  const handleSaveEdit = () => { if (!editingData || !editingData.name) { alert("请输入客户名称"); return; } const primaryContact = editingData.contacts?.find(c => c.isPrimary) || editingData.contacts?.[0]; const dataToSave = { ...editingData, contactPerson: primaryContact?.name || editingData.contactPerson, mobile: primaryContact?.mobile || editingData.mobile, }; if (isCreating) { addCustomer(dataToSave as Omit<Customer, 'id'>); setIsCreating(false); setIsEditing(false); setSelectedCustomer(null); } else if (selectedCustomer) { updateCustomer(selectedCustomer.id, dataToSave); setIsEditing(false); } };
+  const setDraftContacts = (updater: (contacts: ContactPerson[]) => ContactPerson[]) => {
+    setEditingData(prev => {
+      if (!prev) return prev;
+      const current = buildContactDraftList(prev);
+      const nextRaw = updater(current);
+      const next = buildContactDraftList({ ...prev, contacts: nextRaw });
+      return { ...prev, contacts: next };
+    });
+  };
+
+  const handleAddContact = () => {
+    setDraftContacts(contacts => [
+      ...contacts,
+      {
+        id: `cp-new-${Date.now()}`,
+        name: '',
+        mobile: '',
+        wechat: '',
+        position: '',
+        isPrimary: contacts.length === 0
+      }
+    ]);
+  };
+
+  const handleContactFieldChange = (contactId: string, field: keyof ContactPerson, value: string | boolean) => {
+    setDraftContacts(contacts => contacts.map(contact => {
+      if (contact.id !== contactId) return contact;
+      return {
+        ...contact,
+        [field]: typeof value === 'string' ? value.trimStart() : value
+      };
+    }));
+  };
+
+  const handleSetPrimaryContact = (contactId: string) => {
+    setDraftContacts(contacts => contacts.map(contact => ({
+      ...contact,
+      isPrimary: contact.id === contactId
+    })));
+  };
+
+  const handleRemoveContact = (contactId: string) => {
+    setDraftContacts(contacts => {
+      const remaining = contacts.filter(contact => contact.id !== contactId);
+      if (remaining.length === 0) return [];
+      if (!remaining.some(contact => contact.isPrimary)) {
+        remaining[0] = { ...remaining[0], isPrimary: true };
+      }
+      return remaining;
+    });
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingData || !editingData.name) {
+      alert("请输入客户名称");
+      return;
+    }
+    const normalizedContacts = buildContactDraftList(editingData).map((contact, index) => ({
+      ...contact,
+      id: contact.id || `cp-save-${Date.now()}-${index}`,
+      name: normalizeContactText(contact.name) || '待补充联系人',
+      mobile: normalizeContactText(contact.mobile) || undefined,
+      wechat: normalizeContactText(contact.wechat) || undefined,
+      position: normalizeContactText(contact.position) || undefined
+    }));
+    const primaryContact = normalizedContacts.find(contact => contact.isPrimary) || normalizedContacts[0];
+    const dataToSave = {
+      ...editingData,
+      contacts: normalizedContacts,
+      contactPerson: primaryContact?.name || editingData.contactPerson || '待补充联系人',
+      mobile: primaryContact?.mobile || editingData.mobile
+    };
+
+    if (isCreating) {
+      addCustomer(dataToSave as Omit<Customer, 'id'>);
+      setIsCreating(false);
+      setIsEditing(false);
+      setSelectedCustomer(null);
+      return;
+    }
+
+    if (selectedCustomer) {
+      updateCustomer(selectedCustomer.id, dataToSave);
+      setIsEditing(false);
+    }
+  };
 
   const handleAddFollowUp = () => {
       if (!selectedCustomer || !newFollowUpContent.trim()) return;
@@ -396,6 +806,28 @@ const Customers = () => {
     setEditingData({ ...editingData, certificates: newCerts });
   };
 
+  const handleCreateCertificateReminder = (cert: CertificateDetail) => {
+    if (!selectedCustomer) return;
+    const days = getDaysUntil(cert.expiryDate);
+    const urgency = days !== null && days <= 30 ? 'expire' : 'opportunity';
+    addReminder({
+      title: `📌 证书跟进提醒｜${cert.name}`,
+      content: `客户【${selectedCustomer.name}】的证书${cert.number ? `（${cert.number}）` : ''}${days === null ? '待补充到期日期，请尽快核实。' : days < 0 ? `已过期 ${Math.abs(days)} 天，请立即续证。` : `将于 ${days} 天后到期，请提前沟通续证。`}`,
+      date: new Date().toISOString().split('T')[0],
+      type: urgency,
+      linkId: selectedCustomer.id,
+      linkType: 'customer',
+      forRole: ['MANAGER', 'CONSULTANT']
+    });
+    alert('✅ 已加入提醒队列，并与工作台联动。');
+  };
+
+  const handleCompleteAuditNode = (cert: CertificateDetail, node: AuditNode) => {
+    if (!selectedCustomer) return;
+    updateCertificateAuditStatus(selectedCustomer.id, cert.id, node.id, 'Completed');
+    alert(`✅ 已将【${getAuditNodeLabel(node.type)}】标记为完成。`);
+  };
+
   const toggleReceivableStatus = (cid: string, rid: string) => { useApp().toggleReceivableStatus(cid, rid); };
   const openRejectModal = (contractId: string, receivableId: string, amount: number, customer: string) => { setRejectData({ contractId, receivableId, amount, customer }); setIsRejectModalOpen(true); };
 
@@ -420,11 +852,29 @@ const Customers = () => {
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-         <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/30">
+         <div className="p-4 border-b border-gray-100 flex flex-col gap-3 bg-gray-50/30">
             <div className="relative w-full md:w-96">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                <input type="text" placeholder="搜索客户..." className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm bg-white" />
+                <input type="text" placeholder="搜索客户..." className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm bg-white" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
             </div>
+            {dashboardFocusLabel && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+                  工作台焦点：{dashboardFocusLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDashboardFocus(null);
+                    setDashboardFocusLabel('');
+                    setActiveTab('overview');
+                  }}
+                  className="text-xs font-bold text-gray-500 hover:text-gray-700"
+                >
+                  清除焦点
+                </button>
+              </div>
+            )}
         </div>
         
         <div className="hidden md:block overflow-x-auto">
@@ -439,7 +889,7 @@ const Customers = () => {
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                    {(activeTab === 'conversion' ? conversionPool : customers).map(cust => (
+                    {filteredCustomers.map(cust => (
                         <tr key={cust.id} className="hover:bg-gray-50/80 cursor-pointer transition-colors group" onClick={() => openDetail(cust)}>
                             <td className="px-6 py-5">
                                 <div className="font-black text-gray-900 text-base">{cust.name}</div>
@@ -516,7 +966,7 @@ const Customers = () => {
 
         {/* Mobile View */}
         <div className="md:hidden divide-y divide-gray-100">
-            {customers.map(cust => (
+            {filteredCustomers.map(cust => (
                 <div key={cust.id} className="p-4 active:bg-gray-50 transition-colors" onClick={() => openDetail(cust)}>
                     <div className="flex justify-between items-start mb-2">
                         <div className="font-black text-gray-900 line-clamp-1 mr-2 text-base">{cust.name}</div>
@@ -581,11 +1031,12 @@ const Customers = () => {
                             {isEditing ? ( <input className="text-2xl font-black text-gray-900 border-b border-gray-300 focus:border-indigo-500 outline-none w-full md:w-96 mb-1" value={editingData.name} onChange={e => setEditingData({...editingData, name: e.target.value})} placeholder="请输入客户名称" /> ) : ( <h2 className="text-2xl font-black text-gray-900 truncate tracking-tight">{selectedCustomer.name}</h2> )}
                         </div>
                     </div>
-                    <div className="flex items-center space-x-2 md:space-x-3 w-full md:w-auto justify-end">
-                        <button onClick={handleCreateFollowUpProject} className="px-3 py-2 bg-amber-600 text-white rounded-xl hover:bg-amber-700 text-sm font-bold flex items-center transition-all active:scale-95 shadow-md"> <Briefcase className="w-4 h-4 mr-1.5" /> 生成跟进项目 </button>
-                        <button onClick={handleUpsellScript} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl hover:shadow-lg text-sm font-bold flex items-center transition-all active:scale-95 shadow-md"> <MessageSquare className="w-4 h-4 mr-1.5" /> 二次开发话术 </button>
-                        {!isEditing ? ( <button onClick={() => setIsEditing(true)} className="px-4 py-2 border border-gray-200 bg-white text-gray-700 rounded-xl hover:bg-gray-50 flex items-center text-sm font-bold transition-colors"> <Edit3 className="w-4 h-4 mr-2" /> 编辑 </button> ) : ( <button onClick={handleSaveEdit} className="px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 flex items-center text-sm font-bold transition-colors shadow-lg shadow-indigo-200"> <Save className="w-4 h-4 mr-2" /> 保存 </button> )}
-                        <button onClick={() => { setSelectedCustomer(null); setIsCreating(false); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-500 transition-colors"> <X className="w-6 h-6" /> </button>
+                    <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto justify-end flex-wrap md:flex-nowrap">
+                        <button onClick={createContractForCustomer} className="px-3 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 text-sm font-bold flex items-center transition-all active:scale-95 shadow-md shrink-0"> <FileText className="w-4 h-4 mr-1.5" /> 新建合同 </button>
+                        <button onClick={handleCreateFollowUpProject} className="px-3 py-2 bg-amber-600 text-white rounded-xl hover:bg-amber-700 text-sm font-bold flex items-center transition-all active:scale-95 shadow-md shrink-0"> <Briefcase className="w-4 h-4 mr-1.5" /> 生成跟进项目 </button>
+                        <button onClick={handleUpsellScript} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl hover:shadow-lg text-sm font-bold flex items-center transition-all active:scale-95 shadow-md shrink-0"> <MessageSquare className="w-4 h-4 mr-1.5" /> 二次开发话术 </button>
+                        {!isEditing ? ( <button onClick={() => setIsEditing(true)} className="px-4 py-2 border border-gray-200 bg-white text-gray-700 rounded-xl hover:bg-gray-50 flex items-center text-sm font-bold transition-colors shrink-0"> <Edit3 className="w-4 h-4 mr-2" /> 编辑 </button> ) : ( <button onClick={handleSaveEdit} className="px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 flex items-center text-sm font-bold transition-colors shadow-lg shadow-indigo-200 shrink-0"> <Save className="w-4 h-4 mr-2" /> 保存 </button> )}
+                        <button onClick={() => { setSelectedCustomer(null); setIsCreating(false); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-500 transition-colors shrink-0"> <X className="w-6 h-6" /> </button>
                     </div>
                 </div>
 
@@ -603,24 +1054,24 @@ const Customers = () => {
                                         <div className="bg-rose-50 rounded-xl p-4 border border-rose-100">
                                             <div className="text-xs font-bold text-rose-400 uppercase mb-1">累计消费 (Total)</div>
                                             {isFinancialVisible(selectedCustomer) ? (
-                                                <div className="text-2xl font-black text-rose-900">¥{(editingData.totalAmount || 0).toLocaleString()}</div>
+                                                <div className="text-2xl font-black text-rose-900">¥{pdcaSummary.totalAmount.toLocaleString()}</div>
                                             ) : (
                                                 <div className="text-2xl font-black text-gray-300 flex items-center"><Lock className="w-4 h-4 mr-1"/> ***</div>
                                             )}
                                         </div>
                                         <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
                                             <div className="text-xs font-bold text-blue-400 uppercase mb-1">最近项目 (Verified)</div>
-                                            <div className="font-bold text-blue-900 text-sm truncate">{editingData.lastProjectType || '暂无'}</div>
-                                            <div className="text-xs text-blue-500 mt-1">{editingData.lastProjectAt || '-'}</div>
+                                            <div className="font-bold text-blue-900 text-sm truncate">{pdcaSummary.lastProjectType}</div>
+                                            <div className="text-xs text-blue-500 mt-1">{pdcaSummary.lastProjectAt}</div>
                                         </div>
                                         <div className="bg-amber-50 rounded-xl p-4 border border-amber-100">
                                             <div className="text-xs font-bold text-amber-400 uppercase mb-1">下一次机会</div>
-                                            <div className="font-bold text-amber-900 text-sm">{editingData.nextOpportunity || '待评估'}</div>
+                                            <div className="font-bold text-amber-900 text-sm">{pdcaSummary.nextOpportunity}</div>
                                         </div>
                                         <div className="bg-purple-50 rounded-xl p-4 border border-purple-100">
                                             <div className="text-xs font-bold text-purple-400 uppercase mb-1">客户评级</div>
                                             {isFinancialVisible(selectedCustomer) ? (
-                                                <div className="text-2xl font-black text-purple-900">{editingData.level || 'C'} <span className="text-xs font-normal text-purple-600">级</span></div>
+                                                <div className="text-2xl font-black text-purple-900">{pdcaSummary.level} <span className="text-xs font-normal text-purple-600">级</span></div>
                                             ) : (
                                                 <div className="text-2xl font-black text-gray-300 flex items-center"><Lock className="w-4 h-4 mr-1"/> *</div>
                                             )}
@@ -678,70 +1129,422 @@ const Customers = () => {
                                 </div>
 
                                 <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                                    <div className="flex justify-between items-center mb-6">
-                                        <h3 className="text-lg font-bold text-gray-900 flex items-center"> <FileCheck className="w-4 h-4 mr-2 text-green-600" /> 认证证书与监管周期 </h3>
-                                        <div className="flex items-center space-x-2">
-                                            {isEditing && (
-                                                <div className="w-40">
-                                                    <IngestionUploader 
-                                                        source="certificate"
-                                                        label="智能识别"
-                                                        compact={true}
-                                                        onSuccess={(result) => {
-                                                            const certs = result.data; // CertificateDetail[]
-                                                            if (certs && certs.length > 0) {
-                                                                const newCert = certs[0];
-                                                                const issueDate = normalizeDate(newCert.issueDate);
-                                                                const expiryDate = normalizeDate(newCert.expiryDate);
-                                                                const finalCert: CertificateDetail = {
-                                                                    ...newCert,
-                                                                    issueDate,
-                                                                    expiryDate,
-                                                                    auditPlan: issueDate ? generateAuditPlan(issueDate, newCert.cycleRule || 'SYSTEM_3Y') : []
-                                                                };
-                                                                
-                                                                setEditingData(prev => prev ? ({
-                                                                    ...prev,
-                                                                    certificates: [...(prev.certificates || []), finalCert],
-                                                                    existingCertifications: [...new Set([...(prev.existingCertifications || []), finalCert.name])]
-                                                                }) : null);
-                                                                alert(`✅ 识别成功！已添加证书：${finalCert.name}`);
-                                                            }
-                                                        }}
-                                                    />
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                                            <FileText className="w-4 h-4 mr-2 text-blue-600" /> 合同概览
+                                        </h3>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={createContractForCustomer}
+                                                className="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                                            >
+                                                新建合同
+                                            </button>
+                                            <button
+                                                onClick={openCustomerContracts}
+                                                className="text-xs font-bold px-3 py-1.5 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50"
+                                            >
+                                                查看全部合同
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
+                                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                                            <div className="text-[11px] font-bold text-gray-500 uppercase">合同总数</div>
+                                            <div className="text-xl font-black text-gray-900">{contractSummary.total}</div>
+                                        </div>
+                                        <div className="rounded-xl border border-green-100 bg-green-50 p-3">
+                                            <div className="text-[11px] font-bold text-green-600 uppercase">执行中</div>
+                                            <div className="text-xl font-black text-green-800">{contractSummary.active}</div>
+                                        </div>
+                                        <div className="rounded-xl border border-red-100 bg-red-50 p-3">
+                                            <div className="text-[11px] font-bold text-red-500 uppercase">风险</div>
+                                            <div className="text-xl font-black text-red-700">{contractSummary.risk}</div>
+                                        </div>
+                                        <div className="rounded-xl border border-gray-200 bg-gray-100 p-3">
+                                            <div className="text-[11px] font-bold text-gray-500 uppercase">已归档</div>
+                                            <div className="text-xl font-black text-gray-700">{contractSummary.archived}</div>
+                                        </div>
+                                        <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3 md:col-span-2">
+                                            <div className="text-[11px] font-bold text-indigo-600 uppercase">应收 / 已收</div>
+                                            {isFinancialVisible(selectedCustomer) ? (
+                                                <div className="text-sm font-black text-indigo-900">
+                                                    ¥{contractSummary.receivableTotal.toLocaleString()} / ¥{contractSummary.receivedTotal.toLocaleString()}
                                                 </div>
+                                            ) : (
+                                                <div className="text-sm font-black text-gray-400 flex items-center"><Lock className="w-3 h-3 mr-1" /> *** / ***</div>
                                             )}
                                         </div>
                                     </div>
-                                    <div className="space-y-4">
-                                        {editingData.certificates?.map((cert, idx) => (
-                                            <div key={cert.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/30">
-                                                <div className="flex justify-between items-start mb-2">
-                                                    <div className="flex items-center space-x-2">
-                                                        {isEditing ? ( <input className="font-bold text-sm bg-white border rounded px-1 w-32" value={cert.name} onChange={e => updateCertificate(idx, 'name', e.target.value)} placeholder="证书名称" /> ) : ( <span className="font-bold text-gray-900 text-sm">{cert.name}</span> )}
-                                                        <span className={`text-xs px-1.5 py-0.5 rounded border font-bold uppercase tracking-tight ${cert.status === 'Valid' ? 'bg-green-50 text-green-700 border-green-100' : 'bg-red-50 text-red-700 border-red-100'}`}> {cert.status === 'Valid' ? '有效' : '已失效/过期'} </span>
-                                                    </div>
-                                                </div>
-                                                <div className="text-sm text-gray-500 flex flex-wrap gap-6 mb-3 border-b border-gray-200 pb-3">
-                                                    <div className="flex items-center"> <span className="mr-2 font-bold text-gray-400">发证机构:</span> {isEditing ? <input className="border-b bg-transparent w-24" value={cert.issuingBody} onChange={e => updateCertificate(idx, 'issuingBody', e.target.value)} /> : (cert.issuingBody || '-')} </div>
-                                                    <div className="flex items-center"> <span className="mr-2 font-bold text-gray-400">监管规则:</span> {isEditing ? ( <select className="border rounded px-1 bg-white" value={cert.cycleRule || 'ISO_3Y'} onChange={e => updateCertificate(idx, 'cycleRule', e.target.value)}> {Object.entries(CERT_LIFECYCLE_RULES).map(([key, rule]) => ( <option key={key} value={key}>{rule.name}</option> ))} </select> ) : ( <span className="bg-white border border-gray-200 px-2 py-0.5 rounded font-mono text-xs">{(CERT_LIFECYCLE_RULES as any)[cert.cycleRule as string]?.name || cert.cycleRule}</span> )} </div>
-                                                </div>
-                                                {cert.auditPlan && cert.auditPlan.length > 0 ? (
-                                                    <div className="relative pt-2 pb-1">
-                                                        <div className="absolute top-[22px] left-0 w-full h-0.5 bg-gray-200 -z-0"></div>
-                                                        <div className="flex justify-between relative z-10">
-                                                            {cert.auditPlan.map((node) => (
-                                                                <div key={node.id} className="flex flex-col items-center group/node relative">
-                                                                    <div className={`w-2.5 h-2.5 rounded-full border-2 mb-1.5 ${ node.status === 'Completed' ? 'bg-green-500 border-green-500' : 'bg-white border-gray-300' }`}></div>
-                                                                    <span className="text-xs font-bold text-gray-600 uppercase tracking-tight">{getAuditNodeLabel(node.type)}</span>
-                                                                    <span className="text-xs text-gray-400 font-mono mt-0.5">{node.plannedDate}</span>
-                                                                </div>
-                                                            ))}
+
+                                    <div className="space-y-2">
+                                        {customerContracts.slice(0, 5).map(contract => (
+                                            <div key={contract.id} className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
+                                                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                                    <div className="min-w-0">
+                                                        <div className="text-sm font-bold text-gray-900 truncate">{contract.title}</div>
+                                                        <div className="text-[11px] text-gray-500 font-mono">
+                                                            {contract.contractNo || '-'} · {contract.signDate || '-'} · ¥{Number(contract.amount || 0).toLocaleString()}
                                                         </div>
                                                     </div>
-                                                ) : ( <div className="text-center py-2"> {isEditing && ( <button onClick={() => handleGenerateAuditPlan(idx)} className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center mx-auto hover:bg-indigo-100 transition-colors"> <ListTree className="w-3 h-3 mr-1" /> 生成监管计划 </button> )} </div> )}
+                                                    <div className="flex items-center gap-2 shrink-0">
+                                                        <button onClick={() => openContractDetail(contract)} className="text-[11px] font-bold px-2 py-1 rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-100">查看详情</button>
+                                                        <button
+                                                            onClick={() => navigate(`/contracts?q=${encodeURIComponent(contract.contractNo || contract.title)}`)}
+                                                            className="text-[11px] font-bold px-2 py-1 rounded border border-blue-200 bg-white text-blue-700 hover:bg-blue-50"
+                                                        >
+                                                            去合同管理
+                                                        </button>
+                                                        <button onClick={() => openContractDetail(contract)} className="text-[11px] font-bold px-2 py-1 rounded border border-green-200 bg-white text-green-700 hover:bg-green-50">回款节点</button>
+                                                    </div>
+                                                </div>
                                             </div>
                                         ))}
+                                        {customerContracts.length === 0 && (
+                                            <div className="text-xs text-gray-500 border-2 border-dashed border-gray-200 rounded-xl py-6 text-center">暂无合同记录，可先新建合同或从合同页绑定客户。</div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                                        <div>
+                                            <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                                                <ShieldAlert className="w-4 h-4 mr-2 text-amber-600" /> 不符合项闭环
+                                            </h3>
+                                            <p className="text-xs text-gray-500 mt-1">按客户、项目、合同自动归集，便于在客户维度复盘交付质量。</p>
+                                        </div>
+                                        <button
+                                            onClick={() => navigate('/audit')}
+                                            className="text-xs font-bold px-3 py-1.5 rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50"
+                                        >
+                                            进入审计中心
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                                            <div className="text-[11px] font-bold text-gray-500 uppercase">问题总数</div>
+                                            <div className="text-xl font-black text-gray-900">{customerAuditIssues.length}</div>
+                                        </div>
+                                        <div className="rounded-xl border border-red-100 bg-red-50 p-3">
+                                            <div className="text-[11px] font-bold text-red-500 uppercase">待闭环</div>
+                                            <div className="text-xl font-black text-red-700">{customerAuditIssues.filter(issue => issue.status !== 'Closed').length}</div>
+                                        </div>
+                                        <div className="rounded-xl border border-amber-100 bg-amber-50 p-3">
+                                            <div className="text-[11px] font-bold text-amber-600 uppercase">重大问题</div>
+                                            <div className="text-xl font-black text-amber-800">{customerAuditIssues.filter(issue => issue.severity === 'Major' && issue.status !== 'Closed').length}</div>
+                                        </div>
+                                        <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3">
+                                            <div className="text-[11px] font-bold text-indigo-600 uppercase">关联项目</div>
+                                            <div className="text-xl font-black text-indigo-800">{customerProjects.length}</div>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        {customerAuditIssues.slice(0, 6).map(issue => {
+                                            const relatedProject = customerProjects.find(project => project.id === issue.projectId || project.contractRef === issue.contractId || project.contractRef === issue.contractRef);
+                                            const severityTone = issue.severity === 'Major'
+                                                ? 'bg-red-50 text-red-700 border-red-100'
+                                                : issue.severity === 'Minor'
+                                                ? 'bg-amber-50 text-amber-700 border-amber-100'
+                                                : 'bg-blue-50 text-blue-700 border-blue-100';
+                                            const statusTone = issue.status === 'Closed'
+                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                                : 'bg-gray-50 text-gray-700 border-gray-200';
+                                            return (
+                                                <div key={issue.id} className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-3">
+                                                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                                        <div className="min-w-0">
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${severityTone}`}>{issue.severity}</span>
+                                                                <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${statusTone}`}>{issue.status}</span>
+                                                                {issue.rectificationTaskId && <span className="text-[11px] font-black px-2 py-1 rounded-full border border-indigo-100 bg-indigo-50 text-indigo-700">已挂整改任务</span>}
+                                                            </div>
+                                                            <div className="text-sm font-bold text-gray-900 mt-2 line-clamp-2">{issue.findings}</div>
+                                                            <div className="text-[11px] text-gray-500 mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                                                                <span>项目：{relatedProject?.name || '未关联项目'}</span>
+                                                                <span>合同：{issue.contractRef || '-'}</span>
+                                                                <span>整改截止：{issue.deadline || '-'}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 shrink-0">
+                                                            {relatedProject && (
+                                                                <button
+                                                                    onClick={() => navigate('/projects', { state: { openDetailId: relatedProject.id } })}
+                                                                    className="text-[11px] font-bold px-2 py-1 rounded border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50"
+                                                                >
+                                                                    打开项目
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                onClick={() => navigate('/audit', { state: { openDetailId: issue.id } })}
+                                                                className="text-[11px] font-bold px-2 py-1 rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-100"
+                                                            >
+                                                                查看问题
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        {customerAuditIssues.length === 0 && (
+                                            <div className="text-xs text-gray-500 border-2 border-dashed border-gray-200 rounded-xl py-6 text-center">当前客户暂无关联不符合项，后续登记后会自动挂到这里。</div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+                                    <div className="flex flex-col gap-4 mb-6">
+                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                                            <div>
+                                                <h3 className="text-lg font-bold text-gray-900 flex items-center"> <FileCheck className="w-4 h-4 mr-2 text-green-600" /> 认证证书与监管周期 </h3>
+                                                <p className="text-xs text-gray-500 mt-1">证书主数据归客户、续证动作归项目、原件归档进知识中心。</p>
+                                            </div>
+                                            <div className="flex items-center space-x-2">
+                                                {isEditing && (
+                                                    <div className="w-40">
+                                                        <IngestionUploader 
+                                                            source="certificate"
+                                                            label="智能识别"
+                                                            compact={true}
+                                                            onSuccess={async (result, file) => {
+                                                                const certs = Array.isArray(result.data) ? result.data : [];
+                                                                if (certs.length > 0) {
+                                                                    const newCert = certs[0] as CertificateDetail;
+                                                                    const issueDate = normalizeDate(newCert.issueDate || '');
+                                                                    const expiryDate = normalizeDate(newCert.expiryDate || '');
+                                                                    const days = getDaysUntil(expiryDate);
+                                                                    const finalCert: CertificateDetail = {
+                                                                        ...newCert,
+                                                                        id: newCert.id || `cert-${Date.now()}`,
+                                                                        issueDate,
+                                                                        expiryDate,
+                                                                        cycleRule: newCert.cycleRule || 'SYSTEM_3Y',
+                                                                        status: days !== null && days < 0 ? 'Expired' : days !== null && days <= 90 ? 'Expiring' : 'Valid',
+                                                                        auditPlan: issueDate ? generateAuditPlan(issueDate, newCert.cycleRule || 'SYSTEM_3Y') : []
+                                                                    };
+                                                                    
+                                                                    setEditingData(prev => prev ? ({
+                                                                        ...prev,
+                                                                        certificates: [...(prev.certificates || []), finalCert],
+                                                                        existingCertifications: [...new Set([...(prev.existingCertifications || []), finalCert.name])]
+                                                                    }) : null);
+                                                                    if (selectedCustomer && selectedCustomer.id !== 'temp' && file) {
+                                                                        await handleArchiveCertificateDoc(selectedCustomer, finalCert, file, '智能识别归档');
+                                                                    }
+                                                                    alert(`✅ 识别成功！已添加证书：${finalCert.name}${selectedCustomer && selectedCustomer.id !== 'temp' && file ? '，并完成档案归档。' : '。'}`);
+                                                                }
+                                                            }}
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                            <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                                                <div className="text-[11px] font-bold text-gray-500 uppercase">证书总数</div>
+                                                <div className="text-xl font-black text-gray-900">{certificateSummary.total}</div>
+                                            </div>
+                                            <div className="rounded-xl border border-amber-100 bg-amber-50 p-3">
+                                                <div className="text-[11px] font-bold text-amber-600 uppercase">90天内到期</div>
+                                                <div className="text-xl font-black text-amber-800">{certificateSummary.expiring}</div>
+                                            </div>
+                                            <div className="rounded-xl border border-red-100 bg-red-50 p-3">
+                                                <div className="text-[11px] font-bold text-red-600 uppercase">已过期</div>
+                                                <div className="text-xl font-black text-red-800">{certificateSummary.overdue}</div>
+                                            </div>
+                                            <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3">
+                                                <div className="text-[11px] font-bold text-indigo-600 uppercase">续证项目</div>
+                                                <div className="text-xl font-black text-indigo-800">{certificateSummary.followUpProjects}</div>
+                                            </div>
+                                            <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+                                                <div className="text-[11px] font-bold text-emerald-600 uppercase">证书档案</div>
+                                                <div className="text-xl font-black text-emerald-800">{certificateSummary.archives}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-4">
+                                        {editingData.certificates && editingData.certificates.length > 0 ? editingData.certificates.map((cert, idx) => {
+                                            const statusMeta = getCertificateStatusMeta(cert);
+                                            const linkedProject = selectedCustomer ? getCustomerCertificateProject(selectedCustomer.id, cert.id) : undefined;
+                                            const reminderRecords = selectedCustomer ? getCertificateReminders(selectedCustomer.id, cert.name, linkedProject?.id) : [];
+                                            const archiveDocs = selectedCustomer ? getCertificateArchiveDocs(selectedCustomer.id, cert.id) : [];
+                                            const sortedAuditPlan = [...(cert.auditPlan || [])].sort((a, b) => String(a.plannedDate || '').localeCompare(String(b.plannedDate || '')));
+                                            const nextAuditNode = sortedAuditPlan.find(node => node.status !== 'Completed');
+                                            const completedAuditCount = sortedAuditPlan.filter(node => node.status === 'Completed').length;
+                                            const overdueAuditCount = sortedAuditPlan.filter(node => node.status !== 'Completed' && (getDaysUntil(node.plannedDate) ?? 1) < 0).length;
+                                            const remainingDays = getDaysUntil(cert.expiryDate);
+                                            return (
+                                                <div key={cert.id} className="border border-gray-100 rounded-2xl p-4 bg-gray-50/30 space-y-4">
+                                                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                                        <div className="min-w-0">
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                {isEditing ? (
+                                                                    <input className="font-bold text-sm bg-white border rounded-lg px-2 py-1 w-52" value={cert.name} onChange={e => updateCertificate(idx, 'name', e.target.value)} placeholder="证书名称" />
+                                                                ) : (
+                                                                    <span className="font-bold text-gray-900 text-base">{cert.name}</span>
+                                                                )}
+                                                                <span className={`text-xs px-2 py-1 rounded-full border font-bold ${statusMeta.tone}`}>{statusMeta.label}</span>
+                                                                <span className="text-[11px] font-bold text-gray-500 bg-white border border-gray-200 px-2 py-1 rounded-full">{statusMeta.summary}</span>
+                                                            </div>
+                                                            <div className="text-xs text-gray-500 mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                                                                <span>证书编号：{isEditing ? <input className="ml-1 border-b bg-transparent w-36" value={cert.number || ''} onChange={e => updateCertificate(idx, 'number', e.target.value)} placeholder="待补充" /> : (cert.number || '-')}</span>
+                                                                <span>发证机构：{isEditing ? <input className="ml-1 border-b bg-transparent w-36" value={cert.issuingBody || ''} onChange={e => updateCertificate(idx, 'issuingBody', e.target.value)} placeholder="待补充" /> : (cert.issuingBody || '-')}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                                            {!isEditing && (
+                                                                <button onClick={() => handleCreateCertificateReminder(cert)} className="text-xs font-bold px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 flex items-center">
+                                                                    <BellRing className="w-3 h-3 mr-1" /> 立即提醒
+                                                                </button>
+                                                            )}
+                                                            {linkedProject && (
+                                                                <button onClick={() => navigate('/projects', { state: { openDetailId: linkedProject.id } })} className="text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50 flex items-center">
+                                                                    <ArrowRight className="w-3 h-3 mr-1" /> 打开跟进项目
+                                                                </button>
+                                                            )}
+                                                            {selectedCustomer && selectedCustomer.id !== 'temp' && (
+                                                                <label className="text-xs font-bold px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 flex items-center cursor-pointer">
+                                                                    <UploadCloud className="w-3 h-3 mr-1" /> 归档原件
+                                                                    <input
+                                                                        type="file"
+                                                                        className="hidden"
+                                                                        accept=".pdf,.jpg,.jpeg,.png,.webp"
+                                                                        onChange={e => {
+                                                                            const file = e.target.files?.[0];
+                                                                            void handleManualCertificateArchive(cert, file);
+                                                                            e.target.value = '';
+                                                                        }}
+                                                                    />
+                                                                </label>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-sm">
+                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
+                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">发证日期</div>
+                                                            {isEditing ? <input type="date" className="mt-1 w-full border rounded px-2 py-1 bg-white" value={cert.issueDate || ''} onChange={e => updateCertificate(idx, 'issueDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.issueDate || '-'}</div>}
+                                                        </div>
+                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
+                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">到期日期</div>
+                                                            {isEditing ? <input type="date" className="mt-1 w-full border rounded px-2 py-1 bg-white" value={cert.expiryDate || ''} onChange={e => updateCertificate(idx, 'expiryDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.expiryDate || '-'}</div>}
+                                                        </div>
+                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
+                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">剩余天数</div>
+                                                            <div className={`mt-1 font-black ${remainingDays !== null && remainingDays < 0 ? 'text-red-600' : remainingDays !== null && remainingDays <= 90 ? 'text-amber-600' : 'text-gray-900'}`}>{remainingDays === null ? '-' : `${remainingDays} 天`}</div>
+                                                        </div>
+                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2 md:col-span-2">
+                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">监管规则</div>
+                                                            {isEditing ? (
+                                                                <select className="mt-1 w-full border rounded px-2 py-1 bg-white" value={cert.cycleRule || 'SYSTEM_3Y'} onChange={e => updateCertificate(idx, 'cycleRule', e.target.value)}>
+                                                                    {Object.entries(CERT_LIFECYCLE_RULES).map(([key, rule]) => ( <option key={key} value={key}>{rule.name}</option> ))}
+                                                                </select>
+                                                            ) : (
+                                                                <div className="mt-1 font-bold text-gray-800">{(CERT_LIFECYCLE_RULES as any)[cert.cycleRule as string]?.name || cert.cycleRule || '-'}</div>
+                                                            )}
+                                                        </div>
+                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
+                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">档案份数</div>
+                                                            <div className="mt-1 font-black text-emerald-700">{archiveDocs.length}</div>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="rounded-xl border border-gray-100 bg-white p-3">
+                                                        <div className="text-[11px] font-bold text-gray-400 uppercase mb-2">认证范围</div>
+                                                        {isEditing ? (
+                                                            <textarea className="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100" rows={2} value={cert.scope || ''} onChange={e => updateCertificate(idx, 'scope', e.target.value)} placeholder="可填写认证范围、适用主体、工厂/分公司等信息" />
+                                                        ) : (
+                                                            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{cert.scope || '暂无范围说明，建议补充认证范围/适用主体。'}</p>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                                        <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-3">
+                                                            <div className="text-[11px] font-bold text-indigo-500 uppercase">下一个监管节点</div>
+                                                            <div className="mt-1 text-sm font-black text-indigo-900">{nextAuditNode ? getAuditNodeLabel(nextAuditNode.type) : '已全部完成'}</div>
+                                                            <div className="text-[11px] text-indigo-600 mt-1">{nextAuditNode?.plannedDate || '—'}</div>
+                                                        </div>
+                                                        <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3">
+                                                            <div className="text-[11px] font-bold text-amber-500 uppercase">提醒联动</div>
+                                                            <div className="mt-1 text-sm font-black text-amber-900">{linkedProject ? '已联动工作台' : '待生成跟进项目'}</div>
+                                                            <div className="text-[11px] text-amber-700 mt-1">默认建议：90 / 60 / 30 / 7 天</div>
+                                                        </div>
+                                                        <div className="rounded-xl border border-green-100 bg-green-50 px-3 py-3">
+                                                            <div className="text-[11px] font-bold text-green-600 uppercase">监管完成度</div>
+                                                            <div className="mt-1 text-sm font-black text-green-900">{completedAuditCount}/{sortedAuditPlan.length || 0}</div>
+                                                            <div className="text-[11px] text-green-700 mt-1">逾期节点 {overdueAuditCount} 个</div>
+                                                        </div>
+                                                        <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-3">
+                                                            <div className="text-[11px] font-bold text-gray-500 uppercase">最近提醒</div>
+                                                            <div className="mt-1 text-sm font-black text-gray-900">{reminderRecords[0]?.date || '暂无'}</div>
+                                                            <div className="text-[11px] text-gray-500 mt-1">累计 {reminderRecords.length} 条</div>
+                                                        </div>
+                                                    </div>
+
+                                                    {sortedAuditPlan.length > 0 ? (
+                                                        <div className="rounded-xl border border-gray-100 bg-white p-4">
+                                                            <div className="flex items-center justify-between mb-3">
+                                                                <div className="text-xs font-bold text-gray-500 uppercase">监管时间轴</div>
+                                                                {nextAuditNode && !isEditing && (
+                                                                    <button onClick={() => handleCompleteAuditNode(cert, nextAuditNode)} className="text-xs font-bold px-3 py-1.5 rounded-lg border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 flex items-center">
+                                                                        <CheckCircle className="w-3 h-3 mr-1" /> 完成本节点
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                            <div className="relative pt-2 pb-1">
+                                                                <div className="absolute top-[22px] left-0 w-full h-0.5 bg-gray-200 -z-0"></div>
+                                                                <div className="flex justify-between relative z-10 gap-2 overflow-x-auto">
+                                                                    {sortedAuditPlan.map((node) => {
+                                                                        const nodeLate = node.status !== 'Completed' && (getDaysUntil(node.plannedDate) ?? 1) < 0;
+                                                                        return (
+                                                                            <div key={node.id} className="flex min-w-[92px] flex-col items-center group/node relative text-center">
+                                                                                <div className={`w-3 h-3 rounded-full border-2 mb-1.5 ${node.status === 'Completed' ? 'bg-green-500 border-green-500' : nodeLate ? 'bg-red-500 border-red-500' : 'bg-white border-gray-300'}`}></div>
+                                                                                <span className="text-xs font-bold text-gray-600 tracking-tight">{getAuditNodeLabel(node.type)}</span>
+                                                                                <span className="text-xs text-gray-400 font-mono mt-0.5">{node.plannedDate}</span>
+                                                                                <span className={`mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${node.status === 'Completed' ? 'bg-green-50 text-green-700' : nodeLate ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}>{node.status === 'Completed' ? '已完成' : nodeLate ? '已逾期' : '待执行'}</span>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-center py-3 rounded-xl border border-dashed border-gray-200 bg-white"> {isEditing ? ( <button onClick={() => handleGenerateAuditPlan(idx)} className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center mx-auto hover:bg-indigo-100 transition-colors"> <ListTree className="w-3 h-3 mr-1" /> 生成监管计划 </button> ) : <span className="text-xs text-gray-500">暂无监管计划</span>} </div>
+                                                    )}
+
+                                                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
+                                                        <div className="flex items-center justify-between mb-3">
+                                                            <div className="text-xs font-bold text-emerald-700 uppercase">证书档案归纳</div>
+                                                            <button onClick={() => navigate(`/knowledge?q=${encodeURIComponent(`${selectedCustomer?.name || ''} ${cert.name}`)}`)} className="text-xs font-bold text-emerald-700 hover:text-emerald-800">去知识中心</button>
+                                                        </div>
+                                                        {archiveDocs.length > 0 ? (
+                                                            <div className="space-y-2">
+                                                                {archiveDocs.slice(0, 3).map(doc => (
+                                                                    <div key={doc.id} className="flex items-center justify-between rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                                                                        <div className="min-w-0">
+                                                                            <div className="text-sm font-bold text-gray-800 truncate">{doc.title}</div>
+                                                                            <div className="text-[11px] text-gray-400">{doc.originalFileName || doc.format} · {doc.updatedAt || '-'} · {doc.size}</div>
+                                                                        </div>
+                                                                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-100">已归档</span>
+                                                                    </div>
+                                                                ))}
+                                                                {archiveDocs.length > 3 && <div className="text-[11px] text-emerald-700 font-bold">更多档案请前往「知识中心」查看</div>}
+                                                            </div>
+                                                        ) : (
+                                                            <div className="text-xs text-gray-600">暂无原件归档。建议通过“智能识别”自动归档，或使用“归档原件”单独保存扫描件。</div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        }) : (
+                                            <div className="rounded-2xl border-2 border-dashed border-gray-200 py-10 text-center bg-gray-50/50">
+                                                <div className="text-sm font-bold text-gray-600">暂无证书信息</div>
+                                                <div className="text-xs text-gray-400 mt-2">建议在客户详情页识别首张证书，自动生成监管周期并沉淀档案。</div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -752,23 +1555,92 @@ const Customers = () => {
                                             <Phone className="w-4 h-4 mr-2 text-indigo-600" /> 联系人与电话
                                         </h3>
                                         <span className="text-xs font-black text-gray-400 uppercase tracking-widest">
-                                            共 {getCustomerPhones(editingData).length} 个
+                                            共 {buildContactDraftList(editingData).length} 人
                                         </span>
                                     </div>
-                                    <div className="space-y-3">
-                                        <div className="text-sm font-black text-gray-900">{editingData.contactPerson || '-'}</div>
-                                        {getCustomerPhones(editingData).length > 0 ? (
-                                            <div className="flex flex-wrap gap-2">
-                                                {getCustomerPhones(editingData).map((p, idx) => (
-                                                    <span key={`${p}-${idx}`} className="text-xs font-black bg-gray-50 text-gray-700 px-2 py-1 rounded-full border border-gray-200 font-mono">
-                                                        {p}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        ) : (
-                                            <div className="text-sm text-gray-400 font-bold">暂无电话</div>
-                                        )}
-                                    </div>
+                                    {isEditing ? (
+                                        <div className="space-y-3">
+                                            {buildContactDraftList(editingData).map((contact, index) => (
+                                                <div key={contact.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest">联系人 {index + 1}</span>
+                                                        <div className="flex items-center gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleSetPrimaryContact(contact.id)}
+                                                                className={`text-[11px] font-bold px-2 py-1 rounded border ${contact.isPrimary ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100'}`}
+                                                            >
+                                                                {contact.isPrimary ? '主联系人' : '设为主联系人'}
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleRemoveContact(contact.id)}
+                                                                disabled={buildContactDraftList(editingData).length <= 1}
+                                                                className="text-[11px] font-bold px-2 py-1 rounded border border-red-200 bg-white text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center"
+                                                            >
+                                                                <Trash2 className="w-3 h-3 mr-1" />
+                                                                删除
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                        <input
+                                                            className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                                                            placeholder="联系人姓名"
+                                                            value={contact.name || ''}
+                                                            onChange={e => handleContactFieldChange(contact.id, 'name', e.target.value)}
+                                                        />
+                                                        <input
+                                                            className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                                                            placeholder="手机号/电话"
+                                                            value={contact.mobile || ''}
+                                                            onChange={e => handleContactFieldChange(contact.id, 'mobile', e.target.value)}
+                                                        />
+                                                        <input
+                                                            className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                                                            placeholder="微信号（可选）"
+                                                            value={contact.wechat || ''}
+                                                            onChange={e => handleContactFieldChange(contact.id, 'wechat', e.target.value)}
+                                                        />
+                                                        <input
+                                                            className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                                                            placeholder="职位（可选）"
+                                                            value={contact.position || ''}
+                                                            onChange={e => handleContactFieldChange(contact.id, 'position', e.target.value)}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            <button
+                                                type="button"
+                                                onClick={handleAddContact}
+                                                className="w-full border-2 border-dashed border-indigo-200 rounded-xl py-2 text-sm font-bold text-indigo-600 hover:bg-indigo-50 flex items-center justify-center"
+                                            >
+                                                <Plus className="w-4 h-4 mr-1" />
+                                                新增联系人
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {buildContactDraftList(editingData).map(contact => (
+                                                <div key={contact.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="text-sm font-black text-gray-900">
+                                                            {contact.name || '待补充联系人'}
+                                                        </div>
+                                                        {contact.isPrimary && (
+                                                            <span className="text-[10px] font-black text-green-700 bg-green-50 border border-green-100 px-2 py-0.5 rounded-full">
+                                                                主联系人
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-xs text-gray-500 mt-1 font-mono">
+                                                        {(contact.mobile || '-') + (contact.position ? ` · ${contact.position}` : '') + (contact.wechat ? ` · 微信:${contact.wechat}` : '')}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col h-[400px]">
                                     <h3 className="text-lg font-bold text-gray-900 flex items-center mb-4 shrink-0"> 

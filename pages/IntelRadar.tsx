@@ -5,6 +5,8 @@ import { MarketSignal } from '../types';
 import { intelService } from '../services/intelService';
 import { Calendar, CheckCircle2, FileText, Filter, Flame, Loader2, PlusCircle, RefreshCw, Search, Sparkles, Target, XCircle } from 'lucide-react';
 import { dataService } from '../services/dataService';
+import { MARKET_SIGNAL_STATUS } from '../src/constants/status.ts';
+import { useLocation } from 'react-router-dom';
 
 const badgeClass = (active: boolean) =>
   `px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
@@ -32,12 +34,44 @@ const LOW_VALUE_TITLE_RE = /顺企网|爱企查|黄页|企业信息查询|公司
 const HIGH_VALUE_KEYWORD_RE = /政策|通知|公告|公示|监管|办法|条例|标准|国标|行标|招标|招采|采购|项目申报|专项资金|行业|市场|产业|动态|新闻|趋势|扩产|投产|并购|融资|上市|中标|订单/;
 const RECENT_HINT_RE = /最新|近日|近期|今日|昨天|本周|本月|刚刚|发布|公示|公告|通知|招标|招采|采购|截止|开标|投标|中标|签约|开工|落地|投产|扩产|融资|并购/;
 const YEAR_CANDIDATE_RE = /(?:19|20)\d{2}/g;
+const HOMEPAGE_PATH_RE = /^\/(?:(?:index|home|main|default)(?:\.[a-z0-9]+)?)?$/i;
+const LIST_PAGE_PATH_RE = /^\/(?:index|channel|col|list|node|zwgk|xxgk|xwzx)(?:\/|$)/i;
+const UI_REGION_ALIAS_MAP: Record<string, string[]> = {
+  温州: ['温州', '温州市', 'wenzhou', 'wz.gov.cn', '66wz.com'],
+  苍南: ['苍南', '苍南县', 'cangnan'],
+  平阳: ['平阳', '平阳县', 'pingyang', 'zjpy.gov.cn'],
+  龙港: ['龙港', '龙港市', 'longgang', 'zjlg.gov.cn']
+};
+const LATIN_TOKEN_RE = /^[a-z0-9_.-]+$/i;
 
 type SortMode = 'fetched_desc' | 'score_desc' | 'published_desc';
 const UI_RECENT_DAYS = 90;
+const UI_TIME_ZONE = 'Asia/Shanghai';
 const toTime = (raw?: string) => {
   const ts = new Date(String(raw || '')).getTime();
   return Number.isFinite(ts) ? ts : 0;
+};
+const toLocalYmd = (date: Date) =>
+  new Intl.DateTimeFormat('sv-SE', {
+    timeZone: UI_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date);
+const toLocalYmdHm = (iso: string) => {
+  const ts = new Date(String(iso || '')).getTime();
+  if (!Number.isFinite(ts)) return '';
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: UI_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+    .format(new Date(ts))
+    .replace(' ', ' ');
 };
 const isWithinDays = (dateText: string, days: number) => {
   const ts = toTime(dateText);
@@ -57,6 +91,18 @@ const isUsableSignal = (s: MarketSignal) => {
   if (!host || LOW_VALUE_HOST_RE.test(host)) return false;
   if (LOW_VALUE_TITLE_RE.test(title)) return false;
   const merged = `${title} ${s?.summary || ''} ${s?.content || ''}`;
+  const geoText = `${title} ${s?.summary || ''} ${s?.content || ''} ${s?.sourceName || ''} ${url}`;
+  const matchedRegions = Array.from(INTEL_REGIONS).filter((region) => {
+    const aliases = [region, ...(UI_REGION_ALIAS_MAP[region] || [])];
+    return aliases.some((alias) => {
+      if (LATIN_TOKEN_RE.test(alias)) {
+        return new RegExp(`(^|[^a-z0-9])${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(geoText.toLowerCase());
+      }
+      return geoText.includes(alias);
+    });
+  });
+  if (matchedRegions.length === 0) return false;
+
   const undatedRescue = Array.isArray(s?.tags) && s.tags.includes('日期待核验');
   if (undatedRescue) {
     const recencyText = `${title} ${s?.content || ''} ${url}`;
@@ -86,8 +132,35 @@ const renderPublishedTime = (s: MarketSignal) => {
   return `原文发布时间 ${date}`;
 };
 
+const isLikelyHomepageUrl = (rawUrl?: string) => {
+  try {
+    const u = new URL(String(rawUrl || '').trim());
+    const path = String(u.pathname || '/').toLowerCase();
+    if (HOMEPAGE_PATH_RE.test(path)) return true;
+    if (LIST_PAGE_PATH_RE.test(path) && !u.search) return true;
+    if (path.endsWith('/index.html') || path.endsWith('/index.htm')) return true;
+    return false;
+  } catch {
+    return true;
+  }
+};
+
+const buildOriginalOpenUrl = (signal: MarketSignal) => {
+  const raw = String(signal?.sourceUrl || '').trim();
+  if (!raw) return '#';
+  if (!isLikelyHomepageUrl(raw)) return raw;
+  try {
+    const host = new URL(raw).hostname.replace(/^www\./, '');
+    const q = `site:${host} ${String(signal?.title || '').trim()}`.trim();
+    return `https://duckduckgo.com/?q=${encodeURIComponent(q)}`;
+  } catch {
+    return raw;
+  }
+};
+
 const IntelRadar = () => {
   const { marketSignals, upsertMarketSignals, updateMarketSignal, convertSignalToFollowUpProject, addKnowledgeDoc, addReminder } = useApp();
+  const location = useLocation();
   const [regions, setRegions] = useState<string[]>(Array.from(INTEL_REGIONS));
   const [industries, setIndustries] = useState<string[]>(Array.from(INTEL_INDUSTRIES));
   const [statusFilter, setStatusFilter] = useState<MarketSignal['status'] | 'all'>('all');
@@ -111,30 +184,49 @@ const IntelRadar = () => {
   const showingHistoricalOnly = Boolean(fetchError) && latestFetchIds.length === 0;
 
   const checkBackend = async () => {
+    const targets = [
+      '/api/ai/health',
+      String(import.meta.env.VITE_API_BASE_URL || '').trim() ? `${String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '')}/api/ai/health` : '',
+      'http://127.0.0.1:3101/api/ai/health',
+      'http://127.0.0.1:3001/api/ai/health'
+    ].filter(Boolean);
     try {
-      const res = await fetch('/api/ai/health');
-      const text = await res.text();
-      const data = text ? JSON.parse(text) : null;
-      if (!res.ok || !data?.ok) {
-        if (!text && res.status >= 500) {
-          setBackendHealth({ ok: false, error: `无法连接后端 3001（代理失败，HTTP ${res.status}）` });
+      let lastError = '后端异常';
+      for (const url of targets) {
+        const res = await fetch(url);
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : null;
+        const code = Number(data?.code);
+        const payload = data && typeof data?.data === 'object' ? data.data : data;
+        const ok = Number.isFinite(code) ? code === 0 : Boolean(data?.ok);
+        if (!res.ok || !ok) {
+          lastError = String(data?.message || data?.error || `后端异常（HTTP ${res.status}）`);
+          const envelopeMissing = !Number.isFinite(code) && typeof data?.ok !== 'boolean';
+          if ([404, 405, 502, 503, 504].includes(res.status) || envelopeMissing) {
+            continue;
+          }
+          setBackendHealth({ ok: false, error: lastError });
           return;
         }
-        setBackendHealth({ ok: false, error: data?.error || `后端异常（HTTP ${res.status}）` });
+        setBackendHealth({
+          ok: true,
+          keyLoaded: Boolean(payload?.keyLoaded),
+          keyLength: Number(payload?.keyLength || 0)
+        });
         return;
       }
-      setBackendHealth({
-        ok: true,
-        keyLoaded: Boolean(data?.keyLoaded),
-        keyLength: Number(data?.keyLength || 0)
-      });
+      setBackendHealth({ ok: false, error: lastError });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e || 'Failed to fetch');
       setBackendHealth({ ok: false, error: msg });
     }
   };
-
   const selected = useMemo(() => visibleSignals.find(s => s.id === selectedId) || null, [visibleSignals, selectedId]);
+  const selectedOpenUrl = useMemo(() => selected ? buildOriginalOpenUrl(selected) : '#', [selected]);
+  const selectedOpenNeedsSearch = useMemo(
+    () => Boolean(selected && isLikelyHomepageUrl(selected.sourceUrl)),
+    [selected]
+  );
   useEffect(() => {
     // When switching signals, default to quick view to keep scanning fast.
     setDetailMode('quick');
@@ -179,10 +271,14 @@ const IntelRadar = () => {
 
   const stats = useMemo(() => {
     const total = visibleSignals.length;
-    const today = new Date().toISOString().split('T')[0];
-    const todayCount = visibleSignals.filter(s => String(s.createdAt || '').slice(0, 10) === today).length;
-    const high = visibleSignals.filter(s => s.urgency === 'high' && s.status !== 'converted' && s.status !== 'ignored').length;
-    const converted = visibleSignals.filter(s => s.status === 'converted').length;
+    const today = toLocalYmd(new Date());
+    const todayCount = visibleSignals.filter(s => {
+      const ts = toTime(s.createdAt);
+      if (!ts) return false;
+      return toLocalYmd(new Date(ts)) === today;
+    }).length;
+    const high = visibleSignals.filter(s => s.urgency === 'high' && s.status !== MARKET_SIGNAL_STATUS.CONVERTED && s.status !== MARKET_SIGNAL_STATUS.IGNORED).length;
+    const converted = visibleSignals.filter(s => s.status === MARKET_SIGNAL_STATUS.CONVERTED).length;
     return { total, todayCount, high, converted };
   }, [visibleSignals]);
 
@@ -205,8 +301,11 @@ const IntelRadar = () => {
           const dropTip = (result.droppedStale || 0) + (result.droppedUndated || 0) > 0
             ? `（已过滤超时效 ${Number(result.droppedStale || 0)} 条、无日期 ${Number(result.droppedUndated || 0)} 条）`
             : '';
+          const geoTip = (result.droppedGeo || 0) + (result.droppedGeoConflict || 0) > 0
+            ? `；已过滤跨区域 ${Number(result.droppedGeo || 0)} 条（冲突 ${Number(result.droppedGeoConflict || 0)} 条）`
+            : '';
           const rescuedTip = (result.rescuedUndated || 0) > 0 ? `；其中 ${Number(result.rescuedUndated || 0)} 条为“日期待核验”补位` : '';
-          setFetchNotice((result.error || `本次联网抓取失败，已回退缓存（${result.signals.length} 条）。`) + dropTip + rescuedTip);
+          setFetchNotice((result.error || `本次联网抓取失败，已回退缓存（${result.signals.length} 条）。`) + dropTip + geoTip + rescuedTip);
           return;
         }
         setLatestFetchIds([]);
@@ -226,12 +325,16 @@ const IntelRadar = () => {
       setLatestOnly(thisIds.length > 0);
       setRecentOnly(true);
       setSortMode('published_desc');
-      setLastRunAt(new Date().toISOString());
       const dropTip = (result.droppedStale || 0) + (result.droppedUndated || 0) > 0
         ? `；已过滤超时效 ${Number(result.droppedStale || 0)} 条、无日期 ${Number(result.droppedUndated || 0)} 条`
         : '';
+      const geoTip = (result.droppedGeo || 0) + (result.droppedGeoConflict || 0) > 0
+        ? `；已过滤跨区域 ${Number(result.droppedGeo || 0)} 条（冲突 ${Number(result.droppedGeoConflict || 0)} 条）`
+        : '';
       const rescuedTip = (result.rescuedUndated || 0) > 0 ? `；补位“日期待核验” ${Number(result.rescuedUndated || 0)} 条` : '';
-      setFetchNotice(`抓取完成：返回 ${result.signals.length} 条情报（来源：${result.source === 'cache' ? '缓存回退' : '联网检索'}），已切换为“仅看本次抓取”+“近${UI_RECENT_DAYS}天”${dropTip}${rescuedTip}。`);
+      setFetchNotice(`抓取完成：返回 ${result.signals.length} 条情报（来源：${result.source === 'cache' ? '缓存回退' : '联网检索'}），已切换为“仅看本次抓取”+“近${UI_RECENT_DAYS}天”${dropTip}${geoTip}${rescuedTip}。`);
+      const latestAfter = await intelService.fetchLatestSignals();
+      if (latestAfter.ok && latestAfter.lastRunAt) setLastRunAt(latestAfter.lastRunAt);
       const today = new Date().toISOString().split('T')[0];
       const lastNotice = dataService.get<string>('intel_last_notice', '');
       if (today !== lastNotice) {
@@ -296,6 +399,30 @@ const IntelRadar = () => {
     }
   }, [filtered, selectedId]);
 
+  useEffect(() => {
+    const state: any = location.state || {};
+    const openDetailId = String(state.openDetailId || '').trim();
+    if (!openDetailId) return;
+    const direct = visibleSignals.find(signal => signal.id === openDetailId);
+    if (direct) {
+      setSelectedId(direct.id);
+      window.history.replaceState({}, document.title);
+      return;
+    }
+    const byDate = /^\d{4}-\d{2}-\d{2}$/.test(openDetailId)
+      ? visibleSignals.find(signal => String(signal.publishedAt || '').startsWith(openDetailId) || String(signal.createdAt || '').startsWith(openDetailId))
+      : null;
+    if (byDate) {
+      setSelectedId(byDate.id);
+      window.history.replaceState({}, document.title);
+      return;
+    }
+    if (visibleSignals.length > 0) {
+      setSelectedId(visibleSignals[0].id);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state, visibleSignals]);
+
   const archiveDailyDigest = async () => {
     const today = new Date().toISOString().split('T')[0];
     const top = filtered.slice(0, 10);
@@ -338,8 +465,8 @@ const IntelRadar = () => {
     }
   };
 
-  const markIgnored = (id: string) => updateMarketSignal(id, { status: 'ignored' });
-  const markTriaged = (id: string) => updateMarketSignal(id, { status: 'triaged' });
+  const markIgnored = (id: string) => updateMarketSignal(id, { status: MARKET_SIGNAL_STATUS.IGNORED });
+  const markTriaged = (id: string) => updateMarketSignal(id, { status: MARKET_SIGNAL_STATUS.TRIAGED });
 
   return (
     <div className="flex flex-col h-auto lg:h-[calc(100vh-64px)] animate-in fade-in duration-300 overflow-y-auto lg:overflow-hidden">
@@ -379,7 +506,7 @@ const IntelRadar = () => {
             )}
             {lastRunAt && (
               <span className="text-xs text-gray-400">
-                最近自动抓取：{lastRunAt.slice(0, 16).replace('T', ' ')}
+                最近自动抓取：{toLocalYmdHm(lastRunAt)}
               </span>
             )}
           </div>
@@ -455,9 +582,9 @@ const IntelRadar = () => {
               <div className="mb-4">
                 <div className="text-xs font-bold text-gray-400 uppercase mb-2">状态</div>
                 <div className="flex flex-wrap gap-2">
-                  {(['all', 'new', 'triaged', 'converted', 'ignored'] as const).map(s => (
+                  {(['all', MARKET_SIGNAL_STATUS.NEW, MARKET_SIGNAL_STATUS.TRIAGED, MARKET_SIGNAL_STATUS.CONVERTED, MARKET_SIGNAL_STATUS.IGNORED] as const).map(s => (
                     <button key={s} className={badgeClass(statusFilter === s)} onClick={() => setStatusFilter(s)}>
-                      {s === 'all' ? '全部' : s === 'new' ? '未处理' : s === 'triaged' ? '已分拣' : s === 'converted' ? '已转化' : '已忽略'}
+                      {s === 'all' ? '全部' : s === MARKET_SIGNAL_STATUS.NEW ? '未处理' : s === MARKET_SIGNAL_STATUS.TRIAGED ? '已分拣' : s === MARKET_SIGNAL_STATUS.CONVERTED ? '已转化' : '已忽略'}
                     </button>
                   ))}
                 </div>
@@ -598,11 +725,11 @@ const IntelRadar = () => {
                         </div>
 
                         <div className="flex flex-col items-end gap-2 shrink-0">
-                          {s.status === 'converted' ? (
+                          {s.status === MARKET_SIGNAL_STATUS.CONVERTED ? (
                             <span className="text-[10px] font-black px-2 py-1 rounded-full bg-green-50 text-green-700 border border-green-100 inline-flex items-center">
                               <CheckCircle2 className="w-3 h-3 mr-1" /> 已转化
                             </span>
-                          ) : s.status === 'ignored' ? (
+                          ) : s.status === MARKET_SIGNAL_STATUS.IGNORED ? (
                             <span className="text-[10px] font-black px-2 py-1 rounded-full bg-gray-50 text-gray-500 border border-gray-200 inline-flex items-center">
                               <XCircle className="w-3 h-3 mr-1" /> 已忽略
                             </span>
@@ -624,12 +751,12 @@ const IntelRadar = () => {
                 <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
                   <div className="font-black text-gray-900 truncate">{selected.title}</div>
                   <a
-                    href={selected.sourceUrl}
+                    href={selectedOpenUrl}
                     target="_blank"
                     rel="noreferrer"
                     className="text-xs font-bold text-indigo-600 hover:text-indigo-700"
                   >
-                    打开原文
+                    {selectedOpenNeedsSearch ? '检索并打开原文' : '打开原文'}
                   </a>
                 </div>
                 <div className="p-5 space-y-4">
@@ -679,6 +806,11 @@ const IntelRadar = () => {
                   <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
                     {detailMode === 'full' ? (selected.content || selected.summary) : selected.summary}
                   </div>
+                  {selectedOpenNeedsSearch && (
+                    <div className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                      当前来源链接是网站首页，已自动切换为“站内标题检索直达”，避免你手动二次搜索。
+                    </div>
+                  )}
 
                   {detailMode === 'full' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -715,9 +847,9 @@ const IntelRadar = () => {
                   <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => { convertSignalToFollowUpProject(selected.id); }}
-                      disabled={selected.status === 'converted'}
+                      disabled={selected.status === MARKET_SIGNAL_STATUS.CONVERTED}
                       className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${
-                        selected.status === 'converted'
+                        selected.status === MARKET_SIGNAL_STATUS.CONVERTED
                           ? 'bg-gray-100 text-gray-400 border-gray-200'
                           : 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
                       }`}

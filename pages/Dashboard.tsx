@@ -12,12 +12,21 @@ import {
   AlertTriangle,
   Coins,
   CheckCircle,
-  Activity
+  Activity,
+  ChevronDown,
+  BookOpen,
+  BrainCircuit,
+  Database
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AggregatedReminder, Reminder, DashboardPersona, Status } from '../types';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
+import BossDashboard from './dashboard/BossDashboard';
+import SalesDashboard from './dashboard/SalesDashboard';
+import ConsultantDashboard from './dashboard/ConsultantDashboard';
+import FinanceDashboard from './dashboard/FinanceDashboard';
+import { openDashboardRoute } from '../src/modules/dashboardNavigation';
 
 type ReminderView = 'aggregated' | 'detail';
 type AIBriefKey = 'opportunity' | 'risk' | 'intel';
@@ -29,6 +38,32 @@ type KpiCard = {
   route: string;
   tone: 'green' | 'red' | 'amber' | 'indigo' | 'blue';
   subtitle: string;
+};
+
+type HubPreview = {
+  id: string;
+  label: string;
+  meta: string;
+  route: string;
+};
+
+type HubAction = {
+  id: string;
+  label: string;
+  route: string;
+};
+
+type HubCard = {
+  id: string;
+  title: string;
+  value: string;
+  subtitle: string;
+  route: string;
+  tone: 'indigo' | 'emerald' | 'blue';
+  icon: React.ReactNode;
+  emptyText: string;
+  previews: HubPreview[];
+  actions: HubAction[];
 };
 
 type PersonaPlan = {
@@ -162,6 +197,10 @@ const Dashboard = () => {
     activePersona,
     currentUser,
     marketSignals,
+    knowledgeDocs,
+    strategicTasks,
+    strategicInsight,
+    userProfiles,
     dashboardMetrics,
     resolveDashboardPersona
   } = useApp();
@@ -386,8 +425,11 @@ const Dashboard = () => {
   const [detailSearch, setDetailSearch] = React.useState<string>('');
   const [detailGrouped, setDetailGrouped] = React.useState<boolean>(true);
   const [collapsedGroupKeys, setCollapsedGroupKeys] = React.useState<Record<string, boolean>>({});
+  const [scopeDropdownOpen, setScopeDropdownOpen] = React.useState<boolean>(false);
+  const [scopeDropdownDirection, setScopeDropdownDirection] = React.useState<'up' | 'down'>('down');
   const [trendCollapsed, setTrendCollapsed] = React.useState<boolean>(personaPlan.chartCollapsed);
   const [aiOpenState, setAiOpenState] = React.useState<Record<AIBriefKey, boolean>>(personaPlan.aiDefaultOpen);
+  const scopeDropdownRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
     setReminderView(personaPlan.taskDefaultView);
@@ -396,9 +438,28 @@ const Dashboard = () => {
     setDetailSearch('');
     setDetailGrouped(true);
     setCollapsedGroupKeys({});
+    setScopeDropdownOpen(false);
     setTrendCollapsed(personaPlan.chartCollapsed);
     setAiOpenState(personaPlan.aiDefaultOpen);
   }, [personaPlan, persona]);
+
+  React.useEffect(() => {
+    const handleOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (scopeDropdownRef.current && !scopeDropdownRef.current.contains(target)) {
+        setScopeDropdownOpen(false);
+      }
+    };
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setScopeDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleEsc);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, []);
 
   const getScopeLabel = React.useCallback(
     (scopeKey: string) => {
@@ -445,6 +506,20 @@ const Dashboard = () => {
       items: groups.get(scopeKey) || []
     }));
   }, [detailReminders, taskAggregatedReminders, getScopeLabel]);
+
+  const detailScopeLabel = detailScopeKey ? getScopeLabel(detailScopeKey) : '全部对象';
+  const toggleScopeDropdown = () => {
+    if (!scopeDropdownOpen) {
+      const rect = scopeDropdownRef.current?.getBoundingClientRect();
+      if (rect) {
+        const estimatedMenuHeight = 280;
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const spaceAbove = rect.top;
+        setScopeDropdownDirection(spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow ? 'up' : 'down');
+      }
+    }
+    setScopeDropdownOpen(prev => !prev);
+  };
 
   const monthKeys = React.useMemo(() => {
     const keys: string[] = [];
@@ -505,15 +580,15 @@ const Dashboard = () => {
   const bossCards: KpiCard[] = [
     {
       id: 'boss-revenue-count',
-      title: '本月 Revenue 项目数',
+      title: '本月营收项目数',
       value: String(revenueProjectsThisMonth.length),
       route: '/projects?status=completed&mode=delivery',
       tone: 'green',
-      subtitle: 'Completed Revenue Projects'
+      subtitle: '本月完成且计入营收口径'
     },
     {
       id: 'boss-revenue-amount',
-      title: '本月 Revenue 项目金额',
+      title: '本月营收项目金额',
       value: revenueAmountThisMonth > 0 ? money(revenueAmountThisMonth) : money(monthContractAmount),
       route: revenueAmountThisMonth > 0 ? '/projects?status=completed&mode=delivery&field=amount' : '/contracts?month=this',
       tone: 'blue',
@@ -529,7 +604,7 @@ const Dashboard = () => {
     },
     {
       id: 'boss-conv',
-      title: '销售转化率（线索→Revenue项目）',
+      title: '销售转化率（线索→营收项目）',
       value: getCardValue('boss', 'boss-conv', '0.0%'),
       route: '/leads?filter=conversion',
       tone: 'indigo',
@@ -540,7 +615,7 @@ const Dashboard = () => {
   const salesCards: KpiCard[] = [
     {
       id: 'sales-revenue-count',
-      title: '我的 Revenue 项目数（本月）',
+      title: '我的营收项目数（本月）',
       value: String(myRevenueProjectsThisMonth.length),
       route: '/projects?owner=me&status=completed&mode=delivery',
       tone: 'green',
@@ -548,7 +623,7 @@ const Dashboard = () => {
     },
     {
       id: 'sales-conv',
-      title: '我的转化率（线索→Revenue项目）',
+      title: '我的转化率（线索→营收项目）',
       value: getCardValue('sales', 'sales-conversion', '0.0%'),
       route: '/leads?owner=me&filter=conversion',
       tone: 'indigo',
@@ -649,7 +724,27 @@ const Dashboard = () => {
     return bossCards;
   }, [persona, bossCards, salesCards, consultantCards, financeCards]);
 
-  const onCardClick = (route: string) => navigate(route);
+  const bossOverviewCards = React.useMemo(() => {
+    const byId = new Map(bossCards.map(card => [card.id, card]));
+    const ordered = ['boss-revenue-count', 'boss-revenue-amount', 'boss-conv', 'boss-overdue-amount']
+      .map(id => byId.get(id))
+      .filter(Boolean);
+    if (ordered.length === bossCards.length) return ordered;
+    return bossCards;
+  }, [bossCards]);
+
+  const bossRiskCards = React.useMemo(() => {
+    const byId = new Map(dashboardMetrics.boss.middleCards.map(card => [card.id, card]));
+    const ordered = ['boss-high-risk-project', 'boss-overdue-receivable', 'boss-customer-churn', 'boss-near-overdue']
+      .map(id => byId.get(id))
+      .filter(Boolean);
+    if (ordered.length === dashboardMetrics.boss.middleCards.length) return ordered;
+    return dashboardMetrics.boss.middleCards;
+  }, [dashboardMetrics.boss.middleCards]);
+
+  const bossTeamCards = React.useMemo(() => dashboardMetrics.boss.bottomCards, [dashboardMetrics.boss.bottomCards]);
+
+  const onCardClick = (route: string) => openDashboardRoute(navigate, route);
 
   const jumpByLink = React.useCallback(
     (linkType?: Reminder['linkType'], linkId?: string) => {
@@ -659,6 +754,7 @@ const Dashboard = () => {
       else if (linkType === 'contract') navigate('/contracts', { state: { openDetailId: linkId } });
       else if (linkType === 'project') navigate('/projects', { state: { openDetailId: linkId } });
       else if (linkType === 'intel') navigate('/intel', { state: { openDetailId: linkId } });
+      else if (linkType === 'audit') navigate('/audit', { state: { openDetailId: linkId } });
     },
     [navigate]
   );
@@ -666,6 +762,153 @@ const Dashboard = () => {
   const toggleAiBlock = (key: AIBriefKey) => {
     setAiOpenState(prev => ({ ...prev, [key]: !prev[key] }));
   };
+
+  const accessibleKnowledgeDocs = React.useMemo(
+    () => knowledgeDocs.filter(doc => {
+      if (doc.accessUserIds && doc.accessUserIds.length > 0 && !doc.accessUserIds.includes(currentUser.id)) return false;
+      if (doc.accessRoles && doc.accessRoles.length > 0 && !doc.accessRoles.some(role => currentUser.roles.includes(role))) return false;
+      return true;
+    }),
+    [knowledgeDocs, currentUser.id, currentUser.roles]
+  );
+  const learnedDocsCount = React.useMemo(
+    () => accessibleKnowledgeDocs.filter(doc => doc.aiVisible).length,
+    [accessibleKnowledgeDocs]
+  );
+  const auditLinkedKnowledgeCount = React.useMemo(
+    () => accessibleKnowledgeDocs.filter(doc => doc.linkType === 'audit').length,
+    [accessibleKnowledgeDocs]
+  );
+  const pdcaKnowledgeCount = React.useMemo(
+    () => accessibleKnowledgeDocs.filter(doc => doc.category === 'PDCA').length,
+    [accessibleKnowledgeDocs]
+  );
+  const latestKnowledgeDocs = React.useMemo(
+    () => [...accessibleKnowledgeDocs]
+      .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+      .slice(0, 3),
+    [accessibleKnowledgeDocs]
+  );
+  const strategicPendingCount = React.useMemo(
+    () => strategicTasks.filter(task => task.status === 'Pending').length,
+    [strategicTasks]
+  );
+  const strategicInProgressCount = React.useMemo(
+    () => strategicTasks.filter(task => task.status === 'In Progress').length,
+    [strategicTasks]
+  );
+  const strategicCompletedCount = React.useMemo(
+    () => strategicTasks.filter(task => task.status === 'Completed').length,
+    [strategicTasks]
+  );
+  const strategyBoardTasks = React.useMemo(() => {
+    const statusRank: Record<string, number> = { 'In Progress': 0, Pending: 1, Completed: 2 };
+    return [...strategicTasks]
+      .sort((a, b) => {
+        const statusDelta = (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9);
+        if (statusDelta !== 0) return statusDelta;
+        return String(a.deadline || '9999-99-99').localeCompare(String(b.deadline || '9999-99-99'));
+      })
+      .slice(0, 3);
+  }, [strategicTasks]);
+  const strategyUpdatedLabel = String(strategicInsight?.generatedAt || '').trim();
+  const aiPreviewItems = React.useMemo<HubPreview[]>(() => [
+    {
+      id: 'ai-preview-model',
+      label: '模型状态',
+      meta: `风险提醒 ${risks.length} 条`,
+      route: '/ai-center?panel=model-status'
+    },
+    {
+      id: 'ai-preview-security',
+      label: '安全治理',
+      meta: `${unreadReminders.length} 条未读提醒`,
+      route: '/ai-center?panel=security'
+    },
+    {
+      id: 'ai-preview-members',
+      label: '成员治理',
+      meta: `${userProfiles.length} 位成员可配置`,
+      route: '/ai-center?panel=members'
+    }
+  ], [risks.length, unreadReminders.length, userProfiles.length]);
+  const hubCards = React.useMemo<HubCard[]>(() => [
+    {
+      id: 'hub-knowledge',
+      title: '知识复用中心',
+      value: `${learnedDocsCount}`,
+      subtitle: `AI 可用 ${learnedDocsCount} · 审计经验 ${auditLinkedKnowledgeCount} · PDCA ${pdcaKnowledgeCount}`,
+      route: '/knowledge?focus=ai_ready',
+      tone: 'indigo',
+      icon: <BookOpen className="w-5 h-5" />,
+      emptyText: '当前还没有可展示的知识文档。',
+      previews: latestKnowledgeDocs.map(doc => ({
+        id: doc.id,
+        label: doc.title,
+        meta: `${doc.category || '未分类'} · ${doc.updatedAt || '未更新'}`,
+        route: `/knowledge?docId=${encodeURIComponent(doc.id)}`
+      })),
+      actions: [
+        { id: 'knowledge-ai', label: 'AI 可用知识', route: '/knowledge?focus=ai_ready' },
+        { id: 'knowledge-audit', label: '审计经验', route: '/knowledge?focus=audit_linked' },
+        { id: 'knowledge-pdca', label: 'PDCA 复盘', route: '/knowledge?category=PDCA' }
+      ]
+    },
+    {
+      id: 'hub-strategy',
+      title: '战略执行中战役',
+      value: `${strategicInProgressCount}`,
+      subtitle: `待启动 ${strategicPendingCount} · 已完成 ${strategicCompletedCount}${strategyUpdatedLabel ? ` · 推演 ${strategyUpdatedLabel}` : ''}`,
+      route: strategicTasks.length > 0 ? '/strategy?tab=execution&status=In%20Progress' : '/strategy?tab=analysis',
+      tone: 'emerald',
+      icon: <BrainCircuit className="w-5 h-5" />,
+      emptyText: '当前还没有战略任务，可先进入推演视图。',
+      previews: strategyBoardTasks.map(task => ({
+        id: task.id,
+        label: task.title,
+        meta: `${task.status}${task.owner ? ` · ${task.owner}` : ''}${task.deadline ? ` · ${task.deadline}` : ''}`,
+        route: task.status === 'Completed'
+          ? '/strategy?tab=execution&status=Completed'
+          : task.status === 'Pending'
+            ? '/strategy?tab=execution&status=Pending'
+            : '/strategy?tab=execution&status=In%20Progress'
+      })),
+      actions: [
+        { id: 'strategy-progress', label: '攻坚中', route: '/strategy?tab=execution&status=In%20Progress' },
+        { id: 'strategy-pending', label: '待启动', route: '/strategy?tab=execution&status=Pending' },
+        { id: 'strategy-analysis', label: '战略推演', route: '/strategy?tab=analysis' }
+      ]
+    },
+    {
+      id: 'hub-ai',
+      title: 'AI 运行与治理',
+      value: 'Kimi K2.5',
+      subtitle: `成员 ${userProfiles.length} 人 · 训练资料 ${learnedDocsCount} 份`,
+      route: '/ai-center?panel=model-status',
+      tone: 'blue',
+      icon: <Database className="w-5 h-5" />,
+      emptyText: '当前没有运行快照。',
+      previews: aiPreviewItems,
+      actions: [
+        { id: 'ai-model', label: '模型状态', route: '/ai-center?panel=model-status' },
+        { id: 'ai-security', label: '安全策略', route: '/ai-center?panel=security' },
+        { id: 'ai-members', label: '成员治理', route: '/ai-center?panel=members' }
+      ]
+    }
+  ], [
+    learnedDocsCount,
+    auditLinkedKnowledgeCount,
+    pdcaKnowledgeCount,
+    latestKnowledgeDocs,
+    strategicInProgressCount,
+    strategicPendingCount,
+    strategicCompletedCount,
+    strategyUpdatedLabel,
+    strategicTasks.length,
+    strategyBoardTasks,
+    userProfiles.length,
+    aiPreviewItems
+  ]);
 
   const roleHint = PERSONA_LABEL[persona];
 
@@ -678,32 +921,103 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* A. 顶部 KPI */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {kpiCards.map(card => {
-          const tone = TONE_CLASS[card.tone];
-          return (
-            <button
-              key={card.id}
-              className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 flex items-center justify-between hover:shadow-md transition-all group text-left"
-              onClick={() => onCardClick(card.route)}
-              title={`跳转：${card.title}`}
-            >
-              <div className="min-w-0">
-                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">{card.title}</p>
-                <h3 className={`text-2xl font-black mt-1 ${tone.value}`}>{card.value}</h3>
-                <div className="flex items-center text-xs mt-2 font-bold text-gray-400 truncate">{card.subtitle}</div>
+      {/* A. 顶部 KPI / Boss 三段式 */}
+      {persona === 'boss' ? (
+        <BossDashboard
+          overviewCards={bossOverviewCards.map(card => ({
+            id: card.id,
+            title: card.title,
+            value: card.value,
+            route: card.route,
+            hint: card.subtitle
+          }))}
+          riskCards={bossRiskCards}
+          teamCards={bossTeamCards}
+        />
+      ) : persona === 'sales' ? (
+        <SalesDashboard metrics={dashboardMetrics.sales} />
+      ) : persona === 'consultant' ? (
+        <ConsultantDashboard metrics={dashboardMetrics.consultant} />
+      ) : (
+        <FinanceDashboard metrics={dashboardMetrics.finance} />
+      )}
+
+      <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h3 className="text-lg font-black text-gray-900">专项联动中心</h3>
+            <p className="text-xs text-gray-500 mt-1">不只做跳转，直接在工作台预览知识、战役和 AI 治理焦点。</p>
+          </div>
+          <span className="text-[11px] font-bold text-gray-400">可直接进入焦点视图或打开最近项</span>
+        </div>
+        <div className="mt-4 grid grid-cols-1 xl:grid-cols-3 gap-4">
+          {hubCards.map(card => {
+            const toneClass = card.tone === 'indigo'
+              ? { border: 'border-indigo-100', icon: 'bg-indigo-50 text-indigo-600', value: 'text-indigo-700', button: 'border-indigo-200 text-indigo-700 hover:bg-indigo-50', item: 'hover:border-indigo-200 hover:bg-indigo-50/40' }
+              : card.tone === 'emerald'
+                ? { border: 'border-emerald-100', icon: 'bg-emerald-50 text-emerald-600', value: 'text-emerald-700', button: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50', item: 'hover:border-emerald-200 hover:bg-emerald-50/40' }
+                : { border: 'border-blue-100', icon: 'bg-blue-50 text-blue-600', value: 'text-blue-700', button: 'border-blue-200 text-blue-700 hover:bg-blue-50', item: 'hover:border-blue-200 hover:bg-blue-50/40' };
+            return (
+              <div
+                key={card.id}
+                className={`rounded-2xl border bg-gradient-to-br from-white to-gray-50 p-5 shadow-sm ${toneClass.border}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className={`inline-flex items-center justify-center w-10 h-10 rounded-xl ${toneClass.icon}`}>
+                      {card.icon}
+                    </div>
+                    <div className={`mt-4 text-2xl font-black ${toneClass.value}`}>{card.value}</div>
+                    <div className="mt-1 text-sm font-black text-gray-900">{card.title}</div>
+                    <div className="mt-2 text-xs leading-5 text-gray-500">{card.subtitle}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onCardClick(card.route)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-600 transition hover:bg-gray-50"
+                  >
+                    进入
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {card.previews.length > 0 ? card.previews.map(item => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onCardClick(item.route)}
+                      className={`flex w-full items-center justify-between gap-3 rounded-xl border border-gray-100 bg-white px-3 py-2 text-left transition ${toneClass.item}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-bold text-gray-800">{item.label}</div>
+                        <div className="mt-1 truncate text-[11px] text-gray-500">{item.meta}</div>
+                      </div>
+                      <ArrowRight className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                    </button>
+                  )) : (
+                    <div className="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-4 text-xs text-gray-400">
+                      {card.emptyText}
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {card.actions.map(action => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      onClick={() => onCardClick(action.route)}
+                      className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition ${toneClass.button}`}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className={`p-4 rounded-2xl group-hover:scale-110 transition-transform ${tone.bg}`}>
-                {card.tone === 'green' && <Briefcase className={`w-6 h-6 ${tone.icon}`} />}
-                {card.tone === 'red' && <Bell className={`w-6 h-6 ${tone.icon}`} />}
-                {card.tone === 'amber' && <Activity className={`w-6 h-6 ${tone.icon}`} />}
-                {card.tone === 'indigo' && <Sparkles className={`w-6 h-6 ${tone.icon}`} />}
-                {card.tone === 'blue' && <Coins className={`w-6 h-6 ${tone.icon}`} />}
-              </div>
-            </button>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -879,21 +1193,59 @@ const Dashboard = () => {
                 {reminderView === 'detail' && (
                   <div className="space-y-2">
                     <div className="flex flex-col md:flex-row md:items-center gap-2">
-                      <select
-                        className="w-full md:w-auto bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none"
-                        value={detailScopeKey}
-                        onChange={event => {
-                          setDetailScopeKey(event.target.value);
-                          setCollapsedGroupKeys({});
-                        }}
-                      >
-                        <option value="">全部对象</option>
-                        {taskAggregatedReminders.map(agg => (
-                          <option key={agg.id} value={`${agg.linkType}:${agg.linkId}`}>
-                            {agg.projectName ? `项目：${agg.projectName}` : agg.customerName ? `客户：${agg.customerName}` : `${agg.linkType}:${agg.linkId}`}（{agg.count}）
-                          </option>
-                        ))}
-                      </select>
+                      <div ref={scopeDropdownRef} className="relative w-full md:w-auto md:min-w-[280px]">
+                        <button
+                          type="button"
+                          className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none text-left flex items-center justify-between gap-2"
+                          onClick={toggleScopeDropdown}
+                          title={detailScopeLabel}
+                        >
+                          <span className="truncate">{detailScopeLabel}</span>
+                          <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${scopeDropdownOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                        {scopeDropdownOpen && (
+                          <div
+                            className={`absolute z-40 left-0 right-0 bg-white border border-gray-200 rounded-xl shadow-xl p-1 max-h-56 overflow-y-auto custom-scrollbar ${
+                              scopeDropdownDirection === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                                detailScopeKey === '' ? 'bg-indigo-600 text-white font-bold' : 'text-gray-700 hover:bg-gray-50'
+                              }`}
+                              onClick={() => {
+                                setDetailScopeKey('');
+                                setCollapsedGroupKeys({});
+                                setScopeDropdownOpen(false);
+                              }}
+                            >
+                              全部对象
+                            </button>
+                            {taskAggregatedReminders.map(agg => {
+                              const scopeKey = `${agg.linkType}:${agg.linkId}`;
+                              const label = `${agg.projectName ? `项目：${agg.projectName}` : agg.customerName ? `客户：${agg.customerName}` : `${agg.linkType}:${agg.linkId}`}（${agg.count}）`;
+                              return (
+                                <button
+                                  key={agg.id}
+                                  type="button"
+                                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                                    detailScopeKey === scopeKey ? 'bg-indigo-600 text-white font-bold' : 'text-gray-700 hover:bg-gray-50'
+                                  }`}
+                                  onClick={() => {
+                                    setDetailScopeKey(scopeKey);
+                                    setCollapsedGroupKeys({});
+                                    setScopeDropdownOpen(false);
+                                  }}
+                                  title={label}
+                                >
+                                  <span className="block truncate">{label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
 
                       <input
                         className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none"

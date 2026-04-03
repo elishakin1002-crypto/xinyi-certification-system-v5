@@ -1,0 +1,384 @@
+{
+  "meta": {
+    "name": "certificate-feature-demo",
+    "description": "客户证书、监管周期、提醒联动、续证项目、证书档案示例数据",
+    "version": "1.0.0",
+    "generatedAt": "2026-04-01"
+  },
+  "customers_v8": [
+    {
+      "id": "cust-cert-001",
+      "name": "温州华信包装有限公司",
+      "contactPerson": "陈总",
+      "mobile": "13857760001",
+      "industry": "包装印刷",
+      "totalValue": 268000,
+      "riskStatus": "low",
+      "activeContracts": 1,
+      "certificates": [
+        {
+          "id": "cert-001",
+          "name": "ISO9001 质量管理体系认证",
+          "number": "00126Q31245R0M/3300",
+          "issueDate": "2023-05-17",
+          "expiryDate": "2026-05-16",
+          "issuingBody": "中质协质量保证中心",
+          "scope": "纸制品包装、塑料包装袋的生产与销售",
+          "status": "Expiring",
+          "cycleRule": "3年一换证，每年监督审核1次",
+          "auditPlan": [
+            {
+              "id": "audit-001",
+              "type": "Surveillance 1",
+              "plannedDate": "2024-05-10",
+              "status": "Completed",
+              "actualDate": "2024-05-12"
+            },
+            {
+              "id": "audit-002",
+              "type": "Surveillance 2",
+              "plannedDate": "2025-05-09",
+              "status": "Completed",
+              "actualDate": "2025-05-11"
+            },
+            {
+              "id": "audit-003",
+              "type": "Re-certification",
+              "plannedDate": "2026-04-20",
+              "status": "Pending"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cust-cert-002",
+      "name": "龙港市新味食品科技有限公司",
+      "contactPerson": "林经理",
+      "mobile": "13857760002",
+      "industry": "食品加工",
+      "totalValue": 186000,
+      "riskStatus": "medium",
+      "activeContracts": 0,
+      "certificates": [
+        {
+          "id": "cert-002",
+          "name": "HACCP 食品安全管理体系认证",
+          "number": "HACCP-330382-2023-118",
+          "issueDate": "2023-03-21",
+          "expiryDate": "2026-03-20",
+          "issuingBody": "方圆标志认证集团",
+          "scope": "休闲食品的生产与销售",
+          "status": "Expired",
+          "cycleRule": "3年一换证，每年监督审核1次",
+          "auditPlan": [
+            {
+              "id": "audit-004",
+              "type": "Surveillance 1",
+              "plannedDate": "2024-03-15",
+              "status": "Completed",
+              "actualDate": "2024-03-16"
+            },
+            {
+              "id": "audit-005",
+              "type": "Surveillance 2",
+              "plannedDate": "2025-03-15",
+              "status": "Completed",
+              "actualDate": "2025-03-17"
+            },
+            {
+              "id": "audit-006",
+              "type": "Re-certification",
+              "plannedDate": "2026-03-10",
+              "status": "Overdue"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cust-cert-003",
+      "name": "瑞安精工泵业有限公司",
+      "contactPerson": "周厂长",
+      "mobile": "13857760003",
+      "industry": "机械制造",
+      "totalValue": 320000,
+      "riskStatus": "low",
+      "activeContracts": 1,
+      "certificates": [
+        {
+          "id": "cert-003",
+          "name": "ISO14001 环境管理体系认证",
+          "number": "04126E20458R1M",
+          "issueDate": "2024-01-01",
+          "expiryDate": "2026-12-31",
+          "issuingBody": "中国船级社质量认证公司",
+          "scope": "工业泵、阀门及配件的设计与制造",
+          "status": "Valid",
+          "cycleRule": "3年一换证，每年监督审核1次",
+          "auditPlan": [
+            {
+              "id": "audit-007",
+              "type": "Surveillance 1",
+              "plannedDate": "2025-12-15",
+              "status": "Completed",
+              "actualDate": "2025-12-16"
+            },
+            {
+              "id": "audit-008",
+              "type": "Annual Review",
+              "plannedDate": "2026-06-20",
+              "status": "Scheduled"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "projects_v8": [
+    {
+      "id": "proj-cert-001",
+      "customerId": "cust-cert-001",
+      "name": "温州华信包装 ISO9001 续证跟进",
+      "contractRef": "CUSTCERT:cust-cert-001:cert-001",
+      "sourceType": "customer",
+      "sourceRef": "cust-cert-001",
+      "projectMode": "followup",
+      "projectCategory": "FollowUp",
+      "manager": "老板（示例）",
+      "progress": 35,
+      "status": "Active",
+      "paymentStatus": "unpaid",
+      "deadline": "2026-05-16",
+      "duration": 45,
+      "projectType": "Self-Operated",
+      "tasks": [
+        {
+          "id": "task-cert-001",
+          "title": "确认客户续证意向",
+          "deadline": "2026-04-03",
+          "status": "Completed",
+          "priority": "High",
+          "category": "Core",
+          "owner": "老板（示例）"
+        },
+        {
+          "id": "task-cert-002",
+          "title": "收集复评审核资料",
+          "deadline": "2026-04-08",
+          "status": "Pending",
+          "priority": "High",
+          "category": "Core",
+          "owner": "咨询顾问1（示例）"
+        },
+        {
+          "id": "task-cert-003",
+          "title": "锁定认证机构排期",
+          "deadline": "2026-04-12",
+          "status": "Pending",
+          "priority": "High",
+          "category": "Core",
+          "owner": "交付负责人（示例）"
+        }
+      ],
+      "settlementConfig": {
+        "rule": "Ratio",
+        "value": 10,
+        "base": "Revenue"
+      }
+    },
+    {
+      "id": "proj-cert-002",
+      "customerId": "cust-cert-002",
+      "name": "新味食品 HACCP 证书抢救续证项目",
+      "contractRef": "CUSTCERT:cust-cert-002:cert-002",
+      "sourceType": "customer",
+      "sourceRef": "cust-cert-002",
+      "projectMode": "followup",
+      "projectCategory": "FollowUp",
+      "manager": "老板（示例）",
+      "progress": 20,
+      "status": "Active",
+      "paymentStatus": "unpaid",
+      "deadline": "2026-04-15",
+      "duration": 20,
+      "projectType": "Self-Operated",
+      "tasks": [
+        {
+          "id": "task-cert-004",
+          "title": "立即联系客户确认现状",
+          "deadline": "2026-04-01",
+          "status": "Pending",
+          "priority": "High",
+          "category": "Core",
+          "owner": "老板（示例）"
+        },
+        {
+          "id": "task-cert-005",
+          "title": "确认是否已有竞对介入",
+          "deadline": "2026-04-02",
+          "status": "Pending",
+          "priority": "High",
+          "category": "Core",
+          "owner": "咨询顾问1（示例）"
+        },
+        {
+          "id": "task-cert-006",
+          "title": "补审计划与资料清单",
+          "deadline": "2026-04-05",
+          "status": "Pending",
+          "priority": "High",
+          "category": "Core",
+          "owner": "交付负责人（示例）"
+        }
+      ],
+      "settlementConfig": {
+        "rule": "Ratio",
+        "value": 12,
+        "base": "Revenue"
+      }
+    }
+  ],
+  "reminders_v8": [
+    {
+      "id": "rem-cert-001",
+      "title": "ISO9001证书45天后到期",
+      "content": "请尽快联系客户确认续证安排，避免被竞对切入。",
+      "date": "2026-04-01",
+      "type": "expire",
+      "isRead": false,
+      "linkType": "project",
+      "linkId": "proj-cert-001",
+      "channels": ["system", "wechat"]
+    },
+    {
+      "id": "rem-cert-002",
+      "title": "续证审核资料待收集",
+      "content": "需补齐管理评审、内审记录、顾客满意度资料。",
+      "date": "2026-04-03",
+      "type": "task",
+      "isRead": false,
+      "linkType": "project",
+      "linkId": "proj-cert-001",
+      "channels": ["system"]
+    },
+    {
+      "id": "rem-cert-003",
+      "title": "HACCP证书已过期",
+      "content": "客户证书已过期12天，请立即联系，避免竞对趁机切入。",
+      "date": "2026-04-01",
+      "type": "expire",
+      "isRead": false,
+      "linkType": "project",
+      "linkId": "proj-cert-002",
+      "channels": ["system", "wechat"]
+    },
+    {
+      "id": "rem-cert-004",
+      "title": "客户回访未完成",
+      "content": "需确认客户是否已接触其他咨询机构。",
+      "date": "2026-04-01",
+      "type": "risk",
+      "isRead": false,
+      "linkType": "customer",
+      "linkId": "cust-cert-002",
+      "channels": ["system"]
+    },
+    {
+      "id": "rem-cert-005",
+      "title": "补审计划待确认",
+      "content": "尽快与认证机构锁定补审时间。",
+      "date": "2026-04-02",
+      "type": "task",
+      "isRead": false,
+      "linkType": "project",
+      "linkId": "proj-cert-002",
+      "channels": ["system"]
+    },
+    {
+      "id": "rem-cert-006",
+      "title": "ISO14001年度监督审核临近",
+      "content": "请提前30天准备环保合规资料及运行记录。",
+      "date": "2026-05-20",
+      "type": "task",
+      "isRead": false,
+      "linkType": "customer",
+      "linkId": "cust-cert-003",
+      "channels": ["system"]
+    }
+  ],
+  "knowledge_docs_v8": [
+    {
+      "id": "doc-cert-001",
+      "title": "证书档案｜温州华信包装有限公司｜ISO9001 质量管理体系认证",
+      "category": "证书档案",
+      "format": "PDF",
+      "size": "2.3 MB",
+      "updatedAt": "2026-04-01",
+      "summary": "手动上传原件：ISO9001 质量管理体系认证（编号 00126Q31245R0M/3300），用于客户证书原件与版本留存。",
+      "aiVisible": false,
+      "source": "manual",
+      "autoGenerated": false,
+      "originalFileName": "温州华信包装-ISO9001-证书原件.pdf",
+      "linkType": "customer",
+      "linkId": "cust-cert-001",
+      "linkTitle": "温州华信包装有限公司",
+      "tags": ["证书档案", "ISO9001 质量管理体系认证", "certificate:cert-001"],
+      "accessRoles": ["ADMIN", "MANAGER", "CONSULTANT", "FINANCE"]
+    },
+    {
+      "id": "doc-cert-002",
+      "title": "证书档案｜温州华信包装有限公司｜ISO9001 OCR识别归档",
+      "category": "证书档案",
+      "format": "JPG",
+      "size": "860 KB",
+      "updatedAt": "2026-04-01",
+      "summary": "OCR识别后自动归档，用于保留证书图片与识别来源。",
+      "aiVisible": false,
+      "source": "ai",
+      "autoGenerated": true,
+      "originalFileName": "iso9001-cert-photo.jpg",
+      "linkType": "customer",
+      "linkId": "cust-cert-001",
+      "linkTitle": "温州华信包装有限公司",
+      "tags": ["证书档案", "ISO9001 质量管理体系认证", "certificate:cert-001", "OCR导入"],
+      "accessRoles": ["ADMIN", "MANAGER", "CONSULTANT", "FINANCE"]
+    },
+    {
+      "id": "doc-cert-003",
+      "title": "证书档案｜龙港市新味食品科技有限公司｜HACCP 食品安全管理体系认证",
+      "category": "证书档案",
+      "format": "PDF",
+      "size": "1.8 MB",
+      "updatedAt": "2026-04-01",
+      "summary": "历史证书扫描件，用于过期追溯与补审资料准备。",
+      "aiVisible": false,
+      "source": "manual",
+      "autoGenerated": false,
+      "originalFileName": "新味食品-HACCP-证书.pdf",
+      "linkType": "customer",
+      "linkId": "cust-cert-002",
+      "linkTitle": "龙港市新味食品科技有限公司",
+      "tags": ["证书档案", "HACCP 食品安全管理体系认证", "certificate:cert-002"],
+      "accessRoles": ["ADMIN", "MANAGER", "CONSULTANT", "FINANCE"]
+    },
+    {
+      "id": "doc-cert-004",
+      "title": "证书档案｜瑞安精工泵业有限公司｜ISO14001 环境管理体系认证",
+      "category": "证书档案",
+      "format": "PDF",
+      "size": "2.0 MB",
+      "updatedAt": "2026-04-01",
+      "summary": "证书正本扫描归档，用于年度监管与后续检索。",
+      "aiVisible": false,
+      "source": "manual",
+      "autoGenerated": false,
+      "originalFileName": "瑞安精工-ISO14001-证书正本.pdf",
+      "linkType": "customer",
+      "linkId": "cust-cert-003",
+      "linkTitle": "瑞安精工泵业有限公司",
+      "tags": ["证书档案", "ISO14001 环境管理体系认证", "certificate:cert-003"],
+      "accessRoles": ["ADMIN", "MANAGER", "CONSULTANT", "FINANCE"]
+    }
+  ]
+}

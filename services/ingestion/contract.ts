@@ -3,6 +3,17 @@ import { compressImage, extractTextFromDocx, IngestResult } from './fileUtils';
 import { extractTextFromPdf, renderPdfPagesAsImages } from '../documentParsers';
 
 const PLACEHOLDER_RE = /(某某|xxx|示例|样例|测试|待定|未知|北京某某|2024-xx-xx|合同编号|请填写)/i;
+const CONTRACT_MODEL_CHAIN = ['kimi-k2.5', 'gemini-3-flash'];
+const CONTRACT_PRIMARY_TIMEOUT_MS = Math.max(
+  30000,
+  Number((import.meta as any).env?.VITE_CONTRACT_AI_PRIMARY_TIMEOUT_MS || 55000)
+);
+const CONTRACT_SECONDARY_TIMEOUT_MS = Math.max(
+  CONTRACT_PRIMARY_TIMEOUT_MS,
+  Number((import.meta as any).env?.VITE_CONTRACT_AI_SECONDARY_TIMEOUT_MS || 90000)
+);
+const CONTRACT_TEXT_SLICE_PRIMARY = 14000;
+const CONTRACT_TEXT_SLICE_SECONDARY = 30000;
 
 const isRetryable = (err: unknown) => {
   const msg = String((err as any)?.message || err || '').toLowerCase();
@@ -143,24 +154,103 @@ const buildInstruction = () => `
 }
 `.trim();
 
-const callExtract = async (promptParts: any[]) => {
-  let result: any = null;
-  let lastError: any = null;
-  const maxAttempts = 3;
+type PromptVariant = {
+  label: string;
+  parts: any[];
+  timeoutMs: number;
+};
 
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    try {
-      result = await aiService.generateJSON('kimi-k2.5', promptParts as any);
-      lastError = null;
-      break;
-    } catch (err) {
-      lastError = err;
-      if (!isRetryable(err) || attempt === maxAttempts - 1) break;
-      await sleep(800 * (attempt + 1));
+type ExtractCallResult = {
+  extractedData: any;
+  modelUsed: string;
+  stage: string;
+  attempts: number;
+  fallbackUsed: boolean;
+};
+
+const buildTextPromptVariants = (rawText: string): PromptVariant[] => {
+  const normalized = String(rawText || '').trim();
+  if (!normalized) return [];
+
+  const compact = normalized.slice(0, CONTRACT_TEXT_SLICE_PRIMARY);
+  const full = normalized.slice(0, CONTRACT_TEXT_SLICE_SECONDARY);
+  if (full.length <= compact.length) {
+    return [{ label: 'text-single', parts: [{ text: compact }], timeoutMs: CONTRACT_PRIMARY_TIMEOUT_MS }];
+  }
+  return [
+    { label: 'text-compact', parts: [{ text: compact }], timeoutMs: CONTRACT_PRIMARY_TIMEOUT_MS },
+    { label: 'text-full', parts: [{ text: full }], timeoutMs: CONTRACT_SECONDARY_TIMEOUT_MS }
+  ];
+};
+
+const buildImagePromptVariants = (base64Images: string[]): PromptVariant[] => {
+  const images = (base64Images || []).filter(Boolean);
+  if (images.length === 0) return [];
+
+  const variants: PromptVariant[] = [];
+  variants.push({
+    label: 'image-1page',
+    parts: [{ inlineData: { mimeType: 'image/jpeg', data: images[0] } }],
+    timeoutMs: CONTRACT_PRIMARY_TIMEOUT_MS
+  });
+
+  if (images.length >= 2) {
+    variants.push({
+      label: 'image-2page',
+      parts: images.slice(0, 2).map((data) => ({ inlineData: { mimeType: 'image/jpeg', data } })),
+      timeoutMs: CONTRACT_SECONDARY_TIMEOUT_MS
+    });
+  }
+
+  if (images.length >= 3) {
+    variants.push({
+      label: 'image-3page',
+      parts: images.slice(0, 3).map((data) => ({ inlineData: { mimeType: 'image/jpeg', data } })),
+      timeoutMs: CONTRACT_SECONDARY_TIMEOUT_MS
+    });
+  }
+
+  return variants;
+};
+
+const callExtract = async (variants: PromptVariant[]): Promise<ExtractCallResult> => {
+  let lastError: unknown = null;
+  let lastStage = '';
+  let lastModel = '';
+  let lastAttempt = 0;
+  const maxAttemptsPerModel = 2;
+  const instruction = { text: buildInstruction() };
+
+  for (const variant of variants) {
+    for (const model of CONTRACT_MODEL_CHAIN) {
+      for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt += 1) {
+        lastStage = variant.label;
+        lastModel = model;
+        lastAttempt = attempt;
+        try {
+          const extractedData = await aiService.generateJSON(
+            model,
+            [...variant.parts, instruction] as any,
+            { timeoutMs: variant.timeoutMs }
+          );
+          return {
+            extractedData,
+            modelUsed: model,
+            stage: variant.label,
+            attempts: attempt,
+            fallbackUsed: model !== CONTRACT_MODEL_CHAIN[0]
+          };
+        } catch (err) {
+          lastError = err;
+          if (!isRetryable(err) || attempt >= maxAttemptsPerModel) break;
+          await sleep(600 * attempt);
+        }
+      }
     }
   }
-  if (lastError) throw lastError;
-  return result;
+
+  const rawMsg = lastError instanceof Error ? lastError.message : String(lastError || 'Unknown AI Error');
+  throw new Error(`${rawMsg} [stage=${lastStage || 'unknown'} model=${lastModel || 'unknown'} attempt=${lastAttempt || 0}]`);
 };
 
 const normalizePaymentPlan = (paymentPlan: any[]): any[] => {
@@ -182,8 +272,9 @@ const sumPaymentPlan = (paymentPlan: Array<{ amount: number }>): number => {
 
 export const processContract = async (file: File): Promise<IngestResult> => {
   try {
-    let promptParts: any[] = [];
+    let promptVariants: PromptVariant[] = [];
     let extractedPlainText = '';
+    let extractMeta: Omit<ExtractCallResult, 'extractedData'> | null = null;
 
     const isDocx = file.name.toLowerCase().endsWith('.docx')
       || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -195,44 +286,47 @@ export const processContract = async (file: File): Promise<IngestResult> => {
       if (!extractedPlainText || extractedPlainText.length < 20) {
         throw new Error('DOCX 未提取到可读文本，请确认文件未加密且内容不是纯图片。');
       }
-      promptParts = [{ text: extractedPlainText.slice(0, 30000) }];
+      promptVariants = buildTextPromptVariants(extractedPlainText);
     } else if (isPdf) {
       extractedPlainText = await extractTextFromPdf(file);
       if (extractedPlainText && extractedPlainText.length > 30) {
-        promptParts = [{ text: extractedPlainText.slice(0, 30000) }];
+        promptVariants = buildTextPromptVariants(extractedPlainText);
       } else {
-        const imagePages = await renderPdfPagesAsImages(file, 3);
+        const imagePages = await renderPdfPagesAsImages(file, 3, { scale: 1.15, quality: 0.68, maxWidth: 1360 });
         if (imagePages.length > 0) {
-          promptParts = imagePages.map((data) => ({
-            inlineData: { mimeType: 'image/jpeg', data }
-          }));
+          promptVariants = buildImagePromptVariants(imagePages);
         } else {
           throw new Error('PDF 未提取到可读内容（文本/OCR均失败）。请改用清晰扫描件或先转图片后上传。');
         }
       }
     } else if (isImage) {
-      const base64 = await compressImage(file);
-      promptParts = [{ inlineData: { mimeType: 'image/jpeg', data: base64.split(',')[1] } }];
+      const base64 = await compressImage(file, 0.7, 1280);
+      promptVariants = [{
+        label: 'image-upload',
+        parts: [{ inlineData: { mimeType: 'image/jpeg', data: base64.split(',')[1] } }],
+        timeoutMs: CONTRACT_SECONDARY_TIMEOUT_MS
+      }];
     } else {
       const maybeText = await file.text().catch(() => '');
       extractedPlainText = String(maybeText || '').trim();
       if (!extractedPlainText) {
         throw new Error('当前文件类型无法识别，请上传 PDF/Word/图片格式合同。');
       }
-      promptParts = [{ text: extractedPlainText.slice(0, 30000) }];
+      promptVariants = buildTextPromptVariants(extractedPlainText);
     }
 
-    const hasUsablePrompt = promptParts.some((part) => {
-      if (part?.text && String(part.text).trim().length >= 12) return true;
-      const mt = String(part?.inlineData?.mimeType || '').toLowerCase();
-      return mt.startsWith('image/');
-    });
-    if (!hasUsablePrompt) {
+    if (!Array.isArray(promptVariants) || promptVariants.length === 0) {
       throw new Error('未提取到可识别内容，已中止AI识别（避免空识别/乱填）。');
     }
 
-    promptParts.push({ text: buildInstruction() });
-    const extractedData = await callExtract(promptParts);
+    const extraction = await callExtract(promptVariants);
+    extractMeta = {
+      modelUsed: extraction.modelUsed,
+      stage: extraction.stage,
+      attempts: extraction.attempts,
+      fallbackUsed: extraction.fallbackUsed
+    };
+    const extractedData = extraction.extractedData;
     const payload = (extractedData?.data && typeof extractedData.data === 'object')
       ? extractedData.data
       : extractedData;
@@ -279,7 +373,15 @@ export const processContract = async (file: File): Promise<IngestResult> => {
       return {
         success: false,
         error: '未识别到有效字段：可能是扫描件质量低或文本不可读。建议上传更清晰PDF/图片，或先手动录入关键字段。',
-        metadata: { fileType: file.type, size: file.size, processedAt: new Date().toISOString() }
+        metadata: {
+          fileType: file.type,
+          size: file.size,
+          processedAt: new Date().toISOString(),
+          modelUsed: extractMeta?.modelUsed,
+          stage: extractMeta?.stage,
+          attempts: extractMeta?.attempts,
+          fallbackUsed: extractMeta?.fallbackUsed
+        }
       };
     }
 
@@ -322,14 +424,21 @@ export const processContract = async (file: File): Promise<IngestResult> => {
       metadata: {
         fileType: file.type,
         size: file.size,
-        processedAt: new Date().toISOString()
+        processedAt: new Date().toISOString(),
+        modelUsed: extractMeta?.modelUsed,
+        stage: extractMeta?.stage,
+        attempts: extractMeta?.attempts,
+        fallbackUsed: extractMeta?.fallbackUsed
       }
     };
   } catch (error) {
     const rawMsg = error instanceof Error ? error.message : String(error || '');
-    const friendlyMsg = /overloaded|unavailable|503|quota|rate limit|429/i.test(rawMsg)
-      ? '模型繁忙，请稍后重试'
-      : rawMsg || '识别失败';
+    const lower = rawMsg.toLowerCase();
+    const friendlyMsg = /overloaded|unavailable|503|quota|rate limit|429/.test(lower)
+      ? '模型繁忙，请稍后重试（系统已自动重试并回退模型）'
+      : /timeout|timed out|请求超时|provider timeout/.test(lower)
+        ? `AI 请求超时：${rawMsg}`
+        : rawMsg || '识别失败';
     return {
       success: false,
       error: friendlyMsg,

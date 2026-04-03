@@ -71,10 +71,18 @@ export const extractTextFromPdf = async (file: File): Promise<string> => {
   }
 };
 
-export const renderPdfPagesAsImages = async (file: File, maxPages = 3): Promise<string[]> => {
+export const renderPdfPagesAsImages = async (
+  file: File,
+  maxPages = 3,
+  options?: { scale?: number; quality?: number; maxWidth?: number }
+): Promise<string[]> => {
   try {
     const pdfjs = await getPdfJs();
     if (!pdfjs?.getDocument) return [];
+
+    const renderScale = Math.max(0.8, Number(options?.scale || 1.2));
+    const jpegQuality = Math.min(0.9, Math.max(0.45, Number(options?.quality || 0.72)));
+    const maxWidth = Math.max(800, Number(options?.maxWidth || 1440));
 
     const arrayBuffer = await file.arrayBuffer();
     const loadingTask = pdfjs.getDocument({ data: arrayBuffer, disableWorker: true });
@@ -84,14 +92,21 @@ export const renderPdfPagesAsImages = async (file: File, maxPages = 3): Promise<
 
     for (let i = 1; i <= pages; i += 1) {
       const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 1.5 });
+      const viewport = page.getViewport({ scale: renderScale });
+      const widthRatio = viewport.width > maxWidth ? (maxWidth / viewport.width) : 1;
+      const targetWidth = Math.floor(viewport.width * widthRatio);
+      const targetHeight = Math.floor(viewport.height * widthRatio);
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       if (!ctx) continue;
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.86);
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      await page.render({
+        canvasContext: ctx,
+        viewport,
+        transform: widthRatio < 1 ? [widthRatio, 0, 0, widthRatio, 0, 0] : undefined
+      }).promise;
+      const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
       const base64 = dataUrl.split(',')[1];
       if (base64) images.push(base64);
     }

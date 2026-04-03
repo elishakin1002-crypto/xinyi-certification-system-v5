@@ -46,7 +46,10 @@ export const IngestionUploader: React.FC<IngestionUploaderProps> = ({
       if (result.success) {
         onSuccess(result, file);
       } else {
-        const msg = result.error || "处理失败，请重试";
+        const stageHint = result.metadata?.stage ? `阶段:${result.metadata.stage}` : '';
+        const modelHint = result.metadata?.modelUsed ? `模型:${result.metadata.modelUsed}` : '';
+        const suffix = [stageHint, modelHint].filter(Boolean).join(' / ');
+        const msg = `${result.error || "处理失败，请重试"}${suffix ? `（${suffix}）` : ''}`;
         setErrorMsg(msg);
         if (onError) onError(msg);
       }
@@ -80,9 +83,10 @@ export const IngestionUploader: React.FC<IngestionUploaderProps> = ({
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     e.preventDefault();
-    if (e.target.files && e.target.files[0]) {
-      handleFile(e.target.files[0]);
-    }
+    const picked = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+    // Allow re-selecting the same file after timeout/failure.
+    e.target.value = '';
+    if (picked) handleFile(picked);
   };
 
   if (compact) {

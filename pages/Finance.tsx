@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Wallet, Search, CheckCircle, Clock, AlertCircle, RefreshCcw, Filter, Download, X, AlertTriangle, Upload, FileSpreadsheet, Loader2, DollarSign, Building, User } from 'lucide-react';
 import { Receivable, Settlement } from '../types';
@@ -16,7 +16,10 @@ const Finance = () => {
   const initialFilterMonth = (location.state as any)?.filterMonth as string | undefined;
   const [filterStatus, setFilterStatus] = useState<'all' | 'paid' | 'unpaid' | 'overdue'>(initialFilterStatus || 'all');
   const [filterMonth, setFilterMonth] = useState<string>(initialFilterMonth || '');
+  const [dashboardFocus, setDashboardFocus] = useState<any>(null);
+  const [dashboardFocusLabel, setDashboardFocusLabel] = useState('');
   const [settlementTypeFilter, setSettlementTypeFilter] = useState<'All' | 'Internal' | 'External'>('All');
+  const [settlementStatusFilter, setSettlementStatusFilter] = useState<'all' | 'draft' | 'confirmed' | 'paid'>('all');
   const [receivableQuery, setReceivableQuery] = useState('');
   const [settlementQuery, setSettlementQuery] = useState('');
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
@@ -26,11 +29,40 @@ const Finance = () => {
 
   // ... (Calculations and basic handlers identical)
   useEffect(() => {
-    const nextStatus = (location.state as any)?.filterStatus as ('all' | 'paid' | 'unpaid' | 'overdue') | undefined;
-    const nextMonth = (location.state as any)?.filterMonth as string | undefined;
+    const state: any = location.state || {};
+    const nextStatus = state.filterStatus as ('all' | 'paid' | 'unpaid' | 'overdue') | undefined;
+    const nextMonth = state.filterMonth as string | undefined;
+    const focus = state.dashboardFocus;
     if (nextStatus) setFilterStatus(nextStatus);
     if (typeof nextMonth === 'string') setFilterMonth(nextMonth);
-    if (nextStatus || typeof nextMonth === 'string') {
+    if (focus?.type) {
+      setDashboardFocus(focus);
+      if (focus.type === 'receivable_month') {
+        setFilterStatus('all');
+        setFilterMonth(String(focus.month || ''));
+        setDashboardFocusLabel('本月应收台账');
+      } else if (focus.type === 'paid_month') {
+        setFilterStatus('paid');
+        setFilterMonth(String(focus.month || ''));
+        setDashboardFocusLabel('本月已回款台账');
+      } else if (focus.type === 'overdue') {
+        setFilterStatus('overdue');
+        setDashboardFocusLabel('逾期应收台账');
+      } else if (focus.type === 'next_30_days') {
+        setFilterStatus('unpaid');
+        setDashboardFocusLabel('未来 30 天预计回款');
+      } else if (focus.type === 'no_contract_amount') {
+        setDashboardFocusLabel('存在回款但无合同总额');
+      } else if (focus.type === 'progress_abnormal') {
+        setDashboardFocusLabel('回款进度异常');
+      } else if (focus.type === 'analysis') {
+        setDashboardFocusLabel(focus.analysis === 'industry' ? '行业回款结构' : focus.analysis === 'big_customer' ? '大客户回款占比' : '回款集中度分析');
+      } else if (focus.type === 'settlement_status') {
+        setSettlementStatusFilter(String(focus.settlementStatus || 'draft') as any);
+        setDashboardFocusLabel('待确认结算');
+      }
+    }
+    if (state.filterStatus || typeof nextMonth === 'string' || focus) {
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
@@ -47,12 +79,25 @@ const Finance = () => {
     displayStatus: resolveReceivableStatus(r),
     contractId: c.id,
     contractTitle: c.title,
-    customerName: c.customerName
+    customerName: c.customerName,
+    contractAmount: Number(c.amount || 0)
   })));
+  const matchesReceivableFocus = (receivable: typeof allReceivables[number]) => {
+    if (!dashboardFocus?.type) return true;
+    if (dashboardFocus.contractId && receivable.contractId !== dashboardFocus.contractId) return false;
+    if (dashboardFocus.type === 'next_30_days') {
+      const diff = Math.ceil((new Date(String(receivable.dueDate || '')).getTime() - Date.now()) / (24 * 3600 * 1000));
+      return receivable.displayStatus !== 'paid' && diff >= 0 && diff <= 30;
+    }
+    if (dashboardFocus.type === 'no_contract_amount') return Number(receivable.contractAmount || 0) <= 0 && Number(receivable.amount || 0) > 0;
+    if (dashboardFocus.type === 'progress_abnormal') return Number(receivable.contractAmount || 0) > 0 && Number(receivable.amount || 0) / Number(receivable.contractAmount || 1) > 0.5;
+    return true;
+  };
   const filteredReceivables = allReceivables
     .filter(r => {
       if (filterStatus !== 'all' && r.displayStatus !== filterStatus) return false;
       if (filterMonth && !(r.dueDate || '').startsWith(filterMonth)) return false;
+      if (!matchesReceivableFocus(r)) return false;
       if (receivableQuery.trim()) {
         const q = receivableQuery.trim().toLowerCase();
         const haystack = `${r.customerName} ${r.contractTitle} ${r.node}`.toLowerCase();
@@ -67,6 +112,7 @@ const Finance = () => {
   const collectionRate = totalReceivable > 0 ? (totalReceived / totalReceivable) * 100 : 0;
   const filteredSettlements = settlements
     .filter(s => settlementTypeFilter === 'All' || s.type === settlementTypeFilter)
+    .filter(s => settlementStatusFilter === 'all' || s.status === settlementStatusFilter)
     .filter(s => {
       if (!settlementQuery.trim()) return true;
       const q = settlementQuery.trim().toLowerCase();
@@ -174,6 +220,26 @@ const Finance = () => {
                  <button onClick={() => navigate('/finance/settlements')} className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'settlements' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}> 支出与结算管理 </button>
             </div>
       </div>
+      {dashboardFocusLabel && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+            工作台焦点：{dashboardFocusLabel}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setDashboardFocus(null);
+              setDashboardFocusLabel('');
+              setFilterStatus('all');
+              setFilterMonth('');
+              setSettlementStatusFilter('all');
+            }}
+            className="text-xs font-bold text-gray-500 hover:text-gray-700"
+          >
+            清除焦点
+          </button>
+        </div>
+      )}
       {activeTab === 'receivables' && ( 
         <div className="space-y-6 animate-in fade-in zoom-in duration-300"> 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4"> 
@@ -260,6 +326,9 @@ const Finance = () => {
                         <h3 className="font-bold text-gray-900 flex items-center mr-4"> <DollarSign className="w-5 h-5 mr-2 text-indigo-600" /> 结算管理 </h3> 
                         <div className="flex bg-white border border-gray-200 rounded-lg p-0.5 overflow-x-auto no-scrollbar max-w-[200px] md:max-w-none"> 
                             {['All', 'Internal', 'External'].map(type => ( <button key={type} onClick={() => setSettlementTypeFilter(type as any)} className={`px-3 py-1 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${settlementTypeFilter === type ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`} > {type === 'All' ? '全部' : type === 'Internal' ? '内部提成' : '外包/采购'} </button> ))} 
+                        </div>
+                        <div className="flex bg-white border border-gray-200 rounded-lg p-0.5 overflow-x-auto no-scrollbar max-w-[240px] md:max-w-none"> 
+                            {['all', 'draft', 'confirmed', 'paid'].map(status => ( <button key={status} onClick={() => setSettlementStatusFilter(status as any)} className={`px-3 py-1 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${settlementStatusFilter === status ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`} > {status === 'all' ? '全部状态' : status === 'draft' ? '待支付' : status === 'confirmed' ? '已确认' : '已支付'} </button> ))} 
                         </div> 
                     </div> 
                     <div className="flex items-center gap-2 w-full md:w-auto">

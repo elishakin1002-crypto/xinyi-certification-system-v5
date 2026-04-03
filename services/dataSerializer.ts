@@ -1,5 +1,6 @@
 
 import { Lead, Customer, Contract, Project, AuditIssue, Status } from '../types';
+import { inferProjectMeta } from '../src/utils/projectCapabilities';
 
 /**
  * Data Serializer for AI Context
@@ -18,10 +19,27 @@ export const serializeWorldState = (
     projects: Project[],
     auditIssues: AuditIssue[]
 ) => {
+    const isRevenueProject = (project: Project): boolean => {
+        const meta = inferProjectMeta(project);
+        if (meta.projectMode !== 'delivery') return false;
+        if (project.status !== Status.Completed) return false;
+        if ((project as any).isRevenueProject === false) return false;
+        return true;
+    };
+
+    const isLeadSourcedRevenueProject = (project: Project): boolean => {
+        if (!isRevenueProject(project)) return false;
+        const meta = inferProjectMeta(project);
+        return meta.sourceType === 'lead';
+    };
+
     // 1. Leads Snapshot (Focus on conversion & source)
+    const leadToRevenueConversionRate = leads.length > 0
+        ? (projects.filter(isLeadSourcedRevenueProject).length / leads.length)
+        : 0;
     const leadsSummary = {
         total: leads.length,
-        conversionRate: (leads.filter(l => l.status === Status.Converted).length / (leads.length || 1)).toFixed(2),
+        conversionRate: leadToRevenueConversionRate.toFixed(2),
         activeLeads: leads
             .filter(l => l.status === Status.New || l.status === Status.Pending)
             .sort((a, b) => new Date(b.lastContact).getTime() - new Date(a.lastContact).getTime())

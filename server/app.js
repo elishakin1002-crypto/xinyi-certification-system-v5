@@ -4,6 +4,8 @@ const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
 const { initStateStore, upsertStateBatch, getStateBatch, getStateHealth } = require('./stateStore');
+const { sendSuccess, sendFail, ERROR_CODES } = require('./utils/apiResponse');
+const { MARKET_SIGNAL_STATUS } = require('../src/constants/status.js');
 
 dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 dotenv.config();
@@ -23,15 +25,38 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const GEMINI_DEFAULT_MODEL = String(process.env.GEMINI_MODEL || 'gemini-3-flash').trim();
 const GEMINI_FALLBACK_MODEL = String(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash').trim();
+const AI_PROVIDER_TIMEOUT_MS = Math.max(8000, Number(process.env.AI_PROVIDER_TIMEOUT_MS || 45000));
 
 const USER_AGENT = 'XinyiIntelBot/5.0 (+https://xinyi.local)';
+const INTEL_SEARCH_TIMEOUT_MS = Math.max(1500, Number(process.env.INTEL_SEARCH_TIMEOUT_MS || 3500));
+const INTEL_DEBUG = /^(1|true|yes|on)$/i.test(String(process.env.INTEL_DEBUG || '').trim());
 const INTEL_QUOTA_KINDS = ['policy', 'industry', 'company', 'tender'];
 const DEFAULT_INTEL_KIND_QUOTA = Object.freeze({
-  policy: 2,
+  policy: 1,
   industry: 3,
-  company: 3,
+  company: 4,
   tender: 2
 });
+const DEFAULT_INTEL_REGIONS = ['温州', '苍南', '平阳', '龙港'];
+const DEFAULT_INTEL_INDUSTRIES = ['塑料编织制品制造业', '食包', '药材', '印刷', '食品', '餐饮'];
+const REGION_FEATURED_INDUSTRIES = Object.freeze({
+  温州: ['泵阀', '低压电器', '汽摩配', '鞋革', '服装', '智能装备'],
+  苍南: ['塑料编织', '印刷包装', '食品包装', '纺织制品', '礼品工艺'],
+  平阳: ['宠物用品', '塑料制品', '印刷包装', '食品加工', '文体用品'],
+  龙港: ['印刷包装', '塑料编织', '新材料', '智能印刷', '文创用品']
+});
+const ENTERPRISE_SIGNAL_KEYWORDS = String(process.env.INTEL_ENTERPRISE_KEYWORDS || '企业 动态 更新 中标 订单 扩产 投产 签约 合作 融资 并购 上市 技改 数字化 智能化 专精特新 小巨人 单项冠军 龙头企业').trim();
+const INDUSTRY_SIGNAL_KEYWORDS = String(process.env.INTEL_INDUSTRY_KEYWORDS || '行业 动态 产业 趋势 市场 供需 价格 景气 出口 产业链 技术 前沿 新材料 绿色低碳 产业集群 工业互联网 智能制造').trim();
+const ASSOCIATION_EVENT_KEYWORDS = String(process.env.INTEL_ASSOCIATION_KEYWORDS || '行业协会 商会 学会 通知 论坛 峰会 展会 博览会 研讨会 对接会 产业联盟 企业家大会').trim();
+const intelDebugLog = (...args) => {
+  if (INTEL_DEBUG) console.log('[IntelDebug]', ...args);
+};
+const compactSearchTerms = (text, maxTerms = 8) => String(text || '')
+  .split(/\s+/)
+  .map((x) => x.trim())
+  .filter(Boolean)
+  .slice(0, Math.max(1, maxTerms))
+  .join(' ');
 
 const normalizeModelId = (input) => {
   const raw = String(input || '').trim();
@@ -105,6 +130,16 @@ const toHttpStatus = (code, message) => {
   if (msg.includes('invalid') || msg.includes('bad request')) return 400;
   if (msg.includes('not found')) return 404;
   return 500;
+};
+
+const toInternalErrorCode = (code, message) => {
+  const normalizedCode = String(code || '').toUpperCase();
+  const status = toHttpStatus(code, message);
+  if (normalizedCode === 'NO_KEY') return ERROR_CODES.AI_KEY_MISSING;
+  if (status === 429) return ERROR_CODES.RATE_LIMIT;
+  if (status === 404) return ERROR_CODES.NOT_FOUND;
+  if (status === 400) return ERROR_CODES.PARAM_ERROR;
+  return ERROR_CODES.AI_PROVIDER_ERROR;
 };
 
 const normalizeBase64 = (rawData) => {
@@ -212,6 +247,8 @@ const requestKimiCompletion = async ({
       ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
     };
 
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), AI_PROVIDER_TIMEOUT_MS);
     try {
       const res = await fetch(`${KIMI_BASE_URL}/chat/completions`, {
         method: 'POST',
@@ -219,7 +256,8 @@ const requestKimiCompletion = async ({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${API_KEY}`
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: controller.signal
       });
 
       const raw = await res.text();
@@ -244,8 +282,18 @@ const requestKimiCompletion = async ({
         raw: data
       };
     } catch (error) {
-      lastError = error;
-      if (disableFallback || !isRetryableError(error)) break;
+      let retryProbe = error;
+      if (String(error?.name || '') === 'AbortError') {
+        const timeoutErr = new Error(`Kimi provider timeout (${AI_PROVIDER_TIMEOUT_MS}ms)`);
+        timeoutErr.code = 'TIMEOUT';
+        lastError = timeoutErr;
+        retryProbe = timeoutErr;
+      } else {
+        lastError = error;
+      }
+      if (disableFallback || !isRetryableError(retryProbe)) break;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -308,11 +356,14 @@ const requestGeminiCompletion = async ({
       }
     };
 
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), AI_PROVIDER_TIMEOUT_MS);
     try {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: controller.signal
       });
 
       const raw = await res.text();
@@ -340,8 +391,18 @@ const requestGeminiCompletion = async ({
       const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
       return { text, modelUsed: model, raw: data };
     } catch (error) {
-      lastError = error;
-      if (!isRetryableError(error)) break;
+      let retryProbe = error;
+      if (String(error?.name || '') === 'AbortError') {
+        const timeoutErr = new Error(`Gemini provider timeout (${AI_PROVIDER_TIMEOUT_MS}ms)`);
+        timeoutErr.code = 'TIMEOUT';
+        lastError = timeoutErr;
+        retryProbe = timeoutErr;
+      } else {
+        lastError = error;
+      }
+      if (!isRetryableError(retryProbe)) break;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -370,8 +431,9 @@ const requestAI = async (params) => {
     const normalized = normalizeAIError(err);
     const isQuotaError = isKimiQuotaOrBalanceError(err);
     const isKeyMissing = normalized.message === 'KIMI_API_KEY_MISSING_USE_GEMINI' || String(normalized.code || '') === 'NO_KEY';
+    const isTransientError = isRetryableError(err);
     
-    if (GEMINI_API_KEY && (isQuotaError || isKeyMissing)) {
+    if (GEMINI_API_KEY && (isQuotaError || isKeyMissing || isTransientError)) {
       console.warn(`[AI Fallback] Kimi failed (${normalized.message}), switching to Gemini...`);
       return requestGeminiCompletion({ ...params, requestedModel: GEMINI_DEFAULT_MODEL });
     }
@@ -392,6 +454,24 @@ const withTimeout = async (promise, ms, message) => {
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+};
+
+const fetchTextWithTimeout = async (url, { headers = {}, timeoutMs = INTEL_SEARCH_TIMEOUT_MS } = {}) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || INTEL_SEARCH_TIMEOUT_MS));
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers,
+      signal: controller.signal
+    });
+    if (!res.ok) return '';
+    return await res.text();
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
   }
 };
 
@@ -442,23 +522,45 @@ const parseDuckResults = (html, limit = 8) => {
 
 const parseDuckResultsFromMarkdown = (markdown, limit = 8) => {
   const text = String(markdown || '');
-  const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  const lines = text.split('\n').map((line) => line.trim());
+  const linkOnlyRe = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/;
   const results = [];
   const seen = new Set();
-  let m = null;
 
-  while ((m = linkRe.exec(text)) !== null && results.length < limit * 2) {
+  for (let i = 0; i < lines.length && results.length < limit * 2; i += 1) {
+    const line = lines[i];
+    const m = line.match(linkOnlyRe);
+    if (!m) continue;
+
     const rawTitle = String(m[1] || '').trim();
     const rawUrl = String(m[2] || '').trim();
     if (!rawTitle || !rawUrl) continue;
     if (rawTitle.includes('Image') || rawTitle.startsWith('![') || rawTitle.includes('DuckDuckGo')) continue;
+
     const decodedUrl = decodeDuckRedirect(rawUrl);
     if (!decodedUrl || seen.has(decodedUrl)) continue;
     seen.add(decodedUrl);
+
+    const snippetParts = [];
+    for (let j = i + 1; j < Math.min(lines.length, i + 8); j += 1) {
+      const next = lines[j];
+      if (!next) continue;
+      if (/^\[!\[Image/i.test(next)) continue;
+      if (/^[-=]{4,}$/.test(next)) continue;
+      if (linkOnlyRe.test(next)) break;
+      const cleaned = next
+        .replace(/\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!cleaned) continue;
+      snippetParts.push(cleaned);
+      if (snippetParts.join(' ').length > 260) break;
+    }
+
     results.push({
       title: stripHtml(rawTitle).replace(/\s+/g, ' ').trim(),
       url: decodedUrl,
-      snippet: ''
+      snippet: snippetParts.join(' ').slice(0, 240)
     });
   }
 
@@ -470,54 +572,189 @@ const isNoiseUrl = (url) => {
   return /facebook\.com|douyin\.com|tiktok\.com|xiaohongshu\.com|weibo\.com|youtube\.com|bilibili\.com|instagram\.com/.test(u);
 };
 
-const searchWeb = async (query, limit = 8) => {
+const parseBaiduResultsFromMarkdown = (md, limit = 8) => {
+  const text = String(md || '');
+  if (!text) return [];
+  const re = /###\s*\[([^\]]+)\]\((https?:\/\/www\.baidu\.com\/link\?url=[^) \t\n\r]+)\)/g;
+  const matches = [];
+  let m = null;
+  while ((m = re.exec(text)) !== null) {
+    matches.push({
+      title: stripHtml(String(m[1] || '')).replace(/\s+/g, ' ').trim(),
+      baiduUrl: String(m[2] || '').trim(),
+      start: m.index,
+      end: re.lastIndex
+    });
+    if (matches.length >= Math.max(10, limit * 3)) break;
+  }
+  if (matches.length === 0) return [];
+
+  const out = [];
+  for (let i = 0; i < matches.length && out.length < limit; i += 1) {
+    const cur = matches[i];
+    const next = matches[i + 1];
+    const tail = text.slice(cur.end, next ? next.start : Math.min(text.length, cur.end + 2200));
+    const snippet = tail
+      .split('\n')
+      .map((line) => String(line || '').trim())
+      .filter((line) => line && !line.startsWith('![') && !/^\[!\[Image/i.test(line) && !/^_/.test(line))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 240);
+    out.push({ title: cur.title, url: cur.baiduUrl, snippet });
+  }
+  return out;
+};
+
+const parseBaiduResultsFromHtml = (html, limit = 8) => {
+  const text = String(html || '');
+  if (!text) return [];
+  const re = /href="(https?:\/\/www\.baidu\.com\/link\?url=[^"]+)"[^>]{0,300}data-module="title"/g;
+  const out = [];
+  const seen = new Set();
+  let m = null;
+  while ((m = re.exec(text)) !== null && out.length < limit * 2) {
+    const link = String(m[1] || '').trim();
+    if (!link || seen.has(link)) continue;
+    seen.add(link);
+    const tail = text.slice(re.lastIndex, Math.min(text.length, re.lastIndex + 1200));
+    const titleMatch = tail.match(/<!--s-text-->([\s\S]*?)<!--\/s-text-->/);
+    const title = titleMatch
+      ? stripHtml(String(titleMatch[1] || '')).replace(/\s+/g, ' ').trim()
+      : '';
+    if (!title) continue;
+    const snippet = stripHtml(tail).replace(/\s+/g, ' ').trim().slice(0, 240);
+    out.push({ title, url: link, snippet });
+  }
+  return out.slice(0, limit);
+};
+
+const resolveWeChatArticleUrlFromBaiduLink = async (baiduLink) => {
+  const rawInput = String(baiduLink || '').trim();
+  if (!rawInput) return '';
+  // Baidu redirect endpoints behave more consistently over https.
+  const raw = rawInput.replace(/^http:\/\/www\.baidu\.com\/link\?/i, 'https://www.baidu.com/link?');
+  if (!raw) return '';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2000);
+  try {
+    const res = await fetch(raw, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: { 'User-Agent': USER_AGENT, 'Accept-Language': 'zh-CN,zh;q=0.9' },
+      signal: controller.signal
+    });
+    const finalUrl = String(res.url || '');
+    try { res.body?.cancel(); } catch {}
+    if (!finalUrl) return '';
+
+    // Common: mp.weixin.qq.com captcha wrapper that contains target_url=...
+    try {
+      const u = new URL(finalUrl);
+      if (u.hostname === 'mp.weixin.qq.com' && u.pathname.startsWith('/mp/wappoc_appmsgcaptcha')) {
+        const target = u.searchParams.get('target_url');
+        if (target) return decodeURIComponent(target);
+      }
+    } catch {}
+
+    if (finalUrl.includes('mp.weixin.qq.com/')) return finalUrl;
+    return '';
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const searchWeChatIndexed = async (query, limit = 8) => {
   const q = String(query || '').trim();
   if (!q) return [];
 
-  // Prefer html.duckduckgo.com: duckduckgo.com/html often returns anti-bot 202 page.
-  const urls = [
-    `https://html.duckduckgo.com/html/?kl=cn-zh&q=${encodeURIComponent(q)}`,
-    `https://duckduckgo.com/html/?kl=cn-zh&q=${encodeURIComponent(q)}`
-  ];
-
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          'Accept-Language': 'zh-CN,zh;q=0.9'
-        }
-      });
-      if (!res.ok) continue;
-      const html = await res.text();
-      const parsed = parseDuckResults(html, limit);
-      const cleaned = parsed.filter((x) => !isNoiseUrl(x.url));
-      if (cleaned.length > 0) return cleaned;
-    } catch {
-      // try next endpoint
+  // WeChat direct crawling frequently triggers CAPTCHA; use Baidu-indexed snippets + redirect resolution.
+  const baiduUrl = `https://www.baidu.com/s?wd=${encodeURIComponent(q)}`;
+  const html = await fetchTextWithTimeout(baiduUrl, {
+    timeoutMs: INTEL_SEARCH_TIMEOUT_MS + 3500,
+    headers: {
+      'User-Agent': USER_AGENT,
+      'Accept-Language': 'zh-CN,zh;q=0.9'
     }
-  }
+  });
+  if (!html) return [];
+  if (html.includes('百度安全验证') || html.includes('网络不给力') || html.includes('请完成下方验证')) return [];
 
-  // Fallback: fetch DDG result page through r.jina.ai to bypass anti-bot response pages.
-  try {
-    const sourceUrl = `http://duckduckgo.com/html/?kl=cn-zh&q=${encodeURIComponent(q)}`;
-    const jinaUrl = `https://r.jina.ai/${sourceUrl}`;
-    const res = await fetch(jinaUrl, {
-      method: 'GET',
+  const resolveNeed = Math.max(1, Math.min(2, toNonNegativeInt(process.env.INTEL_WECHAT_RESOLVE_LIMIT, 2)));
+  let raw = parseBaiduResultsFromHtml(html, Math.max(3, Math.min(10, Math.max(limit, resolveNeed * 3))));
+  if (raw.length === 0) {
+    // Fallback: sometimes direct HTML structure changes; try Jina markdown as a backup.
+    const md = await fetchTextWithTimeout(`https://r.jina.ai/${baiduUrl}`, {
+      timeoutMs: INTEL_SEARCH_TIMEOUT_MS + 3500,
       headers: {
         'User-Agent': USER_AGENT,
         'Accept-Language': 'zh-CN,zh;q=0.9'
       }
     });
-    if (res.ok) {
-      const md = await res.text();
-      const parsed = parseDuckResultsFromMarkdown(md, limit);
-      const cleaned = parsed.filter((x) => !isNoiseUrl(x.url));
-      if (cleaned.length > 0) return cleaned;
+    if (md && !md.includes('百度安全验证')) {
+      raw = parseBaiduResultsFromMarkdown(md, Math.max(3, Math.min(10, Math.max(limit, resolveNeed * 3))));
     }
-  } catch {
-    // ignore fallback error
+  }
+  if (raw.length === 0) return [];
+
+  // Resolve a small number of top results in parallel (best-effort) to keep fetch latency stable.
+  const candidates = raw.slice(0, Math.max(resolveNeed * 2, resolveNeed));
+  const settled = await Promise.allSettled(candidates.map(async (item) => {
+    const targetUrl = await resolveWeChatArticleUrlFromBaiduLink(item.url);
+    if (!targetUrl) return null;
+    return { title: item.title, url: targetUrl, snippet: String(item.snippet || '').slice(0, 240) };
+  }));
+  const resolved = settled
+    .map((r) => (r.status === 'fulfilled' ? r.value : null))
+    .filter(Boolean)
+    .slice(0, Math.max(1, Math.min(limit, resolveNeed)));
+  return resolved;
+};
+
+const searchWeb = async (query, limit = 8) => {
+  const q = String(query || '').trim();
+  if (!q) return [];
+
+  // r.jina.ai is usually more stable in CN network than direct duckduckgo html page.
+  const sourceUrls = [
+    `http://duckduckgo.com/html/?kl=cn-zh&df=m&q=${encodeURIComponent(q)}`,
+    `http://duckduckgo.com/html/?kl=cn-zh&df=y&q=${encodeURIComponent(q)}`
+  ];
+  for (const sourceUrl of sourceUrls) {
+    const jinaUrl = `https://r.jina.ai/${sourceUrl}`;
+    const md = await fetchTextWithTimeout(jinaUrl, {
+      timeoutMs: INTEL_SEARCH_TIMEOUT_MS + 2000,
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept-Language': 'zh-CN,zh;q=0.9'
+      }
+    });
+    if (!md) continue;
+    const parsed = parseDuckResultsFromMarkdown(md, limit);
+    const cleaned = parsed.filter((x) => !isNoiseUrl(x.url));
+    if (cleaned.length > 0) return cleaned;
+  }
+
+  // Last fallback: direct html endpoint.
+  const directUrls = [
+    `https://html.duckduckgo.com/html/?kl=cn-zh&df=y&q=${encodeURIComponent(q)}`,
+    `https://duckduckgo.com/html/?kl=cn-zh&df=y&q=${encodeURIComponent(q)}`
+  ];
+  for (const url of directUrls) {
+    const html = await fetchTextWithTimeout(url, {
+      timeoutMs: INTEL_SEARCH_TIMEOUT_MS,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'zh-CN,zh;q=0.9'
+      }
+    });
+    if (!html) continue;
+    const parsed = parseDuckResults(html, limit);
+    const cleaned = parsed.filter((x) => !isNoiseUrl(x.url));
+    if (cleaned.length > 0) return cleaned;
   }
 
   return [];
@@ -554,8 +791,11 @@ const crawlPage = async (url, maxChars = 2000) => {
   }
 };
 
-const buildWebContextForQuery = async (query, maxResults = 5, deepCrawl = false) => {
-  const results = await searchWeb(query, maxResults);
+const buildWebContextForQuery = async (query, maxResults = 5, deepCrawl = false, kindHint = '') => {
+  const hint = String(kindHint || '').toLowerCase().trim();
+  const results = hint === 'wechat'
+    ? await searchWeChatIndexed(query, maxResults)
+    : await searchWeb(query, maxResults);
   const picked = results.slice(0, maxResults);
   if (picked.length === 0) return [];
 
@@ -612,12 +852,34 @@ const resolveIntelKindQuota = (limit) => {
   };
   const maxTotal = Math.max(0, toNonNegativeInt(limit, 20));
   const quota = { policy: 0, industry: 0, company: 0, tender: 0 };
-  let remaining = maxTotal;
+  if (maxTotal <= 0) return quota;
+
+  const totalSeed = INTEL_QUOTA_KINDS.reduce((acc, kind) => acc + Math.max(0, Number(raw[kind] || 0)), 0);
+  if (totalSeed <= 0) return quota;
+
+  // If limit >= seed sum, keep seed quotas and let remaining slots be "flex fill".
+  if (maxTotal >= totalSeed) {
+    for (const kind of INTEL_QUOTA_KINDS) quota[kind] = Math.max(0, Number(raw[kind] || 0));
+    return quota;
+  }
+
+  // Scale seed quotas proportionally when limit is smaller than seed sum.
+  const fractions = [];
+  let used = 0;
   for (const kind of INTEL_QUOTA_KINDS) {
-    if (remaining <= 0) break;
-    const take = Math.min(raw[kind] || 0, remaining);
-    quota[kind] = take;
-    remaining -= take;
+    const exact = (Number(raw[kind] || 0) / totalSeed) * maxTotal;
+    const base = Math.max(0, Math.floor(exact));
+    quota[kind] = base;
+    used += base;
+    fractions.push({ kind, frac: exact - base });
+  }
+
+  let remain = maxTotal - used;
+  fractions.sort((a, b) => b.frac - a.frac);
+  for (const item of fractions) {
+    if (remain <= 0) break;
+    quota[item.kind] += 1;
+    remain -= 1;
   }
   return quota;
 };
@@ -626,13 +888,32 @@ const expandIndustries = (industries) => {
   const aliases = {
     '塑编': ['塑料编织', '塑料编织制品', '塑料编织制品制造业', '编织袋', '集装袋'],
     '塑料编织制品制造业': ['塑料编织', '塑料编织制品', '塑料编织制品制造业', '编织袋', '集装袋'],
-    '食包': ['食品包装', '食品包装材料', '包装材料'],
-    '药材': ['中药材', '药品', '医药', '医疗器械'],
-    '印刷': ['印刷业', '包装印刷', '彩印'],
+    '食包': ['食品包装', '食品包装材料', '包装材料', '软包装'],
+    '药材': ['中药材', '药品', '医药', '医疗器械', '生物医药'],
+    '印刷': ['印刷业', '包装印刷', '彩印', '标签印刷', '数码印刷'],
     '食品': ['食品生产', '食品加工', '食品制造'],
-    '餐饮': ['餐饮业', '餐饮服务']
+    '餐饮': ['餐饮业', '餐饮服务'],
+    '泵阀': ['泵阀', '阀门', '流体设备'],
+    '低压电器': ['低压电器', '电气设备', '电器制造'],
+    '汽摩配': ['汽摩配', '汽车零部件', '摩托车配件'],
+    '鞋革': ['鞋革', '鞋业', '皮革制品'],
+    '服装': ['服装', '纺织服装', '面辅料'],
+    '智能装备': ['智能装备', '智能制造', '自动化设备'],
+    '宠物用品': ['宠物用品', '宠物食品', '宠物产业'],
+    '新材料': ['新材料', '功能材料', '高分子材料']
   };
-  return industries.flatMap((x) => [x, ...(aliases[x] || [])]);
+  const seen = new Set();
+  const out = [];
+  for (const x of Array.isArray(industries) ? industries : []) {
+    const candidates = [x, ...(aliases[x] || [])];
+    for (const item of candidates) {
+      const text = String(item || '').trim();
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      out.push(text);
+    }
+  }
+  return out;
 };
 
 const parseIntelList = (rawText) => {
@@ -661,8 +942,12 @@ const parseIntelList = (rawText) => {
   return [];
 };
 
+const HOMEPAGE_PATH_RE = /^\/(?:(?:index|home|main|default)(?:\.[a-z0-9]+)?)?$/i;
+const LIST_PAGE_PATH_RE = /^\/(?:index|channel|col|list|node|zwgk|xxgk|xwzx)(?:\/|$)/i;
+const ARTICLE_PATH_HINT_RE = /\/(?:art|article|content|detail|news|notice|show|view|tzgg|zwgk)[\/_.-]/i;
+
 const LOW_VALUE_HOST_RE = /(?:^|\.)(11467\.com|1688\.com|aiqicha\.baidu\.com|qcc\.com|tianyancha\.com|huangye88\.com|b2b\.baidu\.com|facebook\.com|douyin\.com|tiktok\.com|xiaohongshu\.com|weibo\.com|youtube\.com|bilibili\.com|jobui\.com|docin\.com|renrendoc\.com|wenku\.baidu\.com|made-in-china\.com)$/i;
-const HIGH_VALUE_HOST_RE = /(?:^|\.)(gov\.cn|wenzhou\.gov\.cn|zj\.gov\.cn|zjlg\.gov\.cn|zjpy\.gov\.cn|ccgp\.gov\.cn|cebpubservice\.com|cninfo\.com\.cn|eastmoney\.com|stcn\.com|sina\.com\.cn|foodmate\.net)$/i;
+const HIGH_VALUE_HOST_RE = /(?:^|\.)(gov\.cn|wenzhou\.gov\.cn|zj\.gov\.cn|zjlg\.gov\.cn|zjpy\.gov\.cn|ccgp\.gov\.cn|cebpubservice\.com|cninfo\.com\.cn|eastmoney\.com|stcn\.com|sina\.com\.cn|foodmate\.net|mp\.weixin\.qq\.com)$/i;
 const HIGH_VALUE_KEYWORD_RE = /政策|通知|公告|公示|监管|办法|条例|标准|国标|行标|招标|招采|采购|项目申报|专项资金/;
 const INDUSTRY_NEWS_KEYWORD_RE = /行业|市场|产业|动态|新闻|趋势|景气|需求|价格|扩产|投产|开工|落地|招商|合作|并购|融资|上市|中标|订单/;
 const LOW_VALUE_TITLE_RE = /顺企网|爱企查|黄页|企业信息查询|公司详情|厂家|工厂|阿里巴巴|短视频|直播|排行榜|公司排名|企业排名|下载|文档|资料库|模板|百科|供应商|制造商|名录/;
@@ -678,6 +963,179 @@ const INTEL_RECENCY_DAYS = Object.freeze({
   company: toNonNegativeInt(process.env.INTEL_RECENCY_COMPANY_DAYS, 90),
   event: toNonNegativeInt(process.env.INTEL_RECENCY_EVENT_DAYS, 90)
 });
+const INTEL_UNDATED_MAX_AGE_DAYS = toNonNegativeInt(process.env.INTEL_UNDATED_MAX_AGE_DAYS, 45);
+const REGION_ALIAS_MAP = Object.freeze({
+  温州: ['温州', '温州市', 'wenzhou', 'wz.gov.cn', '66wz.com'],
+  苍南: ['苍南', '苍南县', 'cangnan'],
+  平阳: ['平阳', '平阳县', 'pingyang', 'zjpy.gov.cn'],
+  龙港: ['龙港', '龙港市', 'longgang', 'zjlg.gov.cn']
+});
+const ZHEJIANG_PROVINCE_ALIASES = Object.freeze(['浙江', '浙江省', 'zhejiang', 'zj.gov.cn']);
+const ZHEJIANG_DEFAULT_REGIONS = Object.freeze(['温州', '苍南', '平阳', '龙港']);
+const DEFAULT_INTEL_WECHAT_ACCOUNTS = Object.freeze([
+  '浙江经信',
+  '中国排污许可',
+  '质量与认证',
+  '新知探索科创',
+  '圆明园遗址公园'
+]);
+const DEFAULT_INTEL_WECHAT_EXCLUDE = Object.freeze(['浙江信义企业管理有限公司']);
+const OFF_SCOPE_PROVINCE_HINTS = Object.freeze([
+  '北京', '天津', '上海', '重庆',
+  '河北', '山西', '内蒙古', '辽宁', '吉林', '黑龙江',
+  '江苏', '安徽', '福建', '江西', '山东', '河南', '湖北', '湖南', '广东', '广西', '海南',
+  '四川', '贵州', '云南', '西藏',
+  '陕西', '甘肃', '青海', '宁夏', '新疆',
+  '香港', '澳门', '台湾'
+]);
+const OFF_SCOPE_CITY_HINTS = Object.freeze([
+  '信阳', '南阳', '阜阳', '安阳', '濮阳', '沈阳', '德阳', '绵阳', '贵阳', '襄阳', '揭阳', '庆阳', '洛阳', '郑州'
+]);
+const LATIN_TOKEN_RE = /^[a-z0-9_.-]+$/i;
+
+const escapeRegExp = (text) => String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const uniqueList = (arr) => Array.from(new Set((Array.isArray(arr) ? arr : []).map((x) => String(x || '').trim()).filter(Boolean)));
+
+const isWeChatArticleUrl = (rawUrl) => {
+  try { return new URL(String(rawUrl || '')).hostname === 'mp.weixin.qq.com'; } catch { return false; }
+};
+
+const includesRegionAlias = (text, alias) => {
+  const source = String(text || '');
+  const token = String(alias || '').trim();
+  if (!source || !token) return false;
+  if (LATIN_TOKEN_RE.test(token)) {
+    return new RegExp(`(^|[^a-z0-9])${escapeRegExp(token.toLowerCase())}([^a-z0-9]|$)`, 'i').test(source.toLowerCase());
+  }
+  return source.includes(token);
+};
+
+const resolveRegionAliases = (region) => {
+  const canonical = String(region || '').trim();
+  if (!canonical) return [];
+  return uniqueList([canonical, ...(REGION_ALIAS_MAP[canonical] || [])]);
+};
+
+const buildGeoText = (...parts) => parts
+  .map((part) => String(part || '').trim())
+  .filter(Boolean)
+  .join(' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const shouldAllowZhejiangProvince = (selectedRegions) => {
+  const regions = uniqueList(selectedRegions);
+  if (regions.length === 0) return false;
+  return regions.some((r) => ZHEJIANG_DEFAULT_REGIONS.includes(r));
+};
+
+const hasZhejiangProvinceHint = (text) => {
+  const source = String(text || '');
+  if (!source) return false;
+  return ZHEJIANG_PROVINCE_ALIASES.some((alias) => includesRegionAlias(source, alias));
+};
+
+const resolveZhejiangFallbackRegion = (selectedRegions) => {
+  const regions = uniqueList(selectedRegions);
+  if (regions.includes('温州')) return '温州';
+  return regions[0] || '温州';
+};
+
+const inferMatchedRegionsFromText = (text, selectedRegions) => {
+  const source = String(text || '');
+  if (!source) return [];
+  const regions = uniqueList(selectedRegions);
+  const matched = [];
+  for (const region of regions) {
+    const aliases = resolveRegionAliases(region);
+    if (aliases.some((alias) => includesRegionAlias(source, alias))) {
+      matched.push(region);
+    }
+  }
+  return matched;
+};
+
+const hasOutOfScopeGeoHint = (text, selectedRegions, matchedRegions = []) => {
+  const source = String(text || '');
+  if (!source) return false;
+  if (Array.isArray(matchedRegions) && matchedRegions.length > 0) return false;
+
+  const selectedSet = new Set(uniqueList(selectedRegions));
+  const hasProvinceHint = OFF_SCOPE_PROVINCE_HINTS.some((name) => !selectedSet.has(name) && source.includes(name));
+  if (hasProvinceHint) return true;
+  return OFF_SCOPE_CITY_HINTS.some((name) => !selectedSet.has(name) && source.includes(name));
+};
+
+const applyGeoScopeToSources = (sources, selectedRegions) => {
+  const scopedRegions = uniqueList(selectedRegions);
+  if (scopedRegions.length === 0) {
+    return { sources: Array.isArray(sources) ? sources : [], droppedGeo: 0, droppedGeoConflict: 0 };
+  }
+  const out = [];
+  let droppedGeo = 0;
+  let droppedGeoConflict = 0;
+
+  for (const item of Array.isArray(sources) ? sources : []) {
+    const geoText = buildGeoText(item?.title, item?.snippet, item?.excerpt, item?.url);
+    const matchedRegions = inferMatchedRegionsFromText(geoText, scopedRegions);
+    if (matchedRegions.length === 0) {
+      // Province-level signal (e.g. 浙江省级政策/资讯) is still relevant to 温州/苍南/平阳/龙港.
+      if (shouldAllowZhejiangProvince(scopedRegions) && hasZhejiangProvinceHint(geoText)) {
+        out.push({ ...item, _matchedRegions: [resolveZhejiangFallbackRegion(scopedRegions)] });
+        continue;
+      }
+      // WeChat whitelisted queries often lack explicit region tokens in snippet/excerpt.
+      // Keep them unless they explicitly conflict with out-of-scope geo hints.
+      if (isWeChatArticleUrl(item?.url) && String(item?._queryKindHint || '') === 'wechat' && !hasOutOfScopeGeoHint(geoText, scopedRegions, matchedRegions)) {
+        out.push({ ...item, _matchedRegions: [resolveZhejiangFallbackRegion(scopedRegions)] });
+        continue;
+      }
+      if (hasOutOfScopeGeoHint(geoText, scopedRegions, matchedRegions)) droppedGeoConflict += 1;
+      else droppedGeo += 1;
+      continue;
+    }
+    out.push({ ...item, _matchedRegions: matchedRegions });
+  }
+
+  return { sources: out, droppedGeo, droppedGeoConflict };
+};
+
+const applyGeoScopeToSignals = (signals, selectedRegions) => {
+  const scopedRegions = uniqueList(selectedRegions);
+  if (scopedRegions.length === 0) {
+    return { signals: Array.isArray(signals) ? signals : [], droppedGeo: 0, droppedGeoConflict: 0 };
+  }
+  const out = [];
+  let droppedGeo = 0;
+  let droppedGeoConflict = 0;
+
+  for (const signal of Array.isArray(signals) ? signals : []) {
+    const geoText = buildGeoText(
+      signal?.title,
+      signal?.summary,
+      signal?.content,
+      signal?.sourceName,
+      signal?.sourceUrl
+    );
+    const matchedRegions = inferMatchedRegionsFromText(geoText, scopedRegions);
+    if (matchedRegions.length === 0) {
+      if (shouldAllowZhejiangProvince(scopedRegions) && hasZhejiangProvinceHint(geoText)) {
+        out.push({ ...signal, regions: [resolveZhejiangFallbackRegion(scopedRegions)] });
+        continue;
+      }
+      if (isWeChatArticleUrl(signal?.sourceUrl) && !hasOutOfScopeGeoHint(geoText, scopedRegions, matchedRegions)) {
+        out.push({ ...signal, regions: [resolveZhejiangFallbackRegion(scopedRegions)] });
+        continue;
+      }
+      if (hasOutOfScopeGeoHint(geoText, scopedRegions, matchedRegions)) droppedGeoConflict += 1;
+      else droppedGeo += 1;
+      continue;
+    }
+    out.push({ ...signal, regions: matchedRegions });
+  }
+
+  return { signals: out, droppedGeo, droppedGeoConflict };
+};
 
 const looksRecentText = (text, todayDate = new Date()) => {
   const src = String(text || '');
@@ -695,6 +1153,21 @@ const looksRecentText = (text, todayDate = new Date()) => {
   return years.includes(currentYear);
 };
 
+const isLikelyHomepageUrl = (rawUrl) => {
+  try {
+    const u = new URL(String(rawUrl || '').trim());
+    const path = String(u.pathname || '/').toLowerCase();
+    const search = String(u.search || '');
+    if (HOMEPAGE_PATH_RE.test(path)) return true;
+    if (LIST_PAGE_PATH_RE.test(path) && !search) return true;
+    if (path.endsWith('/index.html') || path.endsWith('/index.htm')) return true;
+    if (ARTICLE_PATH_HINT_RE.test(path)) return false;
+    return false;
+  } catch {
+    return true;
+  }
+};
+
 const isHighValueSource = (item) => {
   const title = String(item?.title || '');
   const url = String(item?.url || '');
@@ -702,6 +1175,7 @@ const isHighValueSource = (item) => {
   try { host = new URL(url).hostname; } catch { host = ''; }
 
   if (!host) return false;
+  if (isLikelyHomepageUrl(url)) return false;
   if (LOW_VALUE_HOST_RE.test(host)) return false;
   if (LOW_VALUE_TITLE_RE.test(title)) return false;
   if (HIGH_VALUE_HOST_RE.test(host)) return true;
@@ -716,6 +1190,7 @@ const isExplicitLowValueSource = (item) => {
   let host = '';
   try { host = new URL(url).hostname; } catch { host = ''; }
   if (!host) return true;
+  if (isLikelyHomepageUrl(url)) return true;
   if (LOW_VALUE_HOST_RE.test(host)) return true;
   if (LOW_VALUE_TITLE_RE.test(title)) return true;
   return false;
@@ -792,7 +1267,8 @@ const parseDateToUtc = (raw) => {
 };
 
 const extractDateFromUrl = (rawUrl) => {
-  const src = decodeURIComponent(String(rawUrl || ''));
+  let src = String(rawUrl || '');
+  try { src = decodeURIComponent(src); } catch { src = String(rawUrl || ''); }
   if (!src) return '';
   const candidates = [];
 
@@ -935,6 +1411,14 @@ const isLikelyRecentUndatedSignal = (signal, todayDate) => {
   if (!text) return false;
   if (LOW_VALUE_TITLE_RE.test(text)) return false;
 
+  const guessedDate = extractMostRecentDate(text);
+  if (guessedDate) {
+    const guessed = parseDateToUtc(guessedDate);
+    if (!guessed) return false;
+    const ageDays = Math.floor((todayDate.getTime() - guessed.getTime()) / (24 * 3600 * 1000));
+    return Number.isFinite(ageDays) && ageDays >= 0 && ageDays <= INTEL_UNDATED_MAX_AGE_DAYS;
+  }
+
   const hintsRecent = RECENT_HINT_RE.test(text);
   const years = [];
   let m = null;
@@ -945,13 +1429,12 @@ const isLikelyRecentUndatedSignal = (signal, todayDate) => {
   YEAR_CANDIDATE_RE.lastIndex = 0;
 
   const currentYear = todayDate.getUTCFullYear();
+  const prevYear = currentYear - 1;
   const maxYear = years.length > 0 ? Math.max(...years) : -Infinity;
-  const hasCurrentYear = years.includes(currentYear);
-
-  if (years.length > 0 && maxYear < currentYear - 1) return false;
-  if (hintsRecent) return true;
-  // Undated rescue is only for very recent candidates.
-  return hasCurrentYear;
+  if (years.length > 0 && maxYear < prevYear) return false;
+  if (!hintsRecent) return false;
+  if (years.length === 0) return true;
+  return years.includes(currentYear) || years.includes(prevYear);
 };
 
 const filterSignalsByFreshness = (signals, todayYmd, options = {}) => {
@@ -1009,10 +1492,29 @@ const normalizeSignalKey = (s) => {
   return url ? `${url}::${title}` : title;
 };
 
+const computeAgeDays = (publishedAt) => {
+  const published = parseDateToUtc(String(publishedAt || '').slice(0, 10));
+  if (!published) return Number.NaN;
+  const now = new Date();
+  return Math.floor((now.getTime() - published.getTime()) / (24 * 3600 * 1000));
+};
+
+const recencyRankBonus = (ageDays) => {
+  if (!Number.isFinite(ageDays)) return -14;
+  if (ageDays <= 3) return 26;
+  if (ageDays <= 7) return 20;
+  if (ageDays <= 15) return 14;
+  if (ageDays <= 30) return 8;
+  if (ageDays <= 60) return 2;
+  if (ageDays <= 90) return -6;
+  return -16;
+};
+
 const signalRankScore = (s) => {
   const score = Number(s?.score || 0);
   const urgencyBonus = String(s?.urgency || '') === 'high' ? 8 : String(s?.urgency || '') === 'medium' ? 4 : 0;
-  return score + urgencyBonus;
+  const ageDays = computeAgeDays(s?.publishedAt);
+  return score + urgencyBonus + recencyRankBonus(ageDays);
 };
 
 const buildSignalHostName = (url) => {
@@ -1043,8 +1545,14 @@ const pickSignalsByQuota = ({ primarySignals, fallbackSignals, limit, quota }) =
   const selected = [];
   const selectedKeySet = new Set();
   const bucketCount = { policy: 0, industry: 0, company: 0, tender: 0 };
+  const kindSoftCap = {
+    policy: Math.max(toNonNegativeInt(quota?.policy, 0), Math.ceil(maxCount * 0.3)),
+    industry: Math.max(toNonNegativeInt(quota?.industry, 0), Math.ceil(maxCount * 0.5)),
+    company: Math.max(toNonNegativeInt(quota?.company, 0), Math.ceil(maxCount * 0.5)),
+    tender: Math.max(toNonNegativeInt(quota?.tender, 0), Math.ceil(maxCount * 0.35))
+  };
 
-  const tryAddSignal = (s, acceptedKinds = null) => {
+  const tryAddSignal = (s, acceptedKinds = null, enforceSoftCap = false) => {
     if (!s || selected.length >= maxCount) return false;
     const title = String(s.title || '').trim();
     const sourceUrl = toHttpUrl(s.sourceUrl);
@@ -1060,9 +1568,10 @@ const pickSignalsByQuota = ({ primarySignals, fallbackSignals, limit, quota }) =
     if (Array.isArray(acceptedKinds) && acceptedKinds.length > 0) {
       if (!acceptedKinds.includes(normalized.kind)) return false;
     }
+    const bucket = quotaBucketKind(normalized.kind);
+    if (enforceSoftCap && bucket && bucketCount[bucket] >= Math.max(1, kindSoftCap[bucket] || maxCount)) return false;
     selected.push(normalized);
     selectedKeySet.add(key);
-    const bucket = quotaBucketKind(normalized.kind);
     if (bucket) bucketCount[bucket] += 1;
     return true;
   };
@@ -1090,12 +1599,25 @@ const pickSignalsByQuota = ({ primarySignals, fallbackSignals, limit, quota }) =
   const fillAny = (pool) => {
     for (const s of pool) {
       if (selected.length >= maxCount) break;
-      tryAddSignal(s, null);
+      tryAddSignal(s, null, true);
     }
   };
 
   if (selected.length < maxCount) fillAny(primary);
   if (selected.length < maxCount) fillAny(secondary);
+  // If soft caps still leave slots empty, relax caps to avoid under-filling.
+  if (selected.length < maxCount) {
+    for (const s of primary) {
+      if (selected.length >= maxCount) break;
+      tryAddSignal(s, null, false);
+    }
+  }
+  if (selected.length < maxCount) {
+    for (const s of secondary) {
+      if (selected.length >= maxCount) break;
+      tryAddSignal(s, null, false);
+    }
+  }
   return selected.slice(0, maxCount);
 };
 
@@ -1151,9 +1673,9 @@ ${sourceText || '（无）'}
 4) content 建议 200-600 字，写清楚适用对象、办理/申报线索、截止时间、可转化服务。
 5) 只能基于已抓取资料，不要编造来源；找不到发布日期请填空字符串 ""，不要虚构为今天。
 6) 返回最多 ${Math.max(5, Math.min(30, limit))} 条，按紧急度和转化潜力排序。
-7) 覆盖面：政策/标准、行业动态、企业动态、招采机会都要覆盖，不要只给政策。
+7) 覆盖面：政策/标准、行业动态、企业动态、招采机会都要覆盖，不要只给政策；企业动态与行业动态优先。
 8) 必须给出可执行转化建议（推荐动作要具体到48小时内可执行）。
-9) 时效规则：政策/招采/标准仅保留近90天；行业/企业/活动仅保留近30天。超出时效不要输出。
+9) 时效规则：政策/招采/标准仅保留近90天；行业/企业/活动仅保留近90天。超出时效不要输出。
 `;
 };
 
@@ -1163,33 +1685,137 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
   const iso = now.toISOString();
   const quota = resolveIntelKindQuota(limit);
 
-  const expandedIndustries = expandIndustries(industries);
-  const regionQuery = (regions.length > 0 ? regions : ['温州', '苍南', '平阳', '龙港']).join(' ');
-  const industryQuery = (expandedIndustries.length > 0 ? expandedIndustries : ['食品', '包装', '印刷', '餐饮', '医药']).join(' ');
+  const selectedRegions = (regions.length > 0 ? regions : DEFAULT_INTEL_REGIONS)
+    .map((x) => String(x || '').trim())
+    .filter(Boolean);
+  const selectedIndustries = (industries.length > 0 ? industries : DEFAULT_INTEL_INDUSTRIES)
+    .map((x) => String(x || '').trim())
+    .filter(Boolean);
+  let droppedGeo = 0;
+  let droppedGeoConflict = 0;
+  const featuredIndustries = selectedRegions.flatMap((region) => REGION_FEATURED_INDUSTRIES[region] || []);
+  const expandedIndustries = expandIndustries([...selectedIndustries, ...featuredIndustries]);
+  const prioritizedIndustries = Array.from(new Set([
+    ...selectedIndustries,
+    ...featuredIndustries,
+    ...expandedIndustries
+  ])).slice(0, 10);
+  const regionQuery = selectedRegions.join(' ');
   const currentYear = today.slice(0, 4);
   const currentMonth = String(Number(today.slice(5, 7)) || 1);
-  const recencyHint = `${currentYear} ${currentYear}年${currentMonth}月 今日 近日 最新`;
+  const prevDate = new Date(now.getTime());
+  prevDate.setUTCMonth(prevDate.getUTCMonth() - 1);
+  const prevMonth = String(prevDate.getUTCMonth() + 1);
+  const recencyHintHard = `${currentYear} ${currentYear}年${currentMonth}月 ${currentYear}年${prevMonth}月 今日 近日 最新 发布`;
+  const recencyHintSoft = `${currentYear} 最新 近期 本周 本月 动态 发布 公示 通知`;
+  const enterpriseQueryTerms = '企业 动态 扩产 投产 签约 融资 并购 上市 技改 数字化';
+  const enterpriseFocusHint = compactSearchTerms(`${enterpriseQueryTerms} ${ENTERPRISE_SIGNAL_KEYWORDS}`, 10);
+  const industryFocusHint = compactSearchTerms(`${INDUSTRY_SIGNAL_KEYWORDS} 特色产业 产业集群`, 10);
+  const associationFocusHint = compactSearchTerms(`${ASSOCIATION_EVENT_KEYWORDS} 技术沙龙 供需对接`, 10);
 
-  const queryPlans = [
-    { kindHint: 'policy', q: `${regionQuery} ${industryQuery} site:gov.cn 政策 通知 公告 公示 ${recencyHint}` },
-    { kindHint: 'tender', q: `${regionQuery} ${industryQuery} 招标 招采 采购 交易中心 ${recencyHint}` },
-    { kindHint: 'standard', q: `${regionQuery} ${industryQuery} 标准 监管 市场监督 管理局 ${recencyHint}` },
-    { kindHint: 'policy', q: `${regionQuery} ${industryQuery} 专项资金 项目申报 指南 ${recencyHint}` },
-    { kindHint: 'industry', q: `${regionQuery} ${industryQuery} 行业 动态 新闻 趋势 市场 ${recencyHint}` },
-    { kindHint: 'company', q: `${regionQuery} ${industryQuery} 企业 扩产 投资 融资 上市 并购 中标 订单 ${recencyHint}` }
-  ];
+  const queryPlans = [];
+  const querySeen = new Set();
+  const pushQueryPlan = (kindHint, q, priority = 50, maxResults = 3) => {
+    const text = String(q || '').replace(/\s+/g, ' ').trim();
+    if (!text || querySeen.has(text)) return;
+    querySeen.add(text);
+    queryPlans.push({ kindHint, q: text, priority, maxResults: Math.max(2, Math.min(6, Number(maxResults) || 3)) });
+  };
 
-  const grouped = await Promise.all(
-    queryPlans.map(async ({ kindHint, q }) => ({
+  // Baseline policy/tender/standard coverage.
+  pushQueryPlan('policy', `${regionQuery} site:gov.cn 政策 通知 公告 公示 ${recencyHintHard}`, 82, 4);
+  pushQueryPlan('tender', `${regionQuery} 招标 招采 采购 交易中心 中标 公示 ${recencyHintHard}`, 79, 4);
+  pushQueryPlan('standard', `${regionQuery} 市场监管 标准 监督抽检 认证 管理 ${recencyHintSoft}`, 76, 4);
+  pushQueryPlan('policy', `${regionQuery} 工信 经信 科技 发改 专项资金 项目申报 指南 ${recencyHintSoft}`, 74, 4);
+
+  // WeChat Official Accounts: prioritized scanning (CN-friendly) via indexed article pages.
+  // Note: direct profile crawling often needs cookies/captcha, so we rely on search + article fetch.
+  const parseCsvEnv = (key, fallbackCsv) => String(process.env[key] ?? fallbackCsv ?? '')
+    .split(',')
+    .map((s) => String(s || '').trim())
+    .filter(Boolean);
+  const wechatExcludeSet = new Set(uniqueList(parseCsvEnv('INTEL_WECHAT_EXCLUDE', DEFAULT_INTEL_WECHAT_EXCLUDE.join(','))));
+  const wechatAccounts = uniqueList(parseCsvEnv('INTEL_WECHAT_ACCOUNTS', DEFAULT_INTEL_WECHAT_ACCOUNTS.join(',')))
+    .filter((name) => !wechatExcludeSet.has(name));
+  const wechatPlanMax = Math.max(0, Math.min(10, toNonNegativeInt(process.env.INTEL_WECHAT_PLAN_MAX, wechatAccounts.length)));
+  if (wechatAccounts.length > 0 && wechatPlanMax > 0) {
+    // Keep queries broad to avoid empty hits; relevance is handled downstream via scoring/freshness/geo rules.
+    const wechatSuffix = compactSearchTerms(`${currentYear} ${currentYear}年${currentMonth}月 ${recencyHintSoft}`, 8);
+    for (const name of wechatAccounts.slice(0, wechatPlanMax)) {
+      pushQueryPlan('wechat', `${name} site:mp.weixin.qq.com ${wechatSuffix}`, 110, 2);
+    }
+  }
+
+  // Enterprise + industry are first priority.
+  prioritizedIndustries.slice(0, 6).forEach((industry, idx) => {
+    const scopedRegion = selectedRegions[idx % Math.max(1, selectedRegions.length)] || regionQuery;
+    pushQueryPlan('company', `${scopedRegion} ${industry} ${enterpriseFocusHint} ${recencyHintSoft}`, 98, 4);
+    pushQueryPlan('industry', `${scopedRegion} ${industry} ${industryFocusHint} ${recencyHintSoft}`, 95, 4);
+    if (idx < 4) {
+      pushQueryPlan('industry', `${scopedRegion} ${industry} ${associationFocusHint} ${recencyHintSoft}`, 91, 3);
+    }
+    if (idx < 3) {
+      pushQueryPlan('event', `${scopedRegion} ${industry} 展会 博览会 高峰论坛 技术论坛 供需对接 ${recencyHintSoft}`, 89, 3);
+    }
+  });
+
+  // Region featured industries expansion.
+  for (const region of selectedRegions.slice(0, 4)) {
+    const featured = (REGION_FEATURED_INDUSTRIES[region] || []).slice(0, 5);
+    if (featured.length === 0) continue;
+    const featuredQuery = featured.join(' ');
+    pushQueryPlan('company', `${region} ${featuredQuery} 企业 ${enterpriseFocusHint} ${recencyHintSoft}`, 95, 3);
+    pushQueryPlan('industry', `${region} ${featuredQuery} 产业集群 行业协会 展会 论坛 ${recencyHintSoft}`, 91, 3);
+    pushQueryPlan('company', `${region} 专精特新 小巨人 单项冠军 认定 公示 ${recencyHintSoft}`, 93, 3);
+    pushQueryPlan('company', `${region} 重点企业 签约 投产 开工 扩产 中标 ${recencyHintSoft}`, 92, 3);
+  }
+
+  if (prioritizedIndustries.length > 0) {
+    pushQueryPlan('industry', `${regionQuery} ${prioritizedIndustries.slice(0, 6).join(' ')} 行业协会 产业联盟 会展 论坛 ${recencyHintSoft}`, 90, 4);
+    pushQueryPlan('company', `${regionQuery} ${prioritizedIndustries.slice(0, 6).join(' ')} 龙头企业 专精特新 企业动态 ${recencyHintSoft}`, 93, 4);
+  }
+
+  const queryPlanLimit = Math.max(8, Math.min(20, toNonNegativeInt(process.env.INTEL_QUERY_PLAN_LIMIT, 12)));
+  const sortedPlans = queryPlans.sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
+  const pinnedWechatPlans = sortedPlans.filter((p) => String(p?.kindHint || '') === 'wechat');
+  const otherPlans = sortedPlans.filter((p) => String(p?.kindHint || '') !== 'wechat');
+  const pinnedCount = Math.min(pinnedWechatPlans.length, Math.max(0, Math.min(queryPlanLimit, wechatPlanMax)));
+  const activeQueryPlans = [
+    ...pinnedWechatPlans.slice(0, pinnedCount),
+    ...otherPlans
+  ].slice(0, queryPlanLimit);
+  intelDebugLog('query-plan', {
+    total: queryPlans.length,
+    active: activeQueryPlans.length,
+    top: activeQueryPlans.slice(0, 6).map((x) => `${x.kindHint}:${x.q}`)
+  });
+
+  const wechatPlans = activeQueryPlans.filter((p) => String(p?.kindHint || '') === 'wechat');
+  const nonWechatPlans = activeQueryPlans.filter((p) => String(p?.kindHint || '') !== 'wechat');
+
+  const groupedNonWechat = await Promise.all(
+    nonWechatPlans.map(async ({ kindHint, q, maxResults }) => ({
       kindHint,
-      items: await buildWebContextForQuery(q, 3)
+      items: await buildWebContextForQuery(q, maxResults, false, kindHint)
     }))
   );
+  const groupedWechat = [];
+  for (const plan of wechatPlans) {
+    // Light throttle to avoid triggering Baidu anti-bot during batch fetch.
+    // (WeChat crawling itself is blocked by CAPTCHA; we rely on indexed search results.)
+    // eslint-disable-next-line no-await-in-loop
+    const items = await buildWebContextForQuery(plan.q, plan.maxResults, false, plan.kindHint);
+    groupedWechat.push({ kindHint: plan.kindHint, items });
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 120));
+  }
+
+  const grouped = [...groupedWechat, ...groupedNonWechat];
 
   // Round-robin merge to keep source diversity across policy/industry/company/tender queries.
   const merged = [];
   const seen = new Set();
-  const maxPool = Math.max(16, Math.min(28, limit * 2));
+  const maxPool = Math.max(16, Math.min(32, limit * 2));
   let step = 0;
   while (merged.length < maxPool && step < 8) {
     let added = false;
@@ -1207,10 +1833,46 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
     step += 1;
   }
 
+  // If first round is sparse, run broader rescue queries for enterprise/industry news.
+  if (merged.length < Math.max(6, Math.floor(limit * 0.5))) {
+    const rescuePlans = [
+      { kindHint: 'company', q: `${regionQuery} 企业 动态 签约 投产 扩产 融资 并购 技改 数字化改造 最新` },
+      { kindHint: 'industry', q: `${regionQuery} 产业 行业 协会 论坛 展会 对接会 技术前沿 最新` },
+      { kindHint: 'event', q: `${regionQuery} 会展 博览会 论坛 峰会 招商 推介会 本周 本月` }
+    ];
+    const rescueGrouped = await Promise.all(
+      rescuePlans.map(async ({ kindHint, q }) => ({
+        kindHint,
+        items: await buildWebContextForQuery(q, 4, false, kindHint)
+      }))
+    );
+    for (const group of rescueGrouped) {
+      const list = Array.isArray(group?.items) ? group.items : [];
+      for (const item of list) {
+        if (!item?.url) continue;
+        if (seen.has(item.url)) continue;
+        seen.add(item.url);
+        merged.push({ ...item, _queryKindHint: String(group?.kindHint || '') });
+        if (merged.length >= maxPool) break;
+      }
+      if (merged.length >= maxPool) break;
+    }
+  }
+  intelDebugLog('search-pool', {
+    grouped: grouped.reduce((acc, g) => acc + (Array.isArray(g?.items) ? g.items.length : 0), 0),
+    merged: merged.length
+  });
+  intelDebugLog('wechat-pool', {
+    mergedWechat: merged.filter((x) => isWeChatArticleUrl(x?.url)).length,
+    groupedWechat: grouped
+      .filter((g) => String(g?.kindHint || '') === 'wechat')
+      .reduce((acc, g) => acc + (Array.isArray(g?.items) ? g.items.filter((x) => isWeChatArticleUrl(x?.url)).length : 0), 0)
+  });
+
   const rawSources = merged;
   const preferredSources = rawSources.filter(isHighValueSource);
-  const targetSourceCount = Math.max(8, Math.min(16, limit + 4));
-  const sourceList = (() => {
+  const targetSourceCount = Math.max(12, Math.min(24, limit + 8));
+  let sourceList = (() => {
     const selected = [];
     const seen = new Set();
     const primaryPool = preferredSources.length > 0 ? preferredSources : rawSources;
@@ -1222,7 +1884,6 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       for (const item of pool) {
         if (taken >= needCount || selected.length >= targetSourceCount) break;
         if (!item?.url) continue;
-        if (isExplicitLowValueSource(item)) continue;
         if (seen.has(item.url)) continue;
         if (!matcher(item)) continue;
         seen.add(item.url);
@@ -1237,7 +1898,18 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       const seedNeed = Math.max(0, Math.min(3, quota[kind] || 0));
       if (seedNeed <= 0) continue;
       const acceptedHints = kind === 'policy' ? ['policy', 'standard'] : [kind];
-      const hintMatcher = (item) => acceptedHints.includes(normalizeSignalKind(item?._queryKindHint));
+      const hintMatcher = (item) => {
+        if (!acceptedHints.includes(normalizeSignalKind(item?._queryKindHint))) return false;
+        const mergedText = `${item?.title || ''} ${item?.snippet || ''} ${item?.excerpt || ''}`;
+        const isTenderish = /招标|招采|采购|中标|交易中心|投标|竞价/.test(mergedText);
+        if (kind === 'company') {
+          return /企业|公司|集团|股份|有限公司|签约|投产|扩产|融资|并购|开工|投建|开业|项目落地|订单/.test(mergedText) && !isTenderish;
+        }
+        if (kind === 'industry') {
+          return /行业|产业|市场|协会|论坛|展会|博览会|技术|景气|趋势|集群/.test(mergedText) && !isTenderish;
+        }
+        return true;
+      };
       let missing = seedNeed;
       missing -= pushFromPool(primaryPool, hintMatcher, missing);
       if (missing > 0) pushFromPool(secondaryPool, hintMatcher, missing);
@@ -1251,20 +1923,73 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
 
     return selected.slice(0, targetSourceCount);
   })();
-  if (sourceList.length === 0) {
-    return { signals: [], modelUsed: DEFAULT_MODEL, empty: true };
+  if (sourceList.length === 0 && rawSources.length > 0) {
+    sourceList = rawSources
+      .filter((item) => item?.url)
+      .slice(0, targetSourceCount)
+      .map((item) => ({ ...item, _queryKindHint: String(item?._queryKindHint || 'industry') }));
   }
+
+  // Promote WeChat article sources (mp.weixin.qq.com) to increase hit rate for selected accounts.
+  const wechatSourceBoost = Math.max(0, Math.min(10, toNonNegativeInt(process.env.INTEL_WECHAT_SOURCE_BOOST, 6)));
+  if (wechatSourceBoost > 0) {
+    const boosted = [];
+    const seenBoost = new Set();
+    for (const item of rawSources) {
+      if (boosted.length >= wechatSourceBoost) break;
+      if (!item?.url || !isWeChatArticleUrl(item.url)) continue;
+      if (seenBoost.has(item.url)) continue;
+      seenBoost.add(item.url);
+      boosted.push(item);
+    }
+    if (boosted.length > 0) {
+      const seenUrl = new Set();
+      const next = [];
+      for (const item of [...boosted, ...sourceList]) {
+        if (!item?.url) continue;
+        if (seenUrl.has(item.url)) continue;
+        seenUrl.add(item.url);
+        next.push(item);
+        if (next.length >= targetSourceCount) break;
+      }
+      sourceList = next;
+    }
+  }
+
+  const geoScopedSourceResult = applyGeoScopeToSources(sourceList, selectedRegions);
+  sourceList = geoScopedSourceResult.sources;
+  droppedGeo += Number(geoScopedSourceResult.droppedGeo || 0);
+  droppedGeoConflict += Number(geoScopedSourceResult.droppedGeoConflict || 0);
+  intelDebugLog('wechat-sourcelist', {
+    selectedWechat: sourceList.filter((x) => isWeChatArticleUrl(x?.url)).length
+  });
+
+  if (sourceList.length === 0) {
+    return {
+      signals: [],
+      modelUsed: 'web-heuristic',
+      empty: true,
+      droppedGeo,
+      droppedGeoConflict
+    };
+  }
+  intelDebugLog('source-list', {
+    preferred: preferredSources.length,
+    selected: sourceList.length,
+    pool: rawSources.length
+  });
 
   const inferKind = (text, kindHint = '') => {
     const hint = normalizeSignalKind(kindHint);
-    if (['policy', 'industry', 'company', 'tender', 'standard'].includes(hint)) return hint;
     const t = String(text || '');
-    if (/招标|招采|采购/.test(t)) return 'tender';
+    // Strong lexical cues should override query hint to avoid misclassification.
+    if (/招标|招采|采购|中标|成交公告/.test(t)) return 'tender';
     if (/标准|规范|国标|行标/.test(t)) return 'standard';
     if (/政策|通知|办法|条例|监管|公示/.test(t)) return 'policy';
+    if (/发布会|论坛|活动|会议|展会|博览会|对接会/.test(t)) return 'event';
+    if (['policy', 'industry', 'company', 'tender', 'standard', 'event'].includes(hint)) return hint;
     if (/扩产|投产|并购|融资|上市|中标|订单|企业|公司|集团|股份|有限公司/.test(t)) return 'company';
     if (/行业|市场|产业|趋势|景气|价格|需求|供给/.test(t)) return 'industry';
-    if (/发布会|论坛|活动|会议/.test(t)) return 'event';
     return 'industry';
   };
 
@@ -1327,7 +2052,6 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
     const usable = sourceList;
     for (const s of usable) {
       if (!s?.url || dedup.has(s.url)) continue;
-      if (isExplicitLowValueSource(s)) continue;
       dedup.add(s.url);
       const merged = `${s.title || ''} ${s.snippet || ''} ${s.excerpt || ''}`;
       let host = 'Web';
@@ -1340,11 +2064,11 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       const serviceCategory = inferServiceCategory(merged);
       const urgency = inferUrgency(merged);
       const publishedMeta = inferPublishedMeta(s?.url, s?.title, s?.snippet, s?.excerpt);
-      const industriesText = (industries.length > 0 ? industries : ['重点行业']).join('、');
+      const industriesText = (selectedIndustries.length > 0 ? selectedIndustries : ['重点行业']).join('、');
       const { hints, actions } = buildOpportunityHints(kind, serviceCategory, s.title, industriesText);
       const baseScore = kind === 'tender' ? 82 : kind === 'policy' ? 78 : kind === 'standard' ? 76 : kind === 'company' ? 72 : kind === 'industry' ? 68 : 62;
       const urgencyBonus = urgency === 'high' ? 8 : urgency === 'medium' ? 4 : 0;
-      out.push({
+      let signal = {
         id: `SIG-${Date.now()}-${out.length}`,
         title: String(s.title || `情报-${out.length + 1}`).slice(0, 180),
         sourceName: host,
@@ -1353,8 +2077,10 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
         summary: String((s.snippet || s.excerpt || '').slice(0, 120)) || '基于联网检索自动生成的情报条目。',
         content: String((s.excerpt || s.snippet || '').slice(0, 900)),
         kind,
-        regions: regions.length > 0 ? regions : ['温州', '苍南', '平阳', '龙港'],
-        industries: industries.length > 0 ? industries : ['食品', '包装', '印刷', '餐饮', '医药'],
+        regions: (Array.isArray(s?._matchedRegions) && s._matchedRegions.length > 0)
+          ? uniqueList(s._matchedRegions)
+          : inferMatchedRegionsFromText(merged, selectedRegions),
+        industries: selectedIndustries.length > 0 ? selectedIndustries : DEFAULT_INTEL_INDUSTRIES,
         departments: [],
         tags: appendPublishedAtTag([], publishedMeta),
         deadline: '',
@@ -1364,44 +2090,88 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
         recommendedActions: actions,
         score: Math.min(95, Math.max(50, baseScore + urgencyBonus - out.length * 2)),
         urgency,
-        status: 'new',
+        status: MARKET_SIGNAL_STATUS.NEW,
         ownerUserId: '',
         convertedTo: {},
         createdAt: iso,
         updatedAt: iso
-      });
+      };
+      // WeChat articles often can't be crawled for publish date; keep them visible but mark as "待核验".
+      if (isWeChatArticleUrl(signal.sourceUrl) && !String(signal.publishedAt || '').trim()) {
+        signal = annotateUndatedSignal(signal, today);
+      }
+      out.push(signal);
       if (out.length >= Math.max(limit * 2, 30)) break;
     }
     return out.filter((x) => x.sourceUrl);
   };
 
   const fallbackSignalsRaw = fallbackFromSources();
-  const fallbackStrictFreshness = filterSignalsByFreshness(fallbackSignalsRaw, today);
+  const fallbackGeoScoped = applyGeoScopeToSignals(fallbackSignalsRaw, selectedRegions);
+  droppedGeo += Number(fallbackGeoScoped.droppedGeo || 0);
+  droppedGeoConflict += Number(fallbackGeoScoped.droppedGeoConflict || 0);
+
+  const fallbackStrictFreshness = filterSignalsByFreshness(fallbackGeoScoped.signals, today);
   const fallbackRescueFreshness = fallbackStrictFreshness.droppedUndated > 0
-    ? filterSignalsByFreshness(fallbackSignalsRaw, today, { allowUndated: true, undatedFallbackYmd: today })
+    ? filterSignalsByFreshness(fallbackGeoScoped.signals, today, { allowUndated: true, undatedFallbackYmd: today })
     : { fresh: [], droppedStale: 0, droppedUndated: 0, adoptedUndated: 0 };
   const fallbackStrictSet = new Set(fallbackStrictFreshness.fresh.map(normalizeSignalKey));
-  const maxUndatedSupplement = Math.max(2, Math.floor(limit * 0.3));
-  const needUndatedSupplement = fallbackStrictFreshness.fresh.length < Math.max(4, Math.floor(limit * 0.4));
+  const maxUndatedSupplement = fallbackStrictFreshness.fresh.length < Math.max(4, Math.floor(limit * 0.4))
+    ? Math.max(4, Math.floor(limit * 0.7))
+    : Math.max(1, Math.floor(limit * 0.3));
+  const needUndatedSupplement = fallbackStrictFreshness.fresh.length < Math.max(4, Math.floor(limit * 0.5));
   const fallbackUndatedPool = (needUndatedSupplement
     ? fallbackRescueFreshness.fresh.filter((s) => !fallbackStrictSet.has(normalizeSignalKey(s)))
     : []
   ).slice(0, maxUndatedSupplement);
+  const fallbackUndatedSeed = new Set(fallbackUndatedPool.map(normalizeSignalKey));
+  const fallbackEmergencyNeed = Math.max(0, maxUndatedSupplement - fallbackUndatedPool.length);
+  const fallbackEmergencyUndated = (fallbackStrictFreshness.fresh.length < Math.max(3, Math.floor(limit * 0.3)) && fallbackEmergencyNeed > 0
+    ? fallbackGeoScoped.signals
+      .filter((s) => !String(s?.publishedAt || '').trim())
+      .filter((s) => !fallbackUndatedSeed.has(normalizeSignalKey(s)))
+      .slice(0, fallbackEmergencyNeed)
+      .map((s) => annotateUndatedSignal(s, today))
+    : []);
   const balancedFallbackSignals = pickSignalsByQuota({
     primarySignals: fallbackStrictFreshness.fresh,
-    fallbackSignals: fallbackUndatedPool,
+    fallbackSignals: [...fallbackUndatedPool, ...fallbackEmergencyUndated],
     limit,
     quota
   });
   const fallbackRescuedUndated = balancedFallbackSignals.filter((s) => Array.isArray(s?.tags) && s.tags.includes('日期待核验')).length;
+  const fallbackDroppedStale = Number(fallbackStrictFreshness.droppedStale || 0);
+  const fallbackDroppedUndated = Math.max(0, Number(fallbackStrictFreshness.droppedUndated || 0) - fallbackRescuedUndated);
+  intelDebugLog('fallback-freshness', {
+    strictFresh: fallbackStrictFreshness.fresh.length,
+    strictDroppedStale: fallbackStrictFreshness.droppedStale,
+    strictDroppedUndated: fallbackStrictFreshness.droppedUndated,
+    undatedSupplement: fallbackUndatedPool.length,
+    emergencyUndated: fallbackEmergencyUndated.length,
+    balanced: balancedFallbackSignals.length
+  });
+  const llmBypassThreshold = Math.max(6, Math.floor(limit * 0.7));
+  if (balancedFallbackSignals.length >= llmBypassThreshold || (balancedFallbackSignals.length > 0 && fallbackStrictFreshness.fresh.length === 0)) {
+    return {
+      signals: balancedFallbackSignals,
+      modelUsed: 'web-heuristic',
+      empty: false,
+      droppedStale: fallbackDroppedStale,
+      droppedUndated: fallbackDroppedUndated,
+      rescuedUndated: fallbackRescuedUndated,
+      droppedGeo,
+      droppedGeoConflict
+    };
+  }
 
   const prompt = buildIntelPrompt({
-    regions,
-    industries: expandedIndustries,
+    regions: selectedRegions,
+    industries: prioritizedIndustries,
     today,
     limit,
     sources: sourceList
   });
+  const intelLlmTimeoutMs = Math.max(6000, toNonNegativeInt(process.env.INTEL_LLM_TIMEOUT_MS, 12000));
 
   let completion = null;
   try {
@@ -1412,7 +2182,7 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
         jsonMode: false,
         temperature: 0.2
       }),
-      15000,
+      intelLlmTimeoutMs,
       'INTEL_LLM_TIMEOUT'
     );
   } catch {
@@ -1420,13 +2190,19 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       signals: balancedFallbackSignals,
       modelUsed: 'web-fallback',
       empty: balancedFallbackSignals.length === 0,
-      droppedStale: fallbackStrictFreshness.droppedStale,
-      droppedUndated: Math.max(0, fallbackStrictFreshness.droppedUndated - fallbackRescuedUndated),
-      rescuedUndated: fallbackRescuedUndated
+      droppedStale: fallbackDroppedStale,
+      droppedUndated: fallbackDroppedUndated,
+      rescuedUndated: fallbackRescuedUndated,
+      droppedGeo,
+      droppedGeoConflict
     };
   }
 
   const list = parseIntelList(completion?.text || '');
+  intelDebugLog('llm-parse', {
+    model: completion?.modelUsed || '',
+    list: Array.isArray(list) ? list.length : 0
+  });
   const modelSignalsRaw = list.map((x, idx) => {
     const sourceUrl = toHttpUrl(x?.sourceUrl);
     const sourcePublishedMeta = sourcePublishedMetaByUrl.get(sourceUrl);
@@ -1454,8 +2230,8 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       summary: String(x?.summary || ''),
       content: String(x?.content || x?.summary || ''),
       kind,
-      regions: Array.isArray(x?.regions) ? x.regions.map(String).filter(Boolean) : regions,
-      industries: Array.isArray(x?.industries) ? x.industries.map(String).filter(Boolean) : industries,
+      regions: Array.isArray(x?.regions) ? x.regions.map(String).filter(Boolean) : selectedRegions,
+      industries: Array.isArray(x?.industries) ? x.industries.map(String).filter(Boolean) : selectedIndustries,
       departments: Array.isArray(x?.departments) ? x.departments.map(String).filter(Boolean) : [],
       tags: appendPublishedAtTag(Array.isArray(x?.tags) ? x.tags.map(String).filter(Boolean) : [], publishedMeta),
       deadline: x?.deadline ? String(x.deadline).slice(0, 10) : '',
@@ -1465,7 +2241,7 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       recommendedActions: Array.isArray(x?.recommendedActions) ? x.recommendedActions.map(String).filter(Boolean) : [],
       score,
       urgency,
-      status: 'new',
+      status: MARKET_SIGNAL_STATUS.NEW,
       ownerUserId: '',
       convertedTo: {},
       createdAt: iso,
@@ -1473,23 +2249,58 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
     };
   }).filter((x) => x.sourceUrl && x.title);
 
-  const modelStrictFreshness = filterSignalsByFreshness(modelSignalsRaw, today);
+  const modelGeoScoped = applyGeoScopeToSignals(modelSignalsRaw, selectedRegions);
+  droppedGeo += Number(modelGeoScoped.droppedGeo || 0);
+  droppedGeoConflict += Number(modelGeoScoped.droppedGeoConflict || 0);
+
+  const modelStrictFreshness = filterSignalsByFreshness(modelGeoScoped.signals, today);
   const modelRescueFreshness = modelStrictFreshness.droppedUndated > 0
-    ? filterSignalsByFreshness(modelSignalsRaw, today, { allowUndated: true, undatedFallbackYmd: today })
+    ? filterSignalsByFreshness(modelGeoScoped.signals, today, { allowUndated: true, undatedFallbackYmd: today })
     : { fresh: [], droppedStale: 0, droppedUndated: 0, adoptedUndated: 0 };
   const modelStrictSet = new Set(modelStrictFreshness.fresh.map(normalizeSignalKey));
   const strictTotalForDecision = modelStrictFreshness.fresh.length + fallbackStrictFreshness.fresh.length;
-  const modelUndatedPool = (strictTotalForDecision < Math.max(4, Math.floor(limit * 0.5))
+  const modelUndatedPool = (strictTotalForDecision < Math.max(5, Math.floor(limit * 0.6))
     ? modelRescueFreshness.fresh.filter((s) => !modelStrictSet.has(normalizeSignalKey(s)))
     : []
   ).slice(0, maxUndatedSupplement);
 
-  const signals = pickSignalsByQuota({
+  let signals = pickSignalsByQuota({
     primarySignals: modelStrictFreshness.fresh,
     fallbackSignals: [...fallbackStrictFreshness.fresh, ...modelUndatedPool, ...fallbackUndatedPool],
     limit,
     quota
   });
+
+  // Ensure WeChat sources (whitelisted official accounts) are not completely drowned out.
+  // This is a display/prioritization guardrail, not a business rule change.
+  const wechatForceMin = Math.max(0, Math.min(3, toNonNegativeInt(process.env.INTEL_WECHAT_FORCE_MIN, 1)));
+  if (wechatForceMin > 0) {
+    const currentWechat = signals.filter((s) => isWeChatArticleUrl(s?.sourceUrl)).length;
+    const need = Math.max(0, wechatForceMin - currentWechat);
+    if (need > 0) {
+      const wechatPool = balancedFallbackSignals
+        .filter((s) => isWeChatArticleUrl(s?.sourceUrl))
+        .filter((s) => !signals.some((x) => normalizeSignalKey(x) === normalizeSignalKey(s)));
+      if (wechatPool.length > 0) {
+        const next = [...signals];
+        let inserted = 0;
+        for (const cand of wechatPool) {
+          if (inserted >= need) break;
+          // Replace from the end (prefer keeping higher priority items).
+          let replaced = false;
+          for (let i = next.length - 1; i >= 0; i -= 1) {
+            if (!isWeChatArticleUrl(next[i]?.sourceUrl)) {
+              next[i] = cand;
+              replaced = true;
+              break;
+            }
+          }
+          if (replaced) inserted += 1;
+        }
+        signals = next;
+      }
+    }
+  }
   const rescuedUndated = signals.filter((s) => Array.isArray(s?.tags) && s.tags.includes('日期待核验')).length;
   const droppedStale = modelStrictFreshness.droppedStale + fallbackStrictFreshness.droppedStale;
   const droppedUndated = Math.max(0, modelStrictFreshness.droppedUndated + fallbackStrictFreshness.droppedUndated - rescuedUndated);
@@ -1502,11 +2313,30 @@ const runIntelFetch = async ({ regions, industries, limit }) => {
       empty: balancedFallbackSignals.length === 0,
       droppedStale,
       droppedUndated,
-      rescuedUndated: fallbackRescuedUndated
+      rescuedUndated: fallbackRescuedUndated,
+      droppedGeo,
+      droppedGeoConflict
     };
   }
 
-  return { signals, modelUsed: completion.modelUsed, empty: false, droppedStale, droppedUndated, rescuedUndated };
+  intelDebugLog('result', {
+    modelFresh: modelStrictFreshness.fresh.length,
+    modelUndatedSupplement: modelUndatedPool.length,
+    final: signals.length,
+    droppedStale,
+    droppedUndated,
+    rescuedUndated
+  });
+  return {
+    signals,
+    modelUsed: completion.modelUsed,
+    empty: false,
+    droppedStale,
+    droppedUndated,
+    rescuedUndated,
+    droppedGeo,
+    droppedGeoConflict
+  };
 };
 
 const getLastUserQuery = (history) => {
@@ -1536,22 +2366,35 @@ const toGroundingMetadata = (sources) => ({
 
 app.get('/api/ai/health', (req, res) => {
   if (!API_KEY && !GEMINI_API_KEY) {
-    return res.status(500).json({ ok: false, error: 'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)' });
+    return sendFail(
+      res,
+      ERROR_CODES.AI_KEY_MISSING,
+      'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)',
+      {},
+      500
+    );
   }
 
-  res.json({
-    ok: true,
+  return sendSuccess(res, {
     provider: API_KEY ? 'moonshot-kimi' : 'google-gemini',
     fallback: GEMINI_API_KEY ? 'google-gemini' : 'none',
     keyLoaded: true,
     defaultModel: DEFAULT_MODEL,
     geminiModel: GEMINI_DEFAULT_MODEL
-  });
+  }, 'success');
 });
 
 app.get('/api/ai/selftest', async (req, res) => {
   try {
-    if (!hasAnyAIKey()) return res.status(500).json({ ok: false, error: 'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)' });
+    if (!hasAnyAIKey()) {
+      return sendFail(
+        res,
+        ERROR_CODES.AI_KEY_MISSING,
+        'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)',
+        {},
+        500
+      );
+    }
 
     const requestedModel = String(req.query.model || '').trim();
     const rawMode = String(req.query.raw || '').trim() === '1';
@@ -1562,16 +2405,25 @@ app.get('/api/ai/selftest', async (req, res) => {
       disableFallback: rawMode
     });
 
-    res.json({ ok: true, model: result.modelUsed, text: result.text });
+    return sendSuccess(res, { model: result.modelUsed, text: result.text }, 'success');
   } catch (error) {
     const e = normalizeAIError(error);
-    res.status(toHttpStatus(e.code, e.message)).json({ ok: false, error: e.message, code: e.code });
+    const status = toHttpStatus(e.code, e.message);
+    return sendFail(res, toInternalErrorCode(e.code, e.message), e.message, {}, status);
   }
 });
 
 app.post('/api/ai/generate', async (req, res) => {
   try {
-    if (!hasAnyAIKey()) return res.status(500).json({ error: 'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)' });
+    if (!hasAnyAIKey()) {
+      return sendFail(
+        res,
+        ERROR_CODES.AI_KEY_MISSING,
+        'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)',
+        {},
+        500
+      );
+    }
 
     const { model, prompt, config } = req.body;
     const messages = convertHistoryToMessages(prompt);
@@ -1581,17 +2433,26 @@ app.post('/api/ai/generate', async (req, res) => {
       jsonMode: String(config?.responseMimeType || '').includes('application/json')
     });
 
-    res.json({ text: result.text, model: result.modelUsed });
+    return sendSuccess(res, { text: result.text, model: result.modelUsed }, 'success');
   } catch (error) {
     const e = normalizeAIError(error);
     console.error('AI API Error:', e.message);
-    res.status(toHttpStatus(e.code, e.message)).json({ error: e.message, code: e.code });
+    const status = toHttpStatus(e.code, e.message);
+    return sendFail(res, toInternalErrorCode(e.code, e.message), e.message, {}, status);
   }
 });
 
 app.post('/api/ai/chat', async (req, res) => {
   try {
-    if (!hasAnyAIKey()) return res.status(500).json({ error: 'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)' });
+    if (!hasAnyAIKey()) {
+      return sendFail(
+        res,
+        ERROR_CODES.AI_KEY_MISSING,
+        'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)',
+        {},
+        500
+      );
+    }
 
     const { model, history, tools } = req.body;
     const messages = convertHistoryToMessages(history);
@@ -1619,15 +2480,16 @@ app.post('/api/ai/chat', async (req, res) => {
       messages
     });
 
-    res.json({
+    return sendSuccess(res, {
       text: result.text,
       model: result.modelUsed,
       groundingMetadata: sources.length > 0 ? toGroundingMetadata(sources) : undefined
-    });
+    }, 'success');
   } catch (error) {
     const e = normalizeAIError(error);
     console.error('Chat API Error:', e.message);
-    res.status(toHttpStatus(e.code, e.message)).json({ error: e.message, code: e.code });
+    const status = toHttpStatus(e.code, e.message);
+    return sendFail(res, toInternalErrorCode(e.code, e.message), e.message, {}, status);
   }
 });
 
@@ -1636,14 +2498,20 @@ app.post('/api/intel/fetch', async (req, res) => {
     const regions = normalizeList(req.body?.regions);
     const industries = normalizeList(req.body?.industries);
     const limit = Number(req.body?.limit || 20);
-    const timeoutMs = Number(process.env.INTEL_FETCH_TIMEOUT_MS || 30000);
+    const timeoutMs = Number(process.env.INTEL_FETCH_TIMEOUT_MS || 45000);
     const today = new Date().toISOString().slice(0, 10);
 
     if (!hasAnyAIKey()) {
-      return res.status(500).json({ ok: false, signals: [], source: 'no-key', error: 'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)' });
+      return sendFail(
+        res,
+        ERROR_CODES.AI_KEY_MISSING,
+        'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)',
+        { signals: [], source: 'no-key' },
+        500
+      );
     }
 
-    const { signals, modelUsed, empty, droppedStale = 0, droppedUndated = 0, rescuedUndated = 0 } = await withTimeout(
+    const { signals, modelUsed, empty, droppedStale = 0, droppedUndated = 0, rescuedUndated = 0, droppedGeo = 0, droppedGeoConflict = 0 } = await withTimeout(
       runIntelFetch({ regions, industries, limit }),
       timeoutMs,
       `INTEL_FETCH_TIMEOUT(${timeoutMs}ms)`
@@ -1652,42 +2520,57 @@ app.post('/api/intel/fetch', async (req, res) => {
     if (empty) {
       const store = readIntelStore();
       const cachedSignals = Array.isArray(store?.signals) ? store.signals : [];
-      const cacheFreshness = filterSignalsByFreshness(cachedSignals.filter(isUsableSignal), today);
+      const geoRegions = regions.length > 0 ? regions : DEFAULT_INTEL_REGIONS;
+      const cacheGeoScoped = applyGeoScopeToSignals(cachedSignals.filter(isUsableSignal), geoRegions);
+      const cacheFreshness = filterSignalsByFreshness(cacheGeoScoped.signals, today);
       const usableCached = cacheFreshness.fresh;
       if (usableCached.length > 0) {
-        return res.status(200).json({
-          ok: false,
-          stale: true,
-          signals: usableCached,
-          source: 'cache',
-          error: `本次联网检索未提取到可用结构化结果，已回退最近缓存（${store.lastRunAt || '未知时间'}）`,
-          droppedStale: Number(droppedStale || 0) + Number(cacheFreshness.droppedStale || 0),
-          droppedUndated: Number(droppedUndated || 0) + Number(cacheFreshness.droppedUndated || 0),
-          rescuedUndated: Number(rescuedUndated || 0)
-        });
+        return sendFail(
+          res,
+          ERROR_CODES.INTEL_FETCH_ERROR,
+          `本次联网检索未提取到可用结构化结果，已回退最近缓存（${store.lastRunAt || '未知时间'}）`,
+          {
+            stale: true,
+            signals: usableCached,
+            source: 'cache',
+            droppedStale: Number(droppedStale || 0) + Number(cacheFreshness.droppedStale || 0),
+            droppedUndated: Number(droppedUndated || 0) + Number(cacheFreshness.droppedUndated || 0),
+            rescuedUndated: Number(rescuedUndated || 0),
+            droppedGeo: Number(droppedGeo || 0) + Number(cacheGeoScoped.droppedGeo || 0),
+            droppedGeoConflict: Number(droppedGeoConflict || 0) + Number(cacheGeoScoped.droppedGeoConflict || 0)
+          },
+          200
+        );
       }
 
-      return res.status(200).json({
-        ok: false,
-        stale: false,
-        signals: [],
-        source: 'error',
-        error: '本次联网检索没有提取到可用行业情报（已执行时效过滤），请缩小范围后重试。',
-        droppedStale,
-        droppedUndated,
-        rescuedUndated
-      });
+      return sendFail(
+        res,
+        ERROR_CODES.INTEL_FETCH_ERROR,
+        '本次联网检索没有提取到可用行业情报（已执行时效过滤），请缩小范围后重试。',
+        {
+          stale: false,
+          signals: [],
+          source: 'error',
+          droppedStale,
+          droppedUndated,
+          rescuedUndated,
+          droppedGeo,
+          droppedGeoConflict
+        },
+        200
+      );
     }
 
     writeIntelStore({ lastRunAt: new Date().toISOString(), regions, industries, signals });
-    res.json({
-      ok: true,
+    return sendSuccess(res, {
       signals,
       model: modelUsed,
       source: 'server',
       droppedStale,
       droppedUndated,
       rescuedUndated,
+      droppedGeo,
+      droppedGeoConflict,
       freshnessPolicy: {
         policy: INTEL_RECENCY_DAYS.policy,
         tender: INTEL_RECENCY_DAYS.tender,
@@ -1696,42 +2579,74 @@ app.post('/api/intel/fetch', async (req, res) => {
         company: INTEL_RECENCY_DAYS.company,
         event: INTEL_RECENCY_DAYS.event
       }
-    });
+    }, 'success');
   } catch (error) {
     const e = normalizeAIError(error);
     const store = readIntelStore();
     const cachedSignals = Array.isArray(store?.signals) ? store.signals : [];
     const today = new Date().toISOString().slice(0, 10);
-    const cacheFreshness = filterSignalsByFreshness(cachedSignals.filter(isUsableSignal), today);
+    const regions = normalizeList(req.body?.regions);
+    const geoRegions = regions.length > 0 ? regions : DEFAULT_INTEL_REGIONS;
+    const cacheGeoScoped = applyGeoScopeToSignals(cachedSignals.filter(isUsableSignal), geoRegions);
+    const cacheFreshness = filterSignalsByFreshness(cacheGeoScoped.signals, today);
     const usableCached = cacheFreshness.fresh;
     const isTimeout = String(e.message || '').includes('INTEL_FETCH_TIMEOUT');
 
     if (isTimeout && usableCached.length > 0) {
-      return res.status(200).json({
-        ok: false,
-        stale: true,
-        signals: usableCached,
-        source: 'cache',
-        error: `抓取超时，已回退到最近一次缓存（${store.lastRunAt || '未知时间'}）`,
-        droppedStale: Number(cacheFreshness.droppedStale || 0),
-        droppedUndated: Number(cacheFreshness.droppedUndated || 0)
-      });
+      return sendFail(
+        res,
+        ERROR_CODES.TIMEOUT,
+        `抓取超时，已回退到最近一次缓存（${store.lastRunAt || '未知时间'}）`,
+        {
+            stale: true,
+            signals: usableCached,
+            source: 'cache',
+            droppedStale: Number(cacheFreshness.droppedStale || 0),
+            droppedUndated: Number(cacheFreshness.droppedUndated || 0),
+            droppedGeo: Number(cacheGeoScoped.droppedGeo || 0),
+            droppedGeoConflict: Number(cacheGeoScoped.droppedGeoConflict || 0)
+        },
+        200
+      );
     }
 
-    res.status(200).json({ ok: false, signals: [], error: e.message, code: e.code, source: 'error' });
+    return sendFail(
+      res,
+      toInternalErrorCode(e.code, e.message),
+      e.message,
+      {
+        signals: [],
+        source: 'error',
+        droppedGeo: Number(cacheGeoScoped.droppedGeo || 0),
+        droppedGeoConflict: Number(cacheGeoScoped.droppedGeoConflict || 0)
+      },
+      200
+    );
   }
 });
 
 app.get('/api/intel/latest', (req, res) => {
   const store = readIntelStore();
-  res.json({ ok: true, ...store });
+  const configuredRegions = normalizeList(store?.regions);
+  const geoRegions = configuredRegions.length > 0 ? configuredRegions : DEFAULT_INTEL_REGIONS;
+  const scoped = applyGeoScopeToSignals(Array.isArray(store?.signals) ? store.signals : [], geoRegions);
+  return sendSuccess(
+    res,
+    {
+      ...store,
+      signals: scoped.signals,
+      droppedGeo: Number(scoped.droppedGeo || 0),
+      droppedGeoConflict: Number(scoped.droppedGeoConflict || 0)
+    },
+    'success'
+  );
 });
 
 app.post('/api/state/sync', async (req, res) => {
   try {
     const datasets = req.body?.datasets;
     if (!datasets || typeof datasets !== 'object') {
-      return res.status(400).json({ ok: false, error: 'datasets 不能为空且必须是对象' });
+      return sendFail(res, ERROR_CODES.PARAM_ERROR, 'datasets 不能为空且必须是对象', {}, 400);
     }
 
     const meta = {
@@ -1743,9 +2658,13 @@ app.post('/api/state/sync', async (req, res) => {
 
     const result = await upsertStateBatch(datasets, meta);
     const health = await getStateHealth();
-    res.json({ ok: true, written: result.written, mode: health.mode, latestUpdateAt: health.latestUpdateAt });
+    return sendSuccess(
+      res,
+      { written: result.written, mode: health.mode, latestUpdateAt: health.latestUpdateAt },
+      'success'
+    );
   } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || 'state sync failed' });
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'state sync failed', {}, 500);
   }
 });
 
@@ -1755,31 +2674,42 @@ app.get('/api/state/sync', async (req, res) => {
     const keys = keysRaw ? keysRaw.split(',').map((s) => s.trim()).filter(Boolean) : [];
     const result = await getStateBatch(keys);
     const health = await getStateHealth();
-    res.json({ ok: true, mode: health.mode, datasets: result.datasets, metadata: result.metadata });
+    return sendSuccess(res, { mode: health.mode, datasets: result.datasets, metadata: result.metadata }, 'success');
   } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || 'state fetch failed', datasets: {} });
+    return sendFail(
+      res,
+      ERROR_CODES.STATE_SYNC_ERROR,
+      error?.message || 'state fetch failed',
+      { datasets: {} },
+      500
+    );
   }
 });
 
 app.get('/api/state/health', async (req, res) => {
   try {
     const health = await getStateHealth();
-    res.json({ ok: true, ...health });
+    return sendSuccess(res, health, 'success');
   } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || 'state health failed' });
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'state health failed', {}, 500);
   }
 });
 
 app.get('/', (req, res) => {
-  res.send('✅ 信义后端服务 (Kimi 网关) 运行正常！请保持此窗口开启。');
+  return sendSuccess(
+    res,
+    { service: 'xinyi-backend', gateway: 'kimi', status: 'running' },
+    '信义后端服务运行正常'
+  );
 });
 
 const scheduleIntelJob = () => {
   const enabledRaw = String(process.env.INTEL_CRON_ENABLED ?? '').trim().toLowerCase();
   if (['false', '0', 'off', 'no'].includes(enabledRaw)) return;
 
-  const hour = Number(process.env.INTEL_CRON_HOUR || 9);
-  const minute = Number(process.env.INTEL_CRON_MINUTE || 0);
+  // Default: run before 09:00 to ensure morning briefing is ready for workday.
+  const hour = Number(process.env.INTEL_CRON_HOUR || 8);
+  const minute = Number(process.env.INTEL_CRON_MINUTE || 55);
   const defaultRegions = String(process.env.INTEL_REGIONS || '温州,苍南,平阳,龙港')
     .split(',')
     .map((s) => s.trim())

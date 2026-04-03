@@ -15,6 +15,8 @@ export interface IntelFetchResult {
   droppedStale?: number;
   droppedUndated?: number;
   rescuedUndated?: number;
+  droppedGeo?: number;
+  droppedGeoConflict?: number;
   freshnessPolicy?: {
     policy: number;
     tender: number;
@@ -36,6 +38,31 @@ const normalizeFetchError = (e: unknown) => {
   return msg;
 };
 
+const buildApiBaseCandidates = () => {
+  const configured = String(import.meta.env.VITE_API_BASE_URL || '').trim();
+  const configuredPort = Number(import.meta.env.VITE_API_PORT || 0);
+  const list = [
+    '',
+    configured,
+    configuredPort > 0 ? `http://127.0.0.1:${configuredPort}` : '',
+    'http://127.0.0.1:3101',
+    'http://127.0.0.1:3001'
+  ].filter(Boolean);
+  return Array.from(new Set(list));
+};
+
+const joinApiUrl = (base: string, path: string) => {
+  if (!base) return path;
+  return `${base.replace(/\/+$/, '')}${path}`;
+};
+
+const isLikelyWrongBackend = (res: Response, raw: any, parseError?: string) => {
+  if ([404, 405, 502, 503, 504].includes(res.status)) return true;
+  if (parseError) return true;
+  const hasEnvelope = Number.isFinite(Number(raw?.code)) || typeof raw?.ok === 'boolean';
+  return !hasEnvelope;
+};
+
 const safeReadJson = async (res: Response): Promise<{ data: any | null; error?: string }> => {
   const text = await res.text();
   if (!text) return { data: null, error: '后端返回空响应（通常是后端未启动/端口不通导致代理失败）' };
@@ -46,71 +73,107 @@ const safeReadJson = async (res: Response): Promise<{ data: any | null; error?: 
   }
 };
 
+const parseEnvelope = (raw: any) => {
+  const hasCode = Number.isFinite(Number(raw?.code));
+  const code = hasCode ? Number(raw.code) : undefined;
+  const payload = raw && typeof raw?.data === 'object' ? raw.data : raw;
+  const ok = hasCode ? code === 0 : Boolean(raw?.ok);
+  const message = String(raw?.message || raw?.error || '');
+  return { ok, code, payload, message };
+};
+
 export const intelService = {
   fetchDailySignals: async (config: IntelFetchConfig): Promise<IntelFetchResult> => {
     const timeoutMs = Number(import.meta.env.VITE_INTEL_FETCH_TIMEOUT_MS || 30000);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), Math.max(5000, timeoutMs));
+    const candidates = buildApiBaseCandidates();
     try {
-      const res = await fetch('/api/intel/fetch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          regions: config.regions,
-          industries: config.industries,
-          limit: config.limit ?? 20
-        })
-      });
-      const { data, error } = await safeReadJson(res);
-      if (!data) {
-        return {
-          ok: false,
-          signals: [],
-          source: 'server',
-          error: `${error || '后端返回异常'}（HTTP ${res.status}）`
-        };
+      let lastError = '抓取失败';
+      for (const base of candidates) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), Math.max(5000, timeoutMs));
+        try {
+          const res = await fetch(joinApiUrl(base, '/api/intel/fetch'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              regions: config.regions,
+              industries: config.industries,
+              limit: config.limit ?? 20
+            })
+          });
+          const { data, error } = await safeReadJson(res);
+          if (!data) {
+            lastError = `${error || '后端返回异常'}（HTTP ${res.status}）`;
+            if (isLikelyWrongBackend(res, null, error)) continue;
+            return { ok: false, signals: [], source: 'server', error: lastError };
+          }
+          const parsed = parseEnvelope(data);
+          const payload = parsed.payload || {};
+          const signals = Array.isArray(payload?.signals) ? payload.signals : [];
+          if (!res.ok || !parsed.ok) {
+            lastError = parsed.message || `抓取失败（HTTP ${res.status}）`;
+            if (isLikelyWrongBackend(res, data)) continue;
+            return {
+              ok: false,
+              signals,
+              source: payload?.source === 'cache' ? 'cache' : 'server',
+              stale: Boolean(payload?.stale),
+              error: lastError,
+              droppedStale: Number(payload?.droppedStale || 0),
+              droppedUndated: Number(payload?.droppedUndated || 0),
+              rescuedUndated: Number(payload?.rescuedUndated || 0),
+              droppedGeo: Number(payload?.droppedGeo || 0),
+              droppedGeoConflict: Number(payload?.droppedGeoConflict || 0)
+            };
+          }
+          return {
+            ok: true,
+            signals,
+            source: 'server',
+            stale: false,
+            droppedStale: Number(payload?.droppedStale || 0),
+            droppedUndated: Number(payload?.droppedUndated || 0),
+            rescuedUndated: Number(payload?.rescuedUndated || 0),
+            droppedGeo: Number(payload?.droppedGeo || 0),
+            droppedGeoConflict: Number(payload?.droppedGeoConflict || 0),
+            freshnessPolicy: payload?.freshnessPolicy
+          };
+        } finally {
+          clearTimeout(timeout);
+        }
       }
-      const ok = Boolean(data?.ok);
-      const signals = Array.isArray(data?.signals) ? data.signals : [];
-      if (!ok) {
-        return {
-          ok: false,
-          signals,
-          source: data?.source === 'cache' ? 'cache' : 'server',
-          stale: Boolean(data?.stale),
-          error: data?.error || `抓取失败（HTTP ${res.status}）`,
-          droppedStale: Number(data?.droppedStale || 0),
-          droppedUndated: Number(data?.droppedUndated || 0),
-          rescuedUndated: Number(data?.rescuedUndated || 0)
-        };
-      }
-      return {
-        ok: true,
-        signals,
-        source: 'server',
-        stale: false,
-        droppedStale: Number(data?.droppedStale || 0),
-        droppedUndated: Number(data?.droppedUndated || 0),
-        rescuedUndated: Number(data?.rescuedUndated || 0),
-        freshnessPolicy: data?.freshnessPolicy
-      };
+      return { ok: false, signals: [], source: 'server', error: lastError };
     } catch (e) {
       return { ok: false, signals: [], source: 'server', error: normalizeFetchError(e) };
-    } finally {
-      clearTimeout(timeout);
     }
   },
   fetchLatestSignals: async (): Promise<{ ok: boolean; lastRunAt?: string; regions?: string[]; industries?: string[]; signals: MarketSignal[]; error?: string }> => {
     try {
-      const res = await fetch('/api/intel/latest');
-      if (!res.ok) return { ok: false, signals: [], error: `拉取失败（HTTP ${res.status}）` };
-      const { data, error } = await safeReadJson(res);
-      if (!data) return { ok: false, signals: [], error: error || '后端返回异常' };
-      const signals = Array.isArray(data?.signals) ? data.signals : [];
-      return { ok: true, signals, lastRunAt: data?.lastRunAt || '', regions: data?.regions || [], industries: data?.industries || [] };
+      const candidates = buildApiBaseCandidates();
+      let lastError = '拉取失败';
+      for (const base of candidates) {
+        const res = await fetch(joinApiUrl(base, '/api/intel/latest'));
+        const { data, error } = await safeReadJson(res);
+        if (!data) {
+          lastError = error || `拉取失败（HTTP ${res.status}）`;
+          if (isLikelyWrongBackend(res, null, error)) continue;
+          return { ok: false, signals: [], error: lastError };
+        }
+        const parsed = parseEnvelope(data);
+        if (!res.ok || !parsed.ok) {
+          lastError = parsed.message || `拉取失败（HTTP ${res.status}）`;
+          if (isLikelyWrongBackend(res, data)) continue;
+          return { ok: false, signals: [], error: lastError };
+        }
+        const payload = parsed.payload || {};
+        const signals = Array.isArray(payload?.signals) ? payload.signals : [];
+        return { ok: true, signals, lastRunAt: payload?.lastRunAt || '', regions: payload?.regions || [], industries: payload?.industries || [] };
+      }
+      return { ok: false, signals: [], error: lastError };
     } catch (e) {
       return { ok: false, signals: [], error: normalizeFetchError(e) };
     }
-  }
+  },
+  
 };

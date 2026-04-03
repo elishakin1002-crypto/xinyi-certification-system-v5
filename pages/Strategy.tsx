@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { 
   Target, 
   TrendingUp, 
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { StrategicTask } from '../types';
+import { useLocation } from 'react-router-dom';
 
 // Fix: Component defined outside to prevent re-renders
 // Explicitly using React.FC to ensure key prop is handled correctly by TS
@@ -97,6 +98,9 @@ const Strategy = () => {
   const { strategicInsight, isAnalyzingStrategy, runDeepAnalysis, strategicTasks, addStrategicTask, generateStrategicTasksFromInsight } = useApp();
   const [activeTab, setActiveTab] = useState<'analysis' | 'execution'>('analysis');
   const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [dashboardFocusLabel, setDashboardFocusLabel] = useState('');
+  const [focusedStatus, setFocusedStatus] = useState<'Pending' | 'In Progress' | 'Completed' | ''>('');
+  const location = useLocation();
 
   // Use AI Real Data if available, else Mock for initial render or fallback
   const swotData = strategicInsight ? {
@@ -137,6 +141,39 @@ const Strategy = () => {
           type: 'Market'
       });
       setNewTaskTitle('');
+  };
+
+  useEffect(() => {
+      const state: any = location.state || {};
+      const focus = state.dashboardFocus;
+      const tabQuery = String(new URLSearchParams(location.search).get('tab') || '').trim();
+
+      if (focus?.type === 'analysis' || tabQuery === 'analysis') {
+          setActiveTab('analysis');
+          setFocusedStatus('');
+          setDashboardFocusLabel('战略分析视图');
+      } else if (focus?.type === 'execution_status') {
+          setActiveTab('execution');
+          const nextStatus = String(focus.status || '') as 'Pending' | 'In Progress' | 'Completed' | '';
+          setFocusedStatus(nextStatus);
+          setDashboardFocusLabel(nextStatus === 'Pending' ? '待启动战役' : nextStatus === 'In Progress' ? '攻坚中战役' : '已达成战役');
+      } else if (focus?.type === 'execution' || tabQuery === 'execution') {
+          setActiveTab('execution');
+          setFocusedStatus('');
+          setDashboardFocusLabel('战略执行看板');
+      }
+
+      if (state.dashboardFocus) {
+          window.history.replaceState({}, document.title);
+      }
+  }, [location.state, location.search]);
+
+  const pendingTasks = useMemo(() => strategicTasks.filter(t => t.status === 'Pending'), [strategicTasks]);
+  const inProgressTasks = useMemo(() => strategicTasks.filter(t => t.status === 'In Progress'), [strategicTasks]);
+  const completedTasks = useMemo(() => strategicTasks.filter(t => t.status === 'Completed'), [strategicTasks]);
+  const getColumnFocusClass = (status: 'Pending' | 'In Progress' | 'Completed') => {
+      if (!focusedStatus) return '';
+      return focusedStatus === status ? 'ring-2 ring-indigo-300 shadow-md' : 'opacity-45';
   };
 
   return (
@@ -188,6 +225,23 @@ const Strategy = () => {
           </button>
         </div>
       </div>
+      {dashboardFocusLabel && (
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+            工作台焦点：{dashboardFocusLabel}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setDashboardFocusLabel('');
+              setFocusedStatus('');
+            }}
+            className="text-xs font-bold text-gray-500 hover:text-gray-700"
+          >
+            清除焦点
+          </button>
+        </div>
+      )}
 
       {/* Main Analysis Content */}
       {activeTab === 'analysis' && (
@@ -293,28 +347,28 @@ const Strategy = () => {
                       </div>
 
                       {/* Column 2: In Progress */}
-                      <div className="flex-1 flex flex-col bg-blue-50/30 rounded-2xl border border-blue-100">
+                      <div className={`flex-1 flex flex-col bg-blue-50/30 rounded-2xl border border-blue-100 transition-all ${getColumnFocusClass('In Progress')}`}>
                           <div className="p-4 flex justify-between items-center border-b border-blue-100">
                               <h3 className="font-black text-blue-600 uppercase text-xs tracking-widest flex items-center">
                                   <Clock className="w-3 h-3 mr-2" /> 攻坚中 (In Progress)
                               </h3>
-                              <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full font-bold">{strategicTasks.filter(t => t.status === 'In Progress').length}</span>
+                              <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full font-bold">{inProgressTasks.length}</span>
                           </div>
                           <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
-                              {strategicTasks.filter(t => t.status === 'In Progress').map(task => <TaskCard key={task.id} task={task} />)}
+                              {inProgressTasks.map(task => <TaskCard key={task.id} task={task} />)}
                           </div>
                       </div>
 
                       {/* Column 3: Completed */}
-                      <div className="flex-1 flex flex-col bg-green-50/30 rounded-2xl border border-green-100">
+                      <div className={`flex-1 flex flex-col bg-green-50/30 rounded-2xl border border-green-100 transition-all ${getColumnFocusClass('Completed')}`}>
                           <div className="p-4 flex justify-between items-center border-b border-green-100">
                               <h3 className="font-black text-green-600 uppercase text-xs tracking-widest flex items-center">
                                   <CheckCircle2 className="w-3 h-3 mr-2" /> 已达成 (Completed)
                               </h3>
-                              <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">{strategicTasks.filter(t => t.status === 'Completed').length}</span>
+                              <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">{completedTasks.length}</span>
                           </div>
                           <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
-                              {strategicTasks.filter(t => t.status === 'Completed').map(task => <TaskCard key={task.id} task={task} />)}
+                              {completedTasks.map(task => <TaskCard key={task.id} task={task} />)}
                           </div>
                       </div>
                   </div>

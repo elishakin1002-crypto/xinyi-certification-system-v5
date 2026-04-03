@@ -118,6 +118,7 @@ export interface CertificateDetail {
   issueDate?: string;
   expiryDate: string;
   issuingBody?: string;
+  scope?: string;
   status: 'Valid' | 'Expiring' | 'Expired';
   cycleRule?: string; 
   auditPlan?: AuditNode[];
@@ -271,7 +272,7 @@ export interface Reminder {
   type: 'task' | 'payment' | 'expire' | 'risk' | 'opportunity';
   isRead: boolean;
   linkId?: string;
-  linkType?: 'lead' | 'customer' | 'project' | 'contract' | 'intel';
+  linkType?: 'lead' | 'customer' | 'project' | 'contract' | 'intel' | 'audit';
   forRole?: RoleID[]; // 提醒针对的角色
   forUserIds?: string[]; // 优先级高于 forRole
   channels?: NotificationChannel[];
@@ -282,7 +283,7 @@ export type ReminderSeverity = 'high' | 'medium' | 'low';
 
 export interface AggregatedReminder {
   id: string;
-  linkType: 'lead' | 'customer' | 'project' | 'contract' | 'intel';
+  linkType: 'lead' | 'customer' | 'project' | 'contract' | 'intel' | 'audit';
   linkId: string;
   projectId?: string;
   projectName?: string;
@@ -442,19 +443,43 @@ export interface Settlement {
   notes?: string;
 }
 
+export interface AuditEvidence {
+  id: string;
+  name: string;
+  size: string;
+  type: string;
+  uploadDate: string;
+  uploadedBy?: string;
+  note?: string;
+  url?: string;
+  isExample?: boolean;
+}
+
+export interface AuditVerification {
+  verifiedBy: string;
+  verifiedAt: string;
+  notes: string;
+}
+
 export interface AuditIssue {
   id: string;
   customerName: string;
+  customerId?: string;
+  projectId?: string;
+  contractId?: string;
   findings: string;
   severity: 'Minor' | 'Major' | 'Observation';
   status: 'Open' | 'Rectifying' | 'Verifying' | 'Closed';
   auditor: string;
-  // Added fields to fix "Property does not exist" errors in Audit.tsx
   rectificationPlan?: string;
   auditType?: string;
   createDate?: string;
   deadline?: string;
   contractRef?: string;
+  rectificationTaskId?: string;
+  evidences?: AuditEvidence[];
+  verification?: AuditVerification;
+  knowledgeDocId?: string;
 }
 
 export interface KnowledgeDoc {
