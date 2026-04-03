@@ -22,3 +22,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment variables and sensitive files
+.env
+.env.local
+.env.*.local
+.env.bak
+.env.local.bak*
+.env.*.bak
+*.env.backup
+*.env.local.backup
