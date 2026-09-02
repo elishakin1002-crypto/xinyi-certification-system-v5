@@ -378,6 +378,24 @@ const initPostgresAuthStore = async () => {
     );
   `);
 
+  /*
+    会话来源字段。
+
+    ⚠️ **表结构在两个地方定义**：这里，和 db/migrations/。
+    生产库走迁移，而测试和全新环境走的是上面这段 CREATE TABLE ——
+    2026-09-02 加 ip/user_agent 时只改了迁移，结果生产正常、
+    测试全线报「column "ip" does not exist」。
+
+    所以新增列要两边都写。用 ALTER ... IF NOT EXISTS 而不是塞进 CREATE TABLE：
+    CREATE TABLE IF NOT EXISTS 对**已存在**的表什么都不做，
+    写在里面对老库无效，只有新库才有 —— 那就是另一种版本不一致。
+    tests/session-origin.test.js 会检查两边同步。
+  */
+  await pool.query(`ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS ip           TEXT NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS user_agent   TEXT NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions (user_id);`);
+
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at
     ON auth_sessions (expires_at);
@@ -1014,7 +1032,16 @@ const isAccountExpired = (expiresAt) => {
   return d < todayLocal();
 };
 
-const authenticateUser = async ({ account, password }) => {
+/**
+ * 截断来源信息。
+ *
+ * User-Agent 可以很长，而且是**客户端能随便写的字符串** ——
+ * 不截断的话，一次登录就能往库里塞几十 KB。
+ * 记录来源是为了「事后能认出是哪台设备」，够用就行。
+ */
+const trimOrigin = (v, max) => String(v || '').trim().slice(0, max);
+
+const authenticateUser = async ({ account, password, ip = '', userAgent = '' }) => {
   await initAuthStore();
   if (backend.mode === 'postgres' && pool) {
     const user = await findUserByAccountPostgres(account);
@@ -1032,10 +1059,10 @@ const authenticateUser = async ({ account, password }) => {
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
     await pool.query(
       `
-        INSERT INTO auth_sessions (id, user_id, created_at, expires_at)
-        VALUES ($1, $2, NOW(), $3::timestamptz);
+        INSERT INTO auth_sessions (id, user_id, created_at, expires_at, ip, user_agent, last_seen_at)
+        VALUES ($1, $2, NOW(), $3::timestamptz, $4, $5, NOW());
       `,
-      [sessionId, user.id, expiresAt]
+      [sessionId, user.id, expiresAt, trimOrigin(ip, 64), trimOrigin(userAgent, 300)]
     );
     return { sessionId, user: toUserProfileFromRow(user), expiresAt };
   }
@@ -1104,11 +1131,17 @@ const getSessionUser = async (sessionId) => {
     let expiresAt = new Date(row.expires_at).toISOString();
     let renewed = false;
     if (shouldRenewSession(expiresAt)) {
+      /*
+        顺带更新 last_seen_at。
+        只在续期时写，不是每个请求都写 —— 每请求一次 UPDATE，
+        一个人开着页面就是持续的写入压力，而「最后活跃」精确到分钟毫无意义。
+        续期是有节流的（shouldRenewSession），正好蹭它的节奏。
+      */
       expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
-      await pool.query('UPDATE auth_sessions SET expires_at = $2::timestamptz WHERE id = $1;', [
-        String(sessionId || ''),
-        expiresAt
-      ]);
+      await pool.query(
+        'UPDATE auth_sessions SET expires_at = $2::timestamptz, last_seen_at = NOW() WHERE id = $1;',
+        [String(sessionId || ''), expiresAt]
+      );
       renewed = true;
     }
     return { user: toUserProfileFromRow(row), expiresAt, renewed };

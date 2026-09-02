@@ -28,6 +28,25 @@ test('视角切换按角色收紧，不再按"选项够不够两个"判断', () 
     '还留着只看选项数量的旧条件');
 });
 
+test('巡检账号能看到全部四个工作台，不只是自己拥有的角色', () => {
+  /*
+    2026-09-02：第一版只按 availableRoles 生成选项，
+    结果系统管理员账号（只有 SYS_ADMIN 一个角色）只生成一项，
+    菜单直接不显示 —— 而这个账号恰恰最需要
+    「顾问看到的是什么样、财务看到的是什么样」。
+
+    修法是给巡检账号补上没覆盖到的 persona，标注「仅看板」：
+    只换工作台，权限一点不动。
+  */
+  const src = read('components/Layout.tsx');
+  assert.match(src, /if \(canSwitchView\) \{/,
+    'viewOptions 里没有针对巡检账号的分支');
+  assert.match(src, /Object\.keys\(personaDisplayName\)/,
+    '没有遍历全部 persona —— 只有自己角色对应的那个工作台能看，等于没法巡检');
+  assert.match(src, /仅看板/,
+    '没有标注「仅看板」，会被误解成「以该角色身份预览」');
+});
+
 test('顾问、财务、总助都不在视角切换名单里', () => {
   const src = read('components/Layout.tsx');
   const line = src.match(/const VIEW_SWITCH_ROLES\s*=\s*\[([^\]]*)\]/)?.[1] || '';

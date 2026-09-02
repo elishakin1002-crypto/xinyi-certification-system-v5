@@ -169,28 +169,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const currentRoleDisplayName = personaDisplayName[currentViewPersona] || '老板';
   const availableRoles = SYSTEM_ROLES.filter(r => currentUser.roles.includes(r.id));
   const isFinanceOnlyIdentity = currentUser.roles.length === 1 && currentUser.roles[0] === 'FINANCE';
-  const viewOptions = useMemo(() => {
-    const base: ViewOption[] = availableRoles.map(role => ({
-      key: `role-${role.id}`,
-      mode: 'role' as const,
-      roleId: role.id,
-      persona: roleToPersona[role.id],
-      label: formatViewDisplayName(role.name)
-    }));
-    const hasSales = base.some(item => item.persona === 'sales');
-    if (!isFinanceOnlyIdentity && !hasSales && availablePersonas.includes('sales')) {
-      base.push({
-        key: 'persona-sales',
-        mode: 'persona' as const,
-        roleId: null,
-        persona: 'sales',
-        // 你的账号没有「销售」这个角色，所以这一项只切工作台看板，不改权限。
-        // 标注出来避免误以为是"以销售身份预览"。
-        label: '销售（仅看板）'
-      });
-    }
-    return base;
-  }, [availableRoles, roleToPersona, isFinanceOnlyIdentity, availablePersonas]);
 
   /*
     视角切换只给老板和系统管理员。
@@ -204,13 +182,63 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     选完顶部还写「当前视角：销售」。一个顾问点进去，会以为自己能变成销售，
     或者以为公司给了他更大的权限。等他发现点了没用，第一反应是"系统坏了"。
 
-    ── 为什么老板留着 ────────────────────────────────────────────
-    他要能看到各个角色分别看到什么、有哪些功能，才好判断权限配得对不对。
+    ── 为什么老板和系统管理员留着 ────────────────────────────────
+    他们要能看到各个角色分别看到什么、有哪些功能，才好判断权限配得对不对。
     这是**巡检工具**，不是身份切换 —— 权限始终按账号本身的角色判定，
     服务端 enforce 模式下切视角也拿不到多余的数据。
   */
   const VIEW_SWITCH_ROLES = ['ADMIN', 'SYS_ADMIN'];
   const canSwitchView = currentUser.roles.some(role => VIEW_SWITCH_ROLES.includes(role));
+
+  const viewOptions = useMemo(() => {
+    const base: ViewOption[] = availableRoles.map(role => ({
+      key: `role-${role.id}`,
+      mode: 'role' as const,
+      roleId: role.id,
+      persona: roleToPersona[role.id],
+      label: formatViewDisplayName(role.name)
+    }));
+
+    if (canSwitchView) {
+      /*
+        巡检账号要能看**全部四个工作台**，不只是自己拥有的角色。
+
+        系统管理员账号只有 SYS_ADMIN 一个角色，只按 availableRoles 生成的话
+        就只有一项，菜单直接不显示 —— 而这个账号恰恰是最需要
+        「顾问看到的是什么样、财务看到的是什么样」的那个。
+
+        没有对应角色的用 persona 模式，只换工作台不动权限，标注「仅看板」。
+        标注很重要：不写的话会以为是"以顾问身份预览"，
+        而实际上权限一点没变，看到的数据还是自己那份。
+      */
+      const covered = new Set(base.map(item => item.persona));
+      (Object.keys(personaDisplayName) as DashboardPersona[]).forEach(persona => {
+        if (covered.has(persona)) return;
+        base.push({
+          key: `persona-${persona}`,
+          mode: 'persona' as const,
+          roleId: null,
+          persona,
+          label: `${personaDisplayName[persona]}（仅看板）`
+        });
+      });
+      return base;
+    }
+
+    const hasSales = base.some(item => item.persona === 'sales');
+    if (!isFinanceOnlyIdentity && !hasSales && availablePersonas.includes('sales')) {
+      base.push({
+        key: 'persona-sales',
+        mode: 'persona' as const,
+        roleId: null,
+        persona: 'sales',
+        // 你的账号没有「销售」这个角色，所以这一项只切工作台看板，不改权限。
+        // 标注出来避免误以为是"以销售身份预览"。
+        label: '销售（仅看板）'
+      });
+    }
+    return base;
+  }, [availableRoles, roleToPersona, isFinanceOnlyIdentity, availablePersonas, canSwitchView]);
   const sortedUsers = [...userProfiles].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
   const canSwitchCurrentUser = !isAuthRequired;
   const searchableScopes = useMemo(() => resolveSearchScopesByPermissions(userPermissions), [userPermissions]);

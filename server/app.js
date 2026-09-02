@@ -541,7 +541,20 @@ app.post('/api/auth/login', async (req, res) => {
     if (!account || !password) {
       return sendFail(res, ERROR_CODES.PARAM_ERROR, 'account and password are required', {}, 400);
     }
-    const result = await authenticateUser({ account, password });
+    /*
+      记下这次登录从哪来。
+
+      取 IP 必须优先看 X-Forwarded-For：生产上前面有 Nginx 反向代理，
+      req.ip 拿到的永远是 127.0.0.1 —— 记一堆 127.0.0.1 等于什么都没记。
+      取第一段是因为 XFF 是「客户端, 代理1, 代理2」的链，第一段才是真正的来源。
+    */
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    const result = await authenticateUser({
+      account,
+      password,
+      ip: forwarded || req.ip || '',
+      userAgent: String(req.headers['user-agent'] || '')
+    });
     if (!result) {
       return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Invalid account or password', {}, 403);
     }
