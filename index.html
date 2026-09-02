@@ -5,16 +5,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>信义认证系统 V5.0</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <!--
+      这几个库以前是从 cdn.tailwindcss.com 和 cdnjs.cloudflare.com 拉的。
+      改成本地是因为：从上海机房测 cdnjs 一个文件要 4.4 秒，同事在温州用家里宽带
+      只会更慢。最坏情况不是「慢」而是「白板」—— Tailwind 没加载，整个页面没有样式；
+      xlsx/pdf 没加载，合同解析静默失效，用的人只觉得「这功能坏了」。
+      文件都在 public/vendor/，版本号写在 package.json 的注释里，升级要手动替换。
+    -->
+    <script src="/vendor/tailwind.min.js"></script>
+    <script src="/vendor/mammoth.browser.min.js"></script>
+    <script src="/vendor/xlsx.full.min.js"></script>
+    <script src="/vendor/pdf.min.js"></script>
+    <!-- Inter 只保留 latin/latin-ext 两个子集，136KB。
+         中文不下载字体：Noto Sans SC 完整包好几 MB，而 Mac 有苹方、Windows 有微软雅黑，
+         系统自带的中文字体本来就够好，为它等几秒不值得。 -->
+    <link rel="stylesheet" href="/fonts/inter.css" />
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-      @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
-      
       body {
-        font-family: 'Inter', 'Noto Sans SC', sans-serif;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                     'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+                     'Helvetica Neue', Helvetica, Arial, sans-serif;
         background-color: #f3f4f6;
         margin: 0;
         padding: 0;
@@ -91,7 +101,8 @@
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
+<!-- 原来这里有 <link rel="stylesheet" href="/index.css">，但仓库里从来没有这个文件，
+     每次打开页面都白白 404 一次。删掉。 -->
 </head>
   <body>
     <div id="root"></div>

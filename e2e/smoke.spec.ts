@@ -2,12 +2,20 @@ import { expect, Page, test } from '@playwright/test';
 
 const ignoredConsolePatterns = [
   /favicon/i,
-  /cdn\.tailwindcss\.com/i,
   /cdn.*source map/i,
   /Failed to load resource/i
 ];
 
-const ignoredRequestHosts = [
+const ignoredRequestHosts: string[] = [];
+
+/**
+ * 这些域名以前是白名单——CDN 拉不到就当没看见。
+ *
+ * 现在反过来：Tailwind、xlsx、pdf.js、字体全部改成从自己服务器发，
+ * **再出现对这些域名的请求就是回归**。国内访问它们时快时慢，
+ * 白名单会让「同事那边页面白板」这类问题在测试里完全看不出来。
+ */
+const forbiddenExternalHosts = [
   'cdn.tailwindcss.com',
   'cdnjs.cloudflare.com',
   'fonts.googleapis.com',
@@ -17,6 +25,17 @@ const ignoredRequestHosts = [
 const collectPageErrors = (page: Page) => {
   const consoleErrors: string[] = [];
   const failedLocalRequests: string[] = [];
+  const externalRequests: string[] = [];
+
+  // 监听 request 而不是 requestfailed —— 关键是「有没有发出去」，
+  // 不是「有没有失败」。在网好的机器上跑测试，外部请求会成功，
+  // 只盯失败的话这条回归永远抓不到。
+  page.on('request', (request) => {
+    const host = new URL(request.url()).hostname;
+    if (forbiddenExternalHosts.includes(host)) {
+      externalRequests.push(`${request.method()} ${request.url()}`);
+    }
+  });
 
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
@@ -34,6 +53,11 @@ const collectPageErrors = (page: Page) => {
     assertClean() {
       expect(consoleErrors, `Unexpected console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
       expect(failedLocalRequests, `Unexpected failed local requests:\n${failedLocalRequests.join('\n')}`).toEqual([]);
+      expect(
+        externalRequests,
+        `页面又去请求外部 CDN 了，国内访问会时快时慢甚至白板。\n` +
+        `这些资源应该从 public/vendor/ 或 public/fonts/ 本地发：\n${externalRequests.join('\n')}`
+      ).toEqual([]);
     }
   };
 };
