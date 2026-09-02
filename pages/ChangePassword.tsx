@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { KeyRound, Loader2, Save, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, Loader2, Save, ShieldCheck } from 'lucide-react';
 import { authService, AuthUser } from '../services/authService';
 
 type ChangePasswordProps = {
@@ -11,6 +11,16 @@ const ChangePassword: React.FC<ChangePasswordProps> = ({ user, onChanged }) => {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  /*
+    这一页比登录页更需要能看见。
+    同事是第一次登录被强制跳过来的：上面要照抄一串随机初始密码，
+    下面要自己想一个再确认一遍。三个框全是圆点，
+    最常见的失败是「新密码和确认不一致」—— 而屏幕上没有任何线索能看出差在哪。
+
+    一个开关同时控制三个框，而不是每个框各一个眼睛：
+    要解决的正是「两个框对不对得上」，分开切换反而不好比。
+  */
+  const [showPasswords, setShowPasswords] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -53,13 +63,23 @@ const ChangePassword: React.FC<ChangePasswordProps> = ({ user, onChanged }) => {
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4 mt-8">
+          <div className="flex justify-end -mb-1">
+            <button
+              type="button"
+              onClick={() => setShowPasswords((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+            >
+              {showPasswords ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {showPasswords ? '隐藏密码' : '显示密码'}
+            </button>
+          </div>
           <label className="block">
             <span className="text-xs font-black text-slate-500 uppercase tracking-wider">当前密码</span>
             <div className="mt-2 relative">
               <KeyRound className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
               <input
                 autoComplete="current-password"
-                type="password"
+                type={showPasswords ? 'text' : 'password'}
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-12 pr-4 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
                 value={currentPassword}
                 onChange={(event) => setCurrentPassword(event.target.value)}
@@ -71,7 +91,7 @@ const ChangePassword: React.FC<ChangePasswordProps> = ({ user, onChanged }) => {
             <span className="text-xs font-black text-slate-500 uppercase tracking-wider">新密码</span>
             <input
               autoComplete="new-password"
-              type="password"
+              type={showPasswords ? 'text' : 'password'}
               className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 px-4 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
               value={newPassword}
               onChange={(event) => setNewPassword(event.target.value)}
@@ -82,7 +102,7 @@ const ChangePassword: React.FC<ChangePasswordProps> = ({ user, onChanged }) => {
             <span className="text-xs font-black text-slate-500 uppercase tracking-wider">确认新密码</span>
             <input
               autoComplete="new-password"
-              type="password"
+              type={showPasswords ? 'text' : 'password'}
               className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 px-4 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
               value={confirmPassword}
               onChange={(event) => setConfirmPassword(event.target.value)}

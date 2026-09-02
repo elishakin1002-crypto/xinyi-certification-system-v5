@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LockKeyhole, Loader2, LogIn, ShieldCheck, User } from 'lucide-react';
+import { Eye, EyeOff, LockKeyhole, Loader2, LogIn, ShieldCheck, User } from 'lucide-react';
 import { authService, AuthUser } from '../services/authService';
 
 type LoginProps = {
@@ -9,6 +9,13 @@ type LoginProps = {
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
+  /*
+    初始密码是随机 12 位，同事得照着纸条或微信里的一串字符敲。
+    敲错了看到的只有一排圆点，只能整行删掉重来 ——
+    连着两三次就会怀疑是不是密码本身错了，然后来问。
+    给一个能看一眼的开关，比什么都省事。默认仍然是隐藏的。
+  */
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -89,12 +96,24 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 <LockKeyhole className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
                 <input
                   autoComplete="current-password"
-                  type="password"
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-12 pr-4 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+                  type={showPassword ? 'text' : 'password'}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-12 pr-12 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   placeholder="请输入密码"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  // type="button" 是必须的：form 里的 button 默认 type="submit"，
+                  // 不写的话点一下眼睛就直接提交登录了。
+                  aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                  title={showPassword ? '隐藏密码' : '显示密码'}
+                  tabIndex={-1}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/60"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </label>
 

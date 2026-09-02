@@ -191,6 +191,26 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     }
     return base;
   }, [availableRoles, roleToPersona, isFinanceOnlyIdentity, availablePersonas]);
+
+  /*
+    视角切换只给老板和系统管理员。
+
+    ── 为什么不给其他人 ──────────────────────────────────────────
+    原来的判断是 viewOptions.length > 1，于是一个只有「咨询顾问」角色的同事
+    也会看到这个菜单 —— 因为系统给他补了一项「销售（仅看板）」，凑够了两项。
+
+    问题不是他能看到销售看板（那本来就不改权限），
+    问题是**这个控件长得像"切换身份"**：菜单叫「切换视角」，选项前面是眼睛图标，
+    选完顶部还写「当前视角：销售」。一个顾问点进去，会以为自己能变成销售，
+    或者以为公司给了他更大的权限。等他发现点了没用，第一反应是"系统坏了"。
+
+    ── 为什么老板留着 ────────────────────────────────────────────
+    他要能看到各个角色分别看到什么、有哪些功能，才好判断权限配得对不对。
+    这是**巡检工具**，不是身份切换 —— 权限始终按账号本身的角色判定，
+    服务端 enforce 模式下切视角也拿不到多余的数据。
+  */
+  const VIEW_SWITCH_ROLES = ['ADMIN', 'SYS_ADMIN'];
+  const canSwitchView = currentUser.roles.some(role => VIEW_SWITCH_ROLES.includes(role));
   const sortedUsers = [...userProfiles].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
   const canSwitchCurrentUser = !isAuthRequired;
   const searchableScopes = useMemo(() => resolveSearchScopesByPermissions(userPermissions), [userPermissions]);
@@ -399,8 +419,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                         <p className="text-[11px] text-gray-400 mt-0.5">当前视角：{currentRoleDisplayName}</p>
                       </div>
 
-                      {/* 视角切换：只有拥有多个角色的账号才需要（通常是管理员演示时用） */}
-                      {viewOptions.length > 1 && (
+                      {/* 视角切换：只给老板和系统管理员，理由见上面 canSwitchView 处的注释 */}
+                      {canSwitchView && viewOptions.length > 1 && (
                         <div className="py-1 border-b border-gray-50">
                           <div className="px-3 pt-1 pb-1.5 text-[10px] font-black text-gray-400 tracking-widest">
                             切换视角
