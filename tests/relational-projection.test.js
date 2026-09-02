@@ -80,20 +80,44 @@ test('三个数据集都能投影进对应的表', async () => {
   assert.equal(rows[0].tasks[0].title, 'A');
 });
 
-test('数据集里删掉的记录，表里也要删掉', async () => {
-  // 不删就成了幽灵行，将来 SQL 统计会多算
-  await projectToRelational({
-    project_work_logs_v1: [
-      { id: 'WLOG-A', projectId: 'P-1', logDate: '2026-08-20', actualHours: 1, workContent: 'a' },
-      { id: 'WLOG-B', projectId: 'P-1', logDate: '2026-08-20', actualHours: 1, workContent: 'b' },
-    ],
-  });
-  await projectToRelational({
-    project_work_logs_v1: [{ id: 'WLOG-A', projectId: 'P-1', logDate: '2026-08-20', actualHours: 1, workContent: 'a' }],
-  });
+const twoLogs = [
+  { id: 'WLOG-A', projectId: 'P-1', logDate: '2026-08-20', actualHours: 1, workContent: 'a' },
+  { id: 'WLOG-B', projectId: 'P-1', logDate: '2026-08-20', actualHours: 1, workContent: 'b' },
+];
+const oneLog = [twoLogs[0]];
+
+test('普通同步不删行 —— 落后的浏览器不能删掉同事刚记的数据', async () => {
+  /*
+    ── 2026-09-02 这条测试的期望被**有意反转**了 ─────────────────
+    原来是「数据集里删掉的记录，表里也要删掉」。单人使用时那是对的。
+
+    多人同时用就不是了：每个浏览器推的是自己 localStorage 里的全量数组，
+    而各人副本互不相通（状态同步的回读默认关闭，没人从服务端回读）。
+      小敏 10:00 记一条工作日志 → 表里 48 行
+      梁杰 10:05 改了别的东西   → 推自己那份 47 条 → 小敏那条被删，无报错
+
+    线上已经差点发生：project_work_logs_v1 推上来是空数组而表里有 47 行，
+    只因为下面那条「空数组不删」的保护才没删成。
+    浏览器里当时要是有 1 条而不是 0 条，另外 46 条就没了。
+
+    两害相权：幽灵行是统计误差，事后能对账清理；
+    删掉同事的记录是数据事故，找不回来。
+  */
+  await projectToRelational({ project_work_logs_v1: twoLogs });
+  await projectToRelational({ project_work_logs_v1: oneLog });
+
+  const { rows } = await pool.query('select id from project_work_logs order by id');
+  assert.deepEqual(rows.map((r) => r.id), ['WLOG-A', 'WLOG-B'],
+    'B 被删掉了 —— 落后一步的浏览器就能删掉别人的数据');
+});
+
+test('明确传 allowClear 时才删 —— 清理脚本要有路可走', async () => {
+  // 止血不能把合法的清理路径一起堵死，否则只能靠人手工进库删
+  await projectToRelational({ project_work_logs_v1: twoLogs });
+  await projectToRelational({ project_work_logs_v1: oneLog }, { allowClear: true });
 
   const { rows } = await pool.query('select id from project_work_logs');
-  assert.deepEqual(rows.map((r) => r.id), ['WLOG-A'], 'B 被删了但表里还留着');
+  assert.deepEqual(rows.map((r) => r.id), ['WLOG-A'], 'allowClear 也删不掉，清理脚本没法用了');
 });
 
 test('空数组不清表——分不清「全删了」和「还没加载完」', async () => {
@@ -193,4 +217,21 @@ test('走仓储读回来的形状和前端用的一致', async () => {
   assert.equal(list[0].workContent, '现场辅导');
   assert.equal(list[0].taskId, 'T-9');
   assert.equal(list[0].logDate, '2026-08-20');
+});
+
+test('前端同步不能删关系表的行 —— 多人同时用时那是数据事故', async () => {
+  /*
+    2026-09-02 线上现场：project_work_logs_v1 推上来是空数组，表里有 47 行。
+    只因为「空数组不删」那条保护才没删成。浏览器里当时要是有 1 条而不是 0 条，
+    另外 46 条会被 DELETE ... WHERE NOT IN (那 1 条) 删掉。
+
+    根因：每个浏览器推的是自己 localStorage 里的全量数组，
+    而各人副本互不相通（状态同步的回读默认关闭）。
+    副本落后的那个人，一次无关的操作就能删掉别人刚记的数据。
+  */
+  const src = fs.readFileSync(path.resolve(__dirname, '../server/services/relationalProjection.js'), 'utf8');
+  assert.match(src, /if \(ids\.length > 0 && allowClear\)/,
+    '投影仍会在普通写入时删行 —— 落后的浏览器能删掉同事刚记的数据');
+  assert.doesNotMatch(src, /if \(ids\.length > 0\) \{\s*\n\s*const r = await client\.query\(\s*\n?\s*`DELETE/,
+    '还留着无条件删除的旧分支');
 });
