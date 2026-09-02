@@ -8,7 +8,7 @@ import { authService } from '../services/authService';
 import { dataService } from '../services/dataService';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { SYSTEM_ROLES } from '../constants';
-import { DashboardPersona, RoleID } from '../types';
+import { DashboardPersona, RoleID, AggregatedReminder } from '../types';
 import {
   buildGlobalSearchGroups,
   buildGlobalSearchHits,
@@ -32,6 +32,7 @@ type ViewOption = {
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
+  const [isBellOpen, setIsBellOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -95,6 +96,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     availablePersonas,
     resolveDashboardPersona,
     visibleReminders,
+    aggregatedReminders,
+    markRemindersRead,
+    markAllRemindersRead,
     leads,
     customers,
     contracts,
@@ -292,6 +296,139 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     navigate({ pathname: location.pathname, search: search ? `?${search}` : '' });
   };
 
+  /*
+    提醒面板。
+
+    ── 为什么是下拉面板，不是跳页面 ──────────────────────────────
+    提醒的本质是「打断」：人正在录合同的时候瞄一眼红点。
+    跳走会丢掉手上的活，看完还得自己找回来 ——
+    结果就是大家索性不点它，红点变成永久装饰。
+
+    ── 为什么按对象聚合，不按条罗列 ──────────────────────────────
+    线上现在 226 条提醒。同一个项目可能挂着 5 条（逾期、缺日志、待验收……），
+    一条条列出来 24 行刷屏，而人真正要决定的是「先处理哪个项目」。
+    aggregatedReminders 已经按 linkType:linkId 聚好了，直接用。
+
+    ── 为什么点进去自动标已读 ────────────────────────────────────
+    再要求点一次「标为已读」，等于让人为了消掉红点做一件与业务无关的事。
+    人不会做，红点就永远消不掉，然后整个提醒机制失效。
+  */
+  /*
+    面板里显示的分组：未读优先，其次按严重度，最后按时间。
+    截到 12 组 —— 再多人也不会往下翻，而且滚动条越长越像"这事我处理不完"，
+    反而让人干脆不点。要看全部走底部那个入口。
+  */
+  const bellGroups = useMemo(() => {
+    const rank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+    return [...aggregatedReminders]
+      .sort((a, b) => {
+        const aUnread = a.samples.some(s => !s.isRead) ? 1 : 0;
+        const bUnread = b.samples.some(s => !s.isRead) ? 1 : 0;
+        if (aUnread !== bUnread) return bUnread - aUnread;
+        const sev = (rank[b.severity] || 0) - (rank[a.severity] || 0);
+        if (sev !== 0) return sev;
+        return String(b.latestDate || '').localeCompare(String(a.latestDate || ''));
+      })
+      .slice(0, 12);
+  }, [aggregatedReminders]);
+
+  const severityStyle: Record<string, { dot: string; text: string; label: string }> = {
+    high: { dot: 'bg-red-500', text: 'text-red-600', label: '紧急' },
+    medium: { dot: 'bg-amber-500', text: 'text-amber-600', label: '关注' },
+    low: { dot: 'bg-gray-300', text: 'text-gray-400', label: '一般' }
+  };
+
+  const linkTypeRoute: Record<string, string> = {
+    lead: '/leads',
+    customer: '/customers',
+    contract: '/contracts',
+    project: '/projects',
+    audit: '/audit',
+    intel: '/intel'
+  };
+
+  const handleOpenReminderGroup = (group: AggregatedReminder) => {
+    markRemindersRead(group.samples.map(s => s.id));
+    setIsBellOpen(false);
+    const route = linkTypeRoute[group.linkType];
+    if (!route) return;
+    // 带上 id，目标页面可以据此高亮/滚动到那一条
+    navigate(`${route}?focus=${encodeURIComponent(group.linkId)}`);
+  };
+
+  const renderBellPanel = () => (
+    <>
+      {/* 点空白处关闭。没有这层，面板只能靠再点一次铃铛关掉 */}
+      <div className="fixed inset-0 z-40" onClick={() => setIsBellOpen(false)} />
+      <div className="absolute top-full right-0 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-2xl border border-gray-100 z-50 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-50">
+          <div>
+            <p className="text-sm font-bold text-gray-900">待办提醒</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              {unreadReminders.length > 0 ? `${unreadReminders.length} 条未读` : '没有未读提醒'}
+            </p>
+          </div>
+          {unreadReminders.length > 0 && (
+            <button
+              type="button"
+              onClick={() => markAllRemindersRead()}
+              className="text-[11px] font-bold text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg px-2 py-1"
+            >
+              全部标为已读
+            </button>
+          )}
+        </div>
+
+        <div className="max-h-[24rem] overflow-y-auto">
+          {bellGroups.length === 0 ? (
+            <div className="px-4 py-10 text-center">
+              <p className="text-sm font-bold text-gray-400">暂时没有需要你处理的事</p>
+              <p className="text-[11px] text-gray-300 mt-1">有逾期、待验收或风险时会出现在这里</p>
+            </div>
+          ) : bellGroups.map(group => {
+            const style = severityStyle[group.severity] || severityStyle.low;
+            const unread = group.samples.filter(s => !s.isRead).length;
+            return (
+              <button
+                key={group.id}
+                type="button"
+                onClick={() => handleOpenReminderGroup(group)}
+                className={`w-full text-left px-4 py-3 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors ${unread > 0 ? '' : 'opacity-55'}`}
+              >
+                <div className="flex items-start gap-2.5">
+                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${style.dot}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-sm font-bold text-gray-900 truncate">
+                        {group.projectName || group.customerName || group.mainScene}
+                      </p>
+                      <span className="text-[10px] text-gray-400 shrink-0">{group.latestDate}</span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{group.mainScene}</p>
+                    {group.count > 1 && (
+                      <p className={`text-[10px] mt-1 font-bold ${style.text}`}>
+                        {/* 同一个对象上挂着好几条时才提示条数，否则「共 1 项」是噪音 */}
+                        {style.label} · 共 {group.count} 项{unread > 0 ? `，${unread} 条未读` : ''}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => { setIsBellOpen(false); navigate('/dashboard'); }}
+          className="w-full px-4 py-2.5 text-xs font-bold text-gray-500 hover:bg-gray-50 border-t border-gray-50"
+        >
+          回工作台看全部
+        </button>
+      </div>
+    </>
+  );
+
   const handleSelectView = (option: ViewOption) => {
     if (option.mode === 'role' && option.roleId) {
       setActiveRole(option.roleId);
@@ -320,14 +457,27 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <h2 className="text-sm font-bold text-gray-800 whitespace-nowrap">{getPageTitle()}</h2>
           </div>
           <div className="flex items-center space-x-2 shrink-0">
-            <button onClick={() => navigate('/dashboard')} className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors">
-              <Bell className="w-5 h-5" />
-              {unreadReminders.length > 0 && (
-                <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white font-bold">
-                  {unreadReminders.length}
-                </span>
-              )}
-            </button>
+            {/*
+              手机端的铃铛。**和桌面端是两个独立的按钮** ——
+              2026-09-02 改桌面端时差点漏了这个，
+              结果会是「电脑上点铃铛有反应、手机上还是没反应」，
+              而同事多半是在手机上看提醒的。
+            */}
+            <div className="relative">
+              <button
+                onClick={() => setIsBellOpen(v => !v)}
+                aria-label={`提醒${unreadReminders.length > 0 ? `（${unreadReminders.length} 条未读）` : ''}`}
+                className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
+              >
+                <Bell className="w-5 h-5" />
+                {unreadReminders.length > 0 && (
+                  <span className="absolute top-1.5 right-1.5 min-w-[1rem] h-4 px-1 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white font-bold">
+                    {unreadReminders.length > 99 ? '99+' : unreadReminders.length}
+                  </span>
+                )}
+              </button>
+              {isBellOpen && renderBellPanel()}
+            </div>
           </div>
         </header>
 
@@ -401,14 +551,29 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           <div className="flex items-center space-x-5">
              {/* 核心功能：身份切换器 */}
 
-             <button onClick={() => navigate('/dashboard')} className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors group">
-                <Bell className="w-5 h-5 group-hover:shake" />
-                {unreadReminders.length > 0 && (
-                  <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white font-bold">
-                    {unreadReminders.length}
-                  </span>
-                )}
-             </button>
+             {/*
+               铃铛。原来点了是 navigate('/dashboard') —— 而人多半就站在工作台上，
+               所以表现为「点了没有任何反应」。
+
+               三个设计选择，理由都在下面 renderBellPanel 里：
+               ① 下拉面板而不是跳页面   ② 按对象聚合而不是按条罗列   ③ 点进去自动标已读
+             */}
+             <div className="relative">
+               <button
+                 onClick={() => setIsBellOpen(v => !v)}
+                 aria-label={`提醒${unreadReminders.length > 0 ? `（${unreadReminders.length} 条未读）` : ''}`}
+                 className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors group"
+               >
+                  <Bell className="w-5 h-5 group-hover:shake" />
+                  {unreadReminders.length > 0 && (
+                    <span className="absolute top-1.5 right-1.5 min-w-[1rem] h-4 px-1 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white font-bold">
+                      {/* 上限 99+：三位数会把红点撑变形，而且「到底 127 还是 128 条」对人没有意义 */}
+                      {unreadReminders.length > 99 ? '99+' : unreadReminders.length}
+                    </span>
+                  )}
+               </button>
+               {isBellOpen && renderBellPanel()}
+             </div>
 
              {/*
                账号菜单。头部原来并排放着「身份」「视角」两个切换 chip，

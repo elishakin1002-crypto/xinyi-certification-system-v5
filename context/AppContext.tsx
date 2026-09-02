@@ -149,6 +149,14 @@ export interface AppContextType {
   toggleReceivableStatus: (contractId: string, receivableId: string) => void;
   addReminder: (reminder: Omit<Reminder, 'id' | 'isRead'> & { id?: string }) => void;
   dismissReminder: (id: string) => void;
+  /*
+    标记已读 ≠ 删除。
+    原来只有 dismissReminder，它直接把提醒从列表里删掉 ——
+    于是「我看过了」和「这件事没了」变成同一个动作，
+    看过之后想回头确认「上周那条逾期提醒说的是哪个客户」就找不回来了。
+  */
+  markRemindersRead: (ids: string[]) => void;
+  markAllRemindersRead: () => void;
   addKnowledgeDoc: (doc: KnowledgeDoc) => Promise<{ ok: boolean; reason?: string; duplicateId?: string }>;
   updateCustomer: (id: string, updates: Partial<Customer>) => void;
   
@@ -4404,6 +4412,27 @@ ${receivableLines}
       reminderService.removeReminder(id).catch(e => console.warn('[ReminderService] remove failed', e));
     }
   };
+
+  /*
+    标记已读。
+
+    只改 isRead，不删记录 —— 提醒本身是「这件事发生过」的痕迹，
+    看过了不代表可以扔掉。要清掉走 dismissReminder。
+
+    只动本人可见的那些（visibleReminders）：
+    「全部已读」如果把别人的提醒也标掉，等于替同事把他的待办清了。
+  */
+  const markRemindersRead = (ids: string[]) => {
+    if (!ids.length) return;
+    const target = new Set(ids);
+    setReminders(prev => prev.map(r => (target.has(r.id) && !r.isRead ? { ...r, isRead: true } : r)));
+  };
+
+  const markAllRemindersRead = () => {
+    const mine = new Set(visibleReminders.filter(r => !r.isRead).map(r => r.id));
+    if (!mine.size) return;
+    setReminders(prev => prev.map(r => (mine.has(r.id) ? { ...r, isRead: true } : r)));
+  };
   const addKnowledgeDoc = async (doc: any) => appendKnowledgeDoc(doc);
   const updateCustomer = (id: string, u: any) => {
     const previousCustomers = customers;
@@ -4449,7 +4478,8 @@ ${receivableLines}
       upsertMarketSignals, updateMarketSignal, convertSignalToFollowUpProject, convertIntelProjectToLead, bindFollowUpProjectToCustomer,
       strategicInsight, isAnalyzingStrategy, strategicTasks, runDeepAnalysis, generateStrategicTasksFromInsight, addStrategicTask, updateStrategicTaskStatus, deleteStrategicTask,
       runSystemScans, generateAuditPlan, updateCertificateAuditStatus,
-      toggleReceivableStatus, addReminder, dismissReminder, addKnowledgeDoc, updateCustomer,
+      toggleReceivableStatus, addReminder, dismissReminder, markRemindersRead, markAllRemindersRead,
+      addKnowledgeDoc, updateCustomer,
       aiDecisionLogs, runProjectDiagnosis, completeProject, reopenProject, updateProjectCost,
       importRecords, importExcel // 暴露新功能
     }}>
