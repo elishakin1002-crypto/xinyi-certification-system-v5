@@ -49,6 +49,18 @@ const PROD = {
   // 示例数据必须关：真假数据混在一起，出问题分不清是系统的还是假数据造成的
   VITE_DEMO_SEED_ENABLED: '',
 
+  /*
+    系统管理员权限模式。
+    'full'    与老板等权 —— 上线到稳定运行期间必须保持这个值
+    'limited' 收窄为业务只读 + 账号管理
+
+    显式写出来，不靠 constants.ts 里的默认值兜底：
+    默认值是「碰巧对」，写在这里才是「有人决定过」。
+    上线期出问题要能查全部数据，收窄了等于自断排查手段。
+    什么时候改成 limited 由业务方决定，不是技术上的顺手优化。
+  */
+  VITE_SYS_ADMIN_MODE: 'full',
+
   VITE_AI_BACKEND_URL: '/api/ai',
   CORS_ALLOWED_ORIGINS: 'http://124.223.209.102',
   API_JSON_LIMIT: '25mb',

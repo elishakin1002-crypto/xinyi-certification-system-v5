@@ -88,7 +88,18 @@ const isProtectedApiPath = (pathname) => (
   pathname.startsWith('/api/notify') ||
   pathname.startsWith('/api/admin') ||
   pathname.startsWith('/api/dashboard') ||
-  pathname.startsWith('/api/projects')
+  pathname.startsWith('/api/projects') ||
+  /*
+    月度经营复盘。漏了这一条的后果不是「权限不够」，是**接口对所有人永远 401**：
+    requireSessionRoles 只检查 req.authUser，不负责加载它；
+    而填 req.authUser 的正是这个名单控制的中间件。
+    名单外的路径 → authUser 永远为空 → 一律「未登录」，
+    哪怕你刚登录、别的接口都通。
+
+    凡是用 requireSessionRoles 的路由，前缀都必须在这个名单里。
+    tests/protected-api-paths.test.js 会守住这条规则。
+  */
+  pathname.startsWith('/api/review')
 );
 
 const readCookie = (cookieHeader, key) => {
@@ -4944,6 +4955,27 @@ const startServer = async () => {
 
   if (REQUIRE_AUTH_POSTGRES && authHealth?.mode !== 'postgres') {
     console.error(`[AuthStore] 当前模式为 ${authHealth?.mode || 'unknown'}，但 XINYI_AUTH_REQUIRE_POSTGRES=true，服务启动已中止`);
+    process.exitCode = 1;
+    return;
+  }
+
+  /*
+    批次1/2/3 的数据仓库读的是 XINYI_DB_URL，且**故意不回落到 DATABASE_URL**
+    （见 server/db/pool.js，渐进迁移期的设计）。
+    没配的话线索/客户/项目/合同/结算会静默落回旧逻辑 —— 服务照常起、接口照常 200，
+    只是数据来源整个换了一套，没有任何报错。
+
+    2026-09-02 生产上就这样跑了一段时间才被发现，起因是月度复盘报 500。
+    **在生产环境里，静默降级比直接崩溃危险得多**：崩溃当场就知道，
+    降级要等到某个功能露馅，而那时已经产生了一批走错路径的数据。
+  */
+  if (REQUIRE_POSTGRES && !String(process.env.XINYI_DB_URL || '').trim()) {
+    console.error(
+      '[DB] XINYI_REQUIRE_POSTGRES=true 但 XINYI_DB_URL 未配置。\n' +
+      '     线索/客户/项目/合同/结算会静默落回旧逻辑，服务启动已中止。\n' +
+      '     在 .env.local 里把 XINYI_DB_URL 设成和 DATABASE_URL 相同的值（写完整值，\n' +
+      '     不要写 ${DATABASE_URL} —— dotenv 不做变量展开）。'
+    );
     process.exitCode = 1;
     return;
   }
