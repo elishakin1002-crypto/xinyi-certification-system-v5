@@ -33,6 +33,7 @@ const batch2Router = require('./routes/batch2');
 const batch3Router = require('./routes/batch3');
 const batch4Router = require('./routes/batch4');
 const batch5Router = require('./routes/batch5');
+const clientErrorsRouter = require('./routes/clientErrors');
 const knowledgeRouter = require('./routes/knowledge');
 const remindersRouter = require('./routes/reminders');
 const uploadsRouter = require('./routes/uploads');
@@ -102,7 +103,13 @@ const isProtectedApiPath = (pathname) => (
   */
   pathname.startsWith('/api/review') ||
   pathname.startsWith('/api/work-logs') ||
-  pathname.startsWith('/api/task-templates')
+  pathname.startsWith('/api/task-templates') ||
+  /*
+    前端错误上报也要过这道中间件 —— 不是为了拦它（它自己会兜住未登录的情况），
+    而是为了拿到 req.authUser：错误报告里最有价值的一条信息就是「谁踩到的」。
+    没有这个，收到一堆匿名错误，连去问谁都不知道。
+  */
+  pathname.startsWith('/api/client-errors')
 );
 
 const readCookie = (cookieHeader, key) => {
@@ -303,8 +310,35 @@ app.use(cors({
 
 app.use(express.json({ limit: API_JSON_LIMIT }));
 
+/*
+  「尽力识别身份，但绝不拒绝」的路径。
+
+  错误上报是唯一一条：它需要知道是谁踩到的（不然收一堆匿名错误，
+  连去问谁都不知道），但**绝不能因为没登录就拒收**——
+  会话过期时、登录页上发生的错误恰恰最该被看见，
+  而那时候按定义就是「未登录」。
+
+  2026-09-02 踩到过：把它加进 isProtectedApiPath 之后上报一律 401，
+  等于给最需要观察的场景装了个只在一切正常时才工作的探头。
+*/
+const isBestEffortIdentityPath = (pathname) => pathname.startsWith('/api/client-errors');
+
 app.use(async (req, res, next) => {
   if (!isProtectedApiPath(req.path)) return next();
+
+  if (isBestEffortIdentityPath(req.path)) {
+    try {
+      const sessionId = getRequestSessionId(req);
+      if (sessionId) {
+        const result = await getSessionUser(sessionId);
+        if (result) {
+          req.authVia = 'session';
+          req.authUser = result.user;
+        }
+      }
+    } catch { /* 解析不出来就当匿名，绝不拦请求 */ }
+    return next();
+  }
 
   const token = getRequestAuthToken(req);
   const hasToken = Boolean(token);
@@ -369,6 +403,7 @@ app.use(batch2Router);
 app.use(batch3Router);
 app.use(batch4Router);
 app.use(batch5Router);
+app.use(clientErrorsRouter);
 app.use(knowledgeRouter);
 app.use(remindersRouter);
 app.use(uploadsRouter);
@@ -4896,6 +4931,44 @@ app.get('/', (req, res) => {
   );
 });
 
+/*
+  每日错误摘要。
+
+  时间挑在 18:30：一天的活基本干完了，同事踩到的坑都已经发生过，
+  而这时候看到还来得及当晚处理或者第二天一早安排。
+  放早上的话报的是昨天的事，人已经切走了。
+
+  没有值得报的就什么都不发 —— 「今日无异常」发几天之后
+  人就开始无视这个渠道，等真出事那天它也一起被无视了。
+*/
+const scheduleErrorDigest = () => {
+  const raw = String(process.env.ERROR_DIGEST_ENABLED ?? '').trim().toLowerCase();
+  if (['false', '0', 'off', 'no'].includes(raw)) return;
+
+  const hour = Number(process.env.ERROR_DIGEST_HOUR || 18);
+  const minute = Number(process.env.ERROR_DIGEST_MINUTE || 30);
+  console.log(`[ErrorDigest] 每日错误摘要已启用：每日 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`);
+
+  const scheduleNext = () => {
+    const now = new Date();
+    const next = new Date();
+    next.setHours(hour, minute, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    setTimeout(async () => {
+      try {
+        const { runErrorDigest } = require('./services/errorDigest');
+        const r = await runErrorDigest();
+        console.log(`[ErrorDigest] ${r.sent ? `已推送 ${r.count} 条` : `未推送：${r.reason}`}`);
+      } catch (e) {
+        // 摘要失败绝不能拖垮服务 —— 它是观察设施，不是业务
+        console.warn('[ErrorDigest] 执行失败:', e?.message || e);
+      }
+      scheduleNext();
+    }, next.getTime() - now.getTime()).unref();
+  };
+  scheduleNext();
+};
+
 const scheduleIntelJob = () => {
   const enabledRaw = String(process.env.INTEL_CRON_ENABLED ?? '').trim().toLowerCase();
   if (['false', '0', 'off', 'no'].includes(enabledRaw)) return;
@@ -5007,6 +5080,7 @@ const startServer = async () => {
       : `Gemini (${GEMINI_DEFAULT_MODEL})`;
     console.log(`\n🚀 后端服务已启动！\n👉 API 地址: http://localhost:${port}\n👉 AI Provider: ${providerInfo}\n👉 StateStore: ${stateMode} (${stateReason})\n👉 AuthStore: ${authMode} (${authReason})\n👉 请新开一个终端运行前端页面。`);
     scheduleIntelJob();
+    scheduleErrorDigest();
   });
 };
 
