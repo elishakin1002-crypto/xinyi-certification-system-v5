@@ -1,81 +1,41 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { AlertOctagon, FileWarning, PieChart } from 'lucide-react';
 import { RoleDashboardMetrics } from '../../services/dashboardMetrics';
-import { openDashboardRoute } from '../../src/modules/dashboardNavigation';
+import PersonaDashboard from './PersonaDashboard';
 
 type Props = {
   metrics: RoleDashboardMetrics;
 };
 
-const FinanceDashboard: React.FC<Props> = ({ metrics }) => {
-  const navigate = useNavigate();
-
-  const renderCards = (cards: RoleDashboardMetrics['topCards'], colsClass: string) => {
-    if (!cards || cards.length === 0) {
-      return <div className="text-sm text-gray-500">暂无数据</div>;
-    }
-    return (
-      <div className={`grid ${colsClass} gap-4`}>
-        {cards.map(card => (
-          <button
-            key={card.id}
-            type="button"
-            onClick={() => openDashboardRoute(navigate, card.route)}
-            className="text-left bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-indigo-200 transition"
-          >
-            <div className="text-sm text-gray-500">{card.title}</div>
-            <div className="mt-1 text-2xl font-bold text-gray-900">{card.value || '暂无数据'}</div>
-            {card.hint ? <div className="mt-1 text-xs text-gray-400">{card.hint}</div> : null}
-          </button>
-        ))}
-      </div>
-    );
-  };
-
-  return (
-    <div className="p-6 space-y-6 animate-in fade-in duration-300">
-      <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-gray-900">财务现金流面板</h2>
-        <p className="text-sm text-gray-500 mt-1">聚焦应收、已收、超期与异常闭环。</p>
-      </div>
-
-      <section className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">现金流</h3>
-        {renderCards(metrics.topCards, 'grid-cols-1 md:grid-cols-2 xl:grid-cols-4')}
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">异常与风险</h3>
-        {renderCards(metrics.middleCards, 'grid-cols-1 md:grid-cols-2 xl:grid-cols-4')}
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">结构分析</h3>
-        {renderCards(metrics.bottomCards, 'grid-cols-1 md:grid-cols-3')}
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">异常清单</h3>
-        <div className="bg-white border border-gray-100 rounded-xl shadow-sm divide-y divide-gray-100">
-          {metrics.listItems.length === 0 ? (
-            <div className="px-4 py-6 text-sm text-gray-500">暂无数据</div>
-          ) : (
-            metrics.listItems.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => navigate(item.route)}
-                className="w-full text-left px-4 py-3 hover:bg-gray-50 transition"
-              >
-                <div className="text-sm font-medium text-gray-900">{item.title}</div>
-                {item.subtitle ? <div className="text-xs text-gray-500 mt-1">{item.subtitle}</div> : null}
-              </button>
-            ))
-          )}
-        </div>
-      </section>
-    </div>
-  );
-};
+const FinanceDashboard: React.FC<Props> = ({ metrics }) => (
+  <PersonaDashboard
+    metrics={metrics}
+    headline={{ title: '现金流', subtitle: '本月应收、已收与超期金额对照，超期已单独标红。' }}
+    emphasisId="fin-overdue"
+    sections={[
+      {
+        key: 'abnormal',
+        title: '异常与风险',
+        subtitle: '数据缺失、未开票和回款进度异常，都会影响账目准确性。',
+        icon: <AlertOctagon className="w-5 h-5 text-amber-600" />,
+        cards: metrics.middleCards,
+        cols: 'grid-cols-1 md:grid-cols-2 xl:grid-cols-4'
+      },
+      {
+        key: 'structure',
+        title: '结构分析',
+        subtitle: '看收入来自哪些行业和客户，判断集中度风险。',
+        icon: <PieChart className="w-5 h-5 text-indigo-600" />,
+        cards: metrics.bottomCards,
+        cols: 'grid-cols-1 md:grid-cols-3'
+      }
+    ]}
+    list={{
+      title: '异常清单',
+      subtitle: '需要逐条核对的账目，点击进入对应记录。',
+      icon: <FileWarning className="w-5 h-5 text-red-600" />
+    }}
+  />
+);
 
 export default FinanceDashboard;

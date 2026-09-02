@@ -2,10 +2,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Sidebar from './Sidebar';
 import AIChatWidget from './AIChatWidget';
-import { MockWeChatPhone } from './MockWeChatPhone';
-import { WeChatBindingModal } from './WeChatBindingModal';
-import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings } from 'lucide-react';
+import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { authService } from '../services/authService';
+import { dataService } from '../services/dataService';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { SYSTEM_ROLES } from '../constants';
 import { DashboardPersona, RoleID } from '../types';
@@ -33,13 +33,62 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const [isWeChatModalOpen, setIsWeChatModalOpen] = useState(false);
+  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  /*
+    退出登录。2026-08-24 之前**全应用没有任何退出入口**——
+    services/authService.ts 里 logout() 早就写好了，但没有一处调用。
+    同事上机测试时登进去就出不来，共用电脑更换不了账号。
+
+    退出后强制整页刷新，不用 React 路由跳转：
+    退出要清掉的不只是会话 cookie，还有内存里的全部业务数据
+    （线索、合同、当前用户…）。只跳路由的话，下一个登录的人
+    会在页面上短暂看到上一个人的数据——在按角色分权的系统里这是事故。
+  */
+  const handleLogout = async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    try {
+      await authService.logout();
+    } catch (error) {
+      console.warn('[logout] 服务端退出失败，仍然清理本地会话', error);
+    } finally {
+      /*
+        清掉 AI 对话历史。**reload 清不掉它**——它在 localStorage 里，
+        重载、关标签页、关浏览器都活着。
+
+        2026-08-31 查出来的漏：老板问完提成和报价的事退出，
+        顾问在同一台办公室电脑登录、打开 AI 对话框，
+        **老板刚才那整段对话原样还在那里**。
+        服务端的鉴权对这个完全无能为力——那些字早就在这台机器上了。
+      */
+      try {
+        dataService.remove('chat_history');
+      } catch { /* 清不掉也要继续退出，不能卡在这一步 */ }
+
+      /*
+        用 replace 而不是 href=，**不能在历史里留下记录**。
+
+        href= 会往浏览历史里推一条，退出后按浏览器「后退」就回到了 #/dashboard。
+        虽然那时 authUser 已经是空、页面会渲染登录页，但历史里躺着一串
+        业务页面地址本身就没必要——别人在这台电脑上翻后退，
+        至少能看出这个人平时在看哪些模块。
+
+        reload 仍然要：它清掉进程内存里的业务数据（客户、合同、金额）。
+        单纯换路由不会清，那些数据还在 React 状态里。
+      */
+      window.location.replace(`${window.location.pathname}#/login`);
+      window.location.reload();
+    }
+  };
   const [globalQuery, setGlobalQuery] = useState('');
   const [isGlobalSearchFocused, setIsGlobalSearchFocused] = useState(false);
   const [isGlobalResultPanelOpen, setIsGlobalResultPanelOpen] = useState(false);
   const {
     currentUser,
     userProfiles,
+    isAuthRequired,
     switchUser,
     setActiveRole,
     activePersona,
@@ -57,10 +106,29 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const roleToPersona: Record<RoleID, DashboardPersona> = {
     ADMIN: 'boss',
-    MANAGER: 'sales',
+    SYS_ADMIN: 'boss',
+    /*
+      总助看老板工作台，不看销售工作台。
+
+      改名前 MANAGER 被映射到 'sales'，于是总助打开系统看到的是
+      「我的线索 / 我的合同 / 个人转化率」——他不拥有线索，这些数永远是 0。
+      他真正要盯的是老板工作台下半部分的「团队产能与执行」：
+      人均在制项目数、项目延误率、本周日志覆盖率。
+
+      老板工作台上的内容都在总助的读权限内（readScope=ALL，且有 CONTRACT_VIEW_AMOUNT），
+      不存在越权显示。他仍然不能确认到账、不能碰结算——那是动作权限管的，与看板无关。
+    */
+    MANAGER: 'boss',
+    SALES: 'sales',
     CONSULTANT: 'consultant',
     FINANCE: 'finance'
   };
+  /*
+    视角显示名。这里是**看板视角**的名字，不是角色名——
+    四个看板（老板/销售/顾问/财务）和六个角色不是一一对应
+    （总助看老板看板、系统管理员也看老板看板）。
+    所以它不能直接取 SYSTEM_ROLES，是独立的一组标签。
+  */
   const personaDisplayName: Record<DashboardPersona, string> = {
     boss: '老板',
     sales: '销售',
@@ -74,6 +142,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     if (path === '/leads') return '线索管理';
     if (path === '/projects') return '项目管理';
     if (path === '/finance') return '财务回款';
+    if (path === '/employees') return '员工账号';
+    if (path === '/auth-audit') return '审计日志';
     return '信义系统';
   };
 
@@ -81,16 +151,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const queryPersona = useMemo(() => new URLSearchParams(location.search).get('persona'), [location.search]);
   const currentViewPersona = resolveDashboardPersona(queryPersona || activePersona);
   const normalizeDisplayLabel = (value: string) => String(value || '').replace(/\s*[（(]\s*示例\s*[)）]\s*/g, '').trim();
-  const formatIdentityDisplayName = (value: string) => {
-    const normalized = normalizeDisplayLabel(value);
-    if (normalized === '交付负责人') return '销售';
-    return normalized.replace(/台账指导兼职/g, '台账指导').replace(/兼职/g, '');
-  };
-  const formatViewDisplayName = (value: string) => {
-    const normalized = normalizeDisplayLabel(value);
-    if (normalized === '交付负责人') return '销售';
-    return normalized;
-  };
+  /*
+    2026-08-24 移除了「把 交付负责人 显示成 销售」的改名。
+
+    那个改名让界面上的「销售」实际指向 MANAGER 角色，
+    而两者权限差得很远：MANAGER 不能建线索、不能认领线索，
+    却能删任务、删别人的工作日志，写范围也是部门级而非仅自己。
+    同事按名字选角色，选到的是完全不同的一套权限。
+
+    该角色已在 constants.ts 里正名为「总助」，界面直接用真名，不再翻译。
+  */
+  const formatIdentityDisplayName = (value: string) =>
+    normalizeDisplayLabel(value).replace(/台账指导兼职/g, '台账指导').replace(/兼职/g, '');
+  const formatViewDisplayName = (value: string) => normalizeDisplayLabel(value);
   const hasLedgerGuideTag = (tags?: string[]) => (tags || []).some(tag => String(tag).includes('台账指导'));
   const currentUserDisplayName = formatIdentityDisplayName(currentUser.name) || currentUser.name;
   const currentRoleDisplayName = personaDisplayName[currentViewPersona] || '老板';
@@ -111,12 +184,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         mode: 'persona' as const,
         roleId: null,
         persona: 'sales',
-        label: '销售'
+        // 你的账号没有「销售」这个角色，所以这一项只切工作台看板，不改权限。
+        // 标注出来避免误以为是"以销售身份预览"。
+        label: '销售（仅看板）'
       });
     }
     return base;
   }, [availableRoles, roleToPersona, isFinanceOnlyIdentity, availablePersonas]);
   const sortedUsers = [...userProfiles].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  const canSwitchCurrentUser = !isAuthRequired;
   const searchableScopes = useMemo(() => resolveSearchScopesByPermissions(userPermissions), [userPermissions]);
   const globalHits = useMemo(
     () => buildGlobalSearchHits(globalQuery, { leads, customers, contracts, projects, knowledgeDocs }, { includeScopes: searchableScopes }),
@@ -196,59 +272,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <h2 className="text-sm font-bold text-gray-800 whitespace-nowrap">{getPageTitle()}</h2>
           </div>
           <div className="flex items-center space-x-2 shrink-0">
-            <div className="relative">
-              <button
-                onClick={() => { setIsUserMenuOpen(!isUserMenuOpen); setIsRoleMenuOpen(false); }}
-                className="flex items-center px-2 py-1 bg-white border border-gray-200 text-gray-700 rounded-lg text-[10px] font-bold shadow-sm hover:bg-gray-50 transition-all active:scale-95 whitespace-nowrap"
-              >
-                <Users className="w-3 h-3 mr-1 text-gray-500 shrink-0" />
-                <span className="max-w-[110px] truncate block text-left">{`身份：${currentUserDisplayName}`}</span>
-                <ChevronDown className={`w-3 h-3 ml-1 transition-transform shrink-0 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {isUserMenuOpen && (
-                <div className="absolute top-full right-0 mt-2 w-56 bg-white rounded-xl shadow-2xl border border-gray-100 p-1 z-50 animate-in fade-in slide-in-from-top-2 max-h-[60vh] overflow-auto">
-                  <div className="px-3 py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 mb-1">切换当前用户</div>
-                  {sortedUsers.map(u => (
-                    <button
-                      key={u.id}
-                      onClick={() => { switchUser(u.id); setIsUserMenuOpen(false); }}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${currentUser.id === u.id ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-600 hover:bg-gray-50'}`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="truncate">{formatIdentityDisplayName(u.name)}</span>
-                        {hasLedgerGuideTag(u.positionTags) && (
-                          <span className="ml-2 text-[10px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">台账指导</span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="relative">
-              <button
-                onClick={() => { setIsRoleMenuOpen(!isRoleMenuOpen); setIsUserMenuOpen(false); }}
-                className="flex items-center px-2 py-1 bg-slate-900 text-white rounded-lg text-[10px] font-bold shadow-md hover:bg-slate-800 transition-all active:scale-95 whitespace-nowrap"
-              >
-                <ShieldCheck className="w-3 h-3 mr-1 text-indigo-400 shrink-0" />
-                <span className="max-w-[120px] truncate block text-left">{`视角：${currentRoleDisplayName}`}</span>
-                <ChevronDown className={`w-3 h-3 ml-1 transition-transform shrink-0 ${isRoleMenuOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {isRoleMenuOpen && (
-                <div className="absolute top-full right-0 mt-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-100 p-1 z-50 animate-in fade-in slide-in-from-top-2">
-                  <div className="px-3 py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 mb-1">切换身份视角</div>
-                  {viewOptions.map(option => (
-                    <button
-                      key={option.key}
-                      onClick={() => handleSelectView(option)}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${currentViewPersona === option.persona ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-600 hover:bg-gray-50'}`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
             <button onClick={() => navigate('/dashboard')} className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors">
               <Bell className="w-5 h-5" />
               {unreadReminders.length > 0 && (
@@ -328,68 +351,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
 
           <div className="flex items-center space-x-5">
-             <div className="relative">
-                <button 
-                  onClick={() => { setIsUserMenuOpen(!isUserMenuOpen); setIsRoleMenuOpen(false); }}
-                  className="flex items-center px-3 py-1.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-bold shadow-sm hover:bg-gray-50 transition-all active:scale-95"
-                >
-                  <Users className="w-3.5 h-3.5 mr-2 text-gray-500" />
-                  {`身份：${currentUserDisplayName}`}
-                  <ChevronDown className={`w-3 h-3 ml-2 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
-                </button>
-                {isUserMenuOpen && (
-                  <div className="absolute top-full right-0 mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-100 p-1 z-50 animate-in fade-in slide-in-from-top-2 max-h-[60vh] overflow-auto">
-                    <div className="px-3 py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 mb-1">切换当前用户</div>
-                    {sortedUsers.map(u => (
-                      <button
-                        key={u.id}
-                        onClick={() => { switchUser(u.id); setIsUserMenuOpen(false); }}
-                        className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${currentUser.id === u.id ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-600 hover:bg-gray-50'}`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="truncate">{formatIdentityDisplayName(u.name)}</span>
-                          {hasLedgerGuideTag(u.positionTags) && (
-                            <span className="ml-2 text-[10px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">台账指导</span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                    <button 
-                      onClick={() => { setIsWeChatModalOpen(true); setIsUserMenuOpen(false); }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2 border-t border-gray-50 mt-1"
-                    >
-                      <Settings size={14} />
-                      微信通知绑定
-                    </button>
-                  </div>
-                )}
-             </div>
              {/* 核心功能：身份切换器 */}
-             <div className="relative">
-                <button 
-                  onClick={() => { setIsRoleMenuOpen(!isRoleMenuOpen); setIsUserMenuOpen(false); }}
-                  className="flex items-center px-3 py-1.5 bg-slate-900 text-white rounded-xl text-xs font-bold shadow-md hover:bg-slate-800 transition-all active:scale-95"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5 mr-2 text-indigo-400" />
-                  {`视角：${currentRoleDisplayName}`}
-                  <ChevronDown className={`w-3 h-3 ml-2 transition-transform ${isRoleMenuOpen ? 'rotate-180' : ''}`} />
-                </button>
-                
-                {isRoleMenuOpen && (
-                  <div className="absolute top-full right-0 mt-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-100 p-1 z-50 animate-in fade-in slide-in-from-top-2">
-                    <div className="px-3 py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 mb-1">切换身份视角</div>
-                    {viewOptions.map(option => (
-                      <button 
-                        key={option.key}
-                        onClick={() => handleSelectView(option)}
-                        className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${currentViewPersona === option.persona ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-600 hover:bg-gray-50'}`}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-             </div>
 
              <button onClick={() => navigate('/dashboard')} className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors group">
                 <Bell className="w-5 h-5 group-hover:shake" />
@@ -400,14 +362,78 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 )}
              </button>
 
-             <div className="flex items-center space-x-3 pl-2 border-l border-gray-100">
-                <div className="text-right">
-                  <p className="text-sm font-bold text-gray-900 leading-none">{currentUserDisplayName}</p>
-                  <p className="text-[10px] text-gray-400 mt-1 uppercase">V5.3 Stable</p>
-                </div>
-                <div className="w-9 h-9 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 border border-indigo-200">
-                  <User className="w-5 h-5" />
-                </div>
+             {/*
+               账号菜单。头部原来并排放着「身份」「视角」两个切换 chip，
+               但它们是开发和演示用的工具，日常干活的人不需要天天看见——
+               同事第一次上手会以为自己可以随便切身份。收进头像里：
+               演示时点开还在，平时不占位置。
+
+               退出登录也放这里。这是所有系统的通用位置，用户不用学；
+               而在 2026-08-24 之前，**全应用根本没有退出入口**。
+             */}
+             <div className="relative pl-2 border-l border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => { setIsAccountMenuOpen(!isAccountMenuOpen); setIsRoleMenuOpen(false); setIsUserMenuOpen(false); }}
+                  className="flex items-center space-x-3 rounded-xl px-2 py-1 transition-colors hover:bg-gray-50"
+                  aria-haspopup="menu"
+                  aria-expanded={isAccountMenuOpen}
+                >
+                  <div className="text-right hidden sm:block">
+                    <p className="text-sm font-bold text-gray-900 leading-none">{currentUserDisplayName}</p>
+                    <p className="text-[10px] text-gray-400 mt-1">{currentRoleDisplayName}</p>
+                  </div>
+                  <div className="w-9 h-9 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 border border-indigo-200">
+                    <User className="w-5 h-5" />
+                  </div>
+                  <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isAccountMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {isAccountMenuOpen && (
+                  <>
+                    {/* 点击空白处关闭。没有这层遮罩，菜单只能靠再点一次按钮关掉 */}
+                    <div className="fixed inset-0 z-40" onClick={() => setIsAccountMenuOpen(false)} />
+                    <div className="absolute top-full right-0 mt-2 w-60 bg-white rounded-xl shadow-2xl border border-gray-100 p-1 z-50" role="menu">
+                      <div className="px-3 py-2.5 border-b border-gray-50">
+                        <p className="text-sm font-bold text-gray-900">{currentUserDisplayName}</p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">当前视角：{currentRoleDisplayName}</p>
+                      </div>
+
+                      {/* 视角切换：只有拥有多个角色的账号才需要（通常是管理员演示时用） */}
+                      {viewOptions.length > 1 && (
+                        <div className="py-1 border-b border-gray-50">
+                          <div className="px-3 pt-1 pb-1.5 text-[10px] font-black text-gray-400 tracking-widest">
+                            切换视角
+                            <span className="block mt-0.5 font-normal tracking-normal text-gray-400">
+                              带「仅看板」的只换工作台，不改权限
+                            </span>
+                          </div>
+                          {viewOptions.map(option => (
+                            <button
+                              key={option.key}
+                              type="button"
+                              onClick={() => { handleSelectView(option); setIsAccountMenuOpen(false); }}
+                              className={`w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm transition-colors ${currentViewPersona === option.persona ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-600 hover:bg-gray-50'}`}
+                            >
+                              <Eye className="w-3.5 h-3.5 shrink-0" />
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleLogout}
+                        disabled={isLoggingOut}
+                        className="w-full flex items-center gap-2 text-left px-3 py-2.5 mt-1 rounded-lg text-sm font-bold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                      >
+                        <LogOut className="w-4 h-4 shrink-0" />
+                        {isLoggingOut ? '正在退出…' : '退出登录'}
+                      </button>
+                    </div>
+                  </>
+                )}
              </div>
           </div>
         </header>
@@ -416,8 +442,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           {children}
         </main>
         <AIChatWidget />
-        <MockWeChatPhone />
-        <WeChatBindingModal isOpen={isWeChatModalOpen} onClose={() => setIsWeChatModalOpen(false)} />
       </div>
     </div>
   );

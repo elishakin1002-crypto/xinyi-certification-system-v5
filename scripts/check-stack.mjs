@@ -1,6 +1,11 @@
+const apiToken = String(process.env.XINYI_API_AUTH_TOKEN || process.env.API_AUTH_TOKEN || '').trim();
+
 const check = async (name, url) => {
   try {
-    const res = await fetch(url, { method: 'GET' });
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : undefined
+    });
     const text = await res.text();
     if (!res.ok) {
       console.error(`[${name}] HTTP ${res.status} ${text.slice(0, 120)}`);

@@ -3,7 +3,8 @@ import { useApp } from '../context/AppContext';
 import { INTEL_INDUSTRIES, INTEL_REGIONS } from '../constants';
 import { MarketSignal } from '../types';
 import { intelService } from '../services/intelService';
-import { Calendar, CheckCircle2, FileText, Filter, Flame, Loader2, PlusCircle, RefreshCw, Search, Sparkles, Target, XCircle } from 'lucide-react';
+import { intelConfigService, type IntelConfig } from '../services/intelConfigService';
+import { Calendar, CheckCircle2, FileText, Filter, Flame, Loader2, PlusCircle, Radar, RefreshCw, Search, Settings2, Sparkles, Target, XCircle } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { MARKET_SIGNAL_STATUS } from '../src/constants/status.ts';
 import { useLocation } from 'react-router-dom';
@@ -175,13 +176,59 @@ const IntelRadar = () => {
   const [latestFetchIds, setLatestFetchIds] = useState<string[]>([]);
   const [latestOnly, setLatestOnly] = useState<boolean>(false);
   const [recentOnly, setRecentOnly] = useState<boolean>(true);
+
+  // 情报源设置面板
+  const [showConfig, setShowConfig] = useState<boolean>(false);
+  const [cfgKeywords, setCfgKeywords] = useState<string>('');
+  const [cfgSourceUrls, setCfgSourceUrls] = useState<string>('');
+  const [cfgLimit, setCfgLimit] = useState<number>(20);
+  const [cfgSaving, setCfgSaving] = useState<boolean>(false);
+  const [cfgSavedAt, setCfgSavedAt] = useState<string>('');
+  useEffect(() => {
+    intelConfigService.getConfig().then((c) => {
+      setCfgKeywords((c.keywords || []).join('\n'));
+      setCfgSourceUrls((c.sourceUrls || []).join('\n'));
+      setCfgLimit(c.limit || 20);
+      if (Array.isArray(c.regions) && c.regions.length) setRegions(c.regions);
+      if (Array.isArray(c.industries) && c.industries.length) setIndustries(c.industries);
+      if (c.updatedAt) setCfgSavedAt(c.updatedAt);
+    }).catch(() => {});
+  }, []);
+  const saveIntelConfig = async () => {
+    setCfgSaving(true);
+    try {
+      const toLines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean);
+      const saved = await intelConfigService.saveConfig({
+        regions, industries,
+        keywords: toLines(cfgKeywords),
+        sourceUrls: toLines(cfgSourceUrls),
+        limit: Number(cfgLimit) || 20,
+      } as IntelConfig);
+      setCfgSavedAt(saved.updatedAt || new Date().toISOString());
+    } catch (e) {
+      alert('保存失败：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setCfgSaving(false);
+    }
+  };
   const [sortMode, setSortMode] = useState<SortMode>('published_desc');
-  const [backendHealth, setBackendHealth] = useState<{ ok: boolean; error?: string; keyLoaded?: boolean; keyLength?: number } | null>(null);
+  const [backendHealth, setBackendHealth] = useState<{
+    ok: boolean;
+    error?: string;
+    keyLoaded?: boolean;
+    keyLength?: number;
+    keys?: Record<string, boolean>;
+    provider?: string;
+    fallback?: string;
+  } | null>(null);
   const [detailMode, setDetailMode] = useState<'quick' | 'full'>('quick');
   const likelyBackendIssue = /端口|后端|HTTP|连接|KIMI|Failed to fetch|代理/i.test(fetchError || '');
   const visibleSignals = useMemo(() => marketSignals.filter(isUsableSignal), [marketSignals]);
   const latestFetchSet = useMemo(() => new Set(latestFetchIds), [latestFetchIds]);
-  const showingHistoricalOnly = Boolean(fetchError) && latestFetchIds.length === 0;
+  const hasHistoricalFallback = visibleSignals.length > 0 && latestFetchIds.length === 0;
+  const showBlockingFetchError = Boolean(fetchError) && (likelyBackendIssue || visibleSignals.length === 0);
+  const showingHistoricalOnly = hasHistoricalFallback && (Boolean(fetchError) || fetchSource === 'cache');
+  const historicalFallbackNotice = fetchNotice || '本次联网抓取未返回新增可用情报，当前展示最近缓存/历史情报。';
 
   const checkBackend = async () => {
     const targets = [
@@ -193,7 +240,7 @@ const IntelRadar = () => {
     try {
       let lastError = '后端异常';
       for (const url of targets) {
-        const res = await fetch(url);
+        const res = await fetch(url, { credentials: 'include' });
         const text = await res.text();
         const data = text ? JSON.parse(text) : null;
         const code = Number(data?.code);
@@ -210,8 +257,11 @@ const IntelRadar = () => {
         }
         setBackendHealth({
           ok: true,
-          keyLoaded: Boolean(payload?.keyLoaded),
-          keyLength: Number(payload?.keyLength || 0)
+          keyLoaded: Boolean(payload?.keyLoaded) || Object.values(payload?.keys || {}).some(Boolean),
+          keyLength: Number(payload?.keyLength || 0),
+          keys: payload?.keys || undefined,
+          provider: payload?.provider || undefined,
+          fallback: payload?.fallback || undefined
         });
         return;
       }
@@ -287,7 +337,7 @@ const IntelRadar = () => {
     setFetchError('');
     setFetchNotice('正在抓取今日情报，请稍候...');
     try {
-      const result = await intelService.fetchDailySignals({ regions, industries, limit: 20 });
+      const result = await intelService.fetchDailySignals({ regions, industries, limit: Number(cfgLimit) || 20 });
       setFetchSource(result.source || 'server');
       if (!result.ok) {
         if (result.signals.length > 0) {
@@ -308,6 +358,20 @@ const IntelRadar = () => {
           setFetchNotice((result.error || `本次联网抓取失败，已回退缓存（${result.signals.length} 条）。`) + dropTip + geoTip + rescuedTip);
           return;
         }
+        const latest = await intelService.fetchLatestSignals();
+        if (latest.ok && latest.signals.length > 0) {
+          upsertMarketSignals(latest.signals);
+          setLatestFetchIds([]);
+          setLatestOnly(false);
+          setRecentOnly(true);
+          setSortMode('published_desc');
+          if (!selectedId) setSelectedId(latest.signals[0].id);
+          if (latest.lastRunAt) setLastRunAt(latest.lastRunAt);
+          setFetchError('');
+          setFetchSource('cache');
+          setFetchNotice(`本次联网抓取未返回新增可用情报，已展示最近缓存/历史情报（${latest.signals.length} 条）。`);
+          return;
+        }
         setLatestFetchIds([]);
         setLatestOnly(false);
         setFetchError(result.error || '抓取失败，请检查后端与 API Key。');
@@ -316,6 +380,19 @@ const IntelRadar = () => {
         return;
       }
       if (result.signals.length === 0) {
+        const latest = await intelService.fetchLatestSignals();
+        if (latest.ok && latest.signals.length > 0) {
+          upsertMarketSignals(latest.signals);
+          setLatestFetchIds([]);
+          setLatestOnly(false);
+          setRecentOnly(true);
+          setSortMode('published_desc');
+          if (!selectedId) setSelectedId(latest.signals[0].id);
+          if (latest.lastRunAt) setLastRunAt(latest.lastRunAt);
+          setFetchSource('cache');
+          setFetchNotice(`抓取完成但本次没有新增可用情报，已展示最近缓存/历史情报（${latest.signals.length} 条）。`);
+          return;
+        }
         setFetchError('抓取成功但没有结果：请调整区域/行业关键词后再试。');
         return;
       }
@@ -449,7 +526,8 @@ const IntelRadar = () => {
         updatedAt: today,
         content,
         summary: `今日情报 Top ${top.length}（区域：${regions.join('、')}；行业：${industries.map(industryLabel).join('、')}）。`,
-        aiVisible: true,
+        // 情报日报是新闻资讯，不是可复用知识。进 RAG 只会污染检索结果、还要花钱做摘要（P0-13）
+        aiVisible: false,
         source: 'system',
         autoGenerated: true,
         linkType: 'other',
@@ -473,14 +551,16 @@ const IntelRadar = () => {
       <div className="p-4 lg:p-6 pb-0 flex-none space-y-6">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-gray-900">情报雷达</h1>
-            <p className="text-sm text-gray-500 mt-1">把“政策/行业/企业/招采/标准”变成可转化机会，并沉淀为复盘与知识。</p>
+            <h1 className="text-2xl font-bold text-gray-900">情报雷达</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              把"政策/行业/企业/招采/标准"变成可转化机会。下方为全部可用情报的总览，右侧列表按左边筛选条件显示。
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={fetchToday}
               disabled={isFetching}
-              className={`px-4 py-2 rounded-xl text-sm font-bold flex items-center border transition-colors ${
+              className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center border shadow-sm transition-all active:scale-95 ${
                 isFetching ? 'bg-gray-100 text-gray-400 border-gray-200' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
               }`}
             >
@@ -490,7 +570,7 @@ const IntelRadar = () => {
             <button
               onClick={archiveDailyDigest}
               disabled={isArchivingDigest || filtered.length === 0}
-              className={`px-4 py-2 rounded-xl text-sm font-bold flex items-center border transition-colors ${
+              className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center border shadow-sm transition-all active:scale-95 ${
                 (isArchivingDigest || filtered.length === 0)
                   ? 'bg-gray-100 text-gray-400 border-gray-200'
                   : 'bg-white text-gray-800 border-gray-200 hover:bg-gray-50'
@@ -498,6 +578,15 @@ const IntelRadar = () => {
             >
               {isArchivingDigest ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}
               归档日报
+            </button>
+            <button
+              onClick={() => setShowConfig((v) => !v)}
+              className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center border shadow-sm transition-all active:scale-95 ${
+                showConfig ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-800 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <Settings2 className="w-4 h-4 mr-2" />
+              情报源设置
             </button>
             {fetchSource && (
               <span className="text-xs text-gray-400">
@@ -512,12 +601,12 @@ const IntelRadar = () => {
           </div>
         </div>
 
-        {fetchError && (
+        {showBlockingFetchError && (
           <div className="bg-amber-50 border border-amber-100 text-amber-800 rounded-2xl p-4 text-sm font-bold">
             {fetchError}
             {likelyBackendIssue ? (
               <div className="text-xs font-medium text-amber-700 mt-2">
-                请确保后端已启动：`npm run start`（端口 3001），并在 `.env.local` 配置 `KIMI_API_KEY`。
+                请确保后端已启动：`npm run start`（端口 3001），并在服务端环境变量中配置模型密钥。
               </div>
             ) : (
               <div className="text-xs font-medium text-amber-700 mt-2">
@@ -526,7 +615,9 @@ const IntelRadar = () => {
             )}
             <div className="mt-3 flex items-center justify-between gap-3">
               <div className="text-xs font-medium text-amber-700">
-                后端自检：{backendHealth?.ok ? `OK（KeyLoaded=${String(backendHealth.keyLoaded)}）` : (backendHealth?.error ? `失败（${backendHealth.error}）` : '未检查')}
+                后端自检：{backendHealth?.ok
+                  ? `OK（${backendHealth.fallback || backendHealth.provider || (backendHealth.keys ? Object.keys(backendHealth.keys).filter(k => backendHealth.keys?.[k]).join(' / ') : `KeyLoaded=${String(backendHealth.keyLoaded)}`)}）`
+                  : (backendHealth?.error ? `失败（${backendHealth.error}）` : '未检查')}
               </div>
               <button
                 onClick={checkBackend}
@@ -537,28 +628,89 @@ const IntelRadar = () => {
             </div>
           </div>
         )}
-        {fetchNotice && !fetchError && (
+        {!showBlockingFetchError && (fetchNotice || (fetchError && hasHistoricalFallback)) && (
           <div className="bg-blue-50 border border-blue-100 text-blue-800 rounded-2xl p-4 text-sm font-bold">
-            {fetchNotice}
+            {historicalFallbackNotice}
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
-            <div className="text-xs font-bold text-gray-400 uppercase">总信号</div>
-            <div className="text-2xl font-black text-gray-900 mt-1">{stats.total}</div>
+        {showConfig && (
+          <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="font-black text-gray-900 flex items-center gap-2"><Settings2 className="w-4 h-4" /> 情报源设置</div>
+              <div className="text-xs text-gray-400">{cfgSavedAt ? `上次保存：${toLocalYmdHm(cfgSavedAt)}` : '未保存'}</div>
+            </div>
+            <div className="text-xs text-gray-500 -mt-2">配置抓取范围与情报源；抓取例程（天眼查企业信号 + 联网政策/行情）会按此设置运行。区域/行业沿用下方过滤器的选择。</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold text-gray-600">关键词模板（每行一个，用于联网检索政策/招采/动态）</label>
+                <textarea
+                  value={cfgKeywords}
+                  onChange={(e) => setCfgKeywords(e.target.value)}
+                  rows={5}
+                  placeholder={'招标 认证\n抽检 不合格\n出口 欧盟 合规\n新建 扩产'}
+                  className="mt-1 w-full text-sm border border-gray-200 rounded-xl p-2 font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-gray-600">自定义情报源 URL / RSS（每行一个，政府/招投标/行业协会官网）</label>
+                <textarea
+                  value={cfgSourceUrls}
+                  onChange={(e) => setCfgSourceUrls(e.target.value)}
+                  rows={5}
+                  placeholder={'https://www.ccgp-zhejiang.gov.cn/\nhttps://www.samr.gov.cn/'}
+                  className="mt-1 w-full text-sm border border-gray-200 rounded-xl p-2 font-mono"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <label className="text-xs font-bold text-gray-600">单次抓取条数</label>
+              <input
+                type="number" min={1} max={50} value={cfgLimit}
+                onChange={(e) => setCfgLimit(Number(e.target.value))}
+                className="w-24 text-sm border border-gray-200 rounded-lg px-2 py-1.5"
+              />
+              <div className="flex-1" />
+              <button
+                onClick={saveIntelConfig}
+                disabled={cfgSaving}
+                className={`px-4 py-2 rounded-xl text-sm font-bold border ${cfgSaving ? 'bg-gray-100 text-gray-400 border-gray-200' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'}`}
+              >
+                {cfgSaving ? '保存中…' : '保存设置'}
+              </button>
+            </div>
           </div>
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
-            <div className="text-xs font-bold text-gray-400 uppercase">今日新增</div>
-            <div className="text-2xl font-black text-gray-900 mt-1">{stats.todayCount}</div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-blue-200 transition-colors">
+            <div className="p-3 bg-blue-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><Radar className="w-6 h-6 text-blue-600" /></div>
+            <div className="min-w-0">
+              <div className="text-2xl font-black text-gray-900">{stats.total}</div>
+              <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">可用情报总数</div>
+            </div>
           </div>
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
-            <div className="text-xs font-bold text-gray-400 uppercase">高紧急</div>
-            <div className="text-2xl font-black text-gray-900 mt-1">{stats.high}</div>
+          {/* 原来是「今日新增」，历史数据下恒为 0；换成"当前筛选命中"，直接和右侧列表条数对上 */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-emerald-200 transition-colors">
+            <div className="p-3 bg-emerald-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><Sparkles className="w-6 h-6 text-emerald-600" /></div>
+            <div className="min-w-0">
+              <div className="text-2xl font-black text-gray-900">{filtered.length}</div>
+              <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">当前筛选命中</div>
+            </div>
           </div>
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
-            <div className="text-xs font-bold text-gray-400 uppercase">已转化</div>
-            <div className="text-2xl font-black text-gray-900 mt-1">{stats.converted}</div>
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-amber-200 transition-colors">
+            <div className="p-3 bg-amber-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><Flame className="w-6 h-6 text-amber-600" /></div>
+            <div className="min-w-0">
+              <div className="text-2xl font-black text-gray-900">{stats.high}</div>
+              <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">高紧急</div>
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-5 rounded-2xl shadow-lg flex items-center text-white">
+            <div className="p-3 bg-white/20 rounded-xl mr-4"><Target className="w-6 h-6" /></div>
+            <div className="min-w-0">
+              <div className="text-2xl font-black">{stats.converted}</div>
+              <div className="text-xs opacity-80 font-bold uppercase tracking-tight">已转化为线索</div>
+            </div>
           </div>
         </div>
       </div>
@@ -678,8 +830,8 @@ const IntelRadar = () => {
                 </div>
               </div>
               {showingHistoricalOnly && (
-                <div className="px-5 py-2.5 text-xs font-bold text-amber-700 bg-amber-50 border-b border-amber-100">
-                  本次抓取未返回可用结果，当前列表展示的是历史情报数据（非本次新增）。
+                <div className="px-5 py-2.5 text-xs font-bold text-blue-700 bg-blue-50 border-b border-blue-100">
+                  本次抓取未返回新增可用情报，当前列表展示的是最近缓存/历史情报。
                 </div>
               )}
               <div className="divide-y divide-gray-100 max-h-[60vh] lg:max-h-none overflow-y-auto lg:overflow-visible">
@@ -846,7 +998,7 @@ const IntelRadar = () => {
 
                   <div className="flex flex-wrap gap-2">
                     <button
-                      onClick={() => { convertSignalToFollowUpProject(selected.id); }}
+                      onClick={() => { void convertSignalToFollowUpProject(selected.id); }}
                       disabled={selected.status === MARKET_SIGNAL_STATUS.CONVERTED}
                       className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${
                         selected.status === MARKET_SIGNAL_STATUS.CONVERTED

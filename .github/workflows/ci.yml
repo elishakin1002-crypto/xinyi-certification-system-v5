@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Frontend secret scan
+        run: npm run security:bundle
+
+      # 迁移文件静态检查（不连库）：文件名格式、版本号重复、空文件、整库级危险语句。
+      # 放在 CI 是因为这类错误漏到部署那一刻才炸，代价比在这里拦下来大得多。
+      - name: Migration files lint
+        run: npm run migrate:lint
+
+      # 权限矩阵体检：路由守卫覆盖 + 角色×页面矩阵 + 敏感元素权限门。
+      # 加这一步是因为越权问题此前全靠人工逐个发现，容易漏。
+      - name: Permission matrix check
+        run: npm run health:permissions
+
+      - name: Deploy preflight (test profile)
+        env:
+          XINYI_REQUIRE_POSTGRES: "true"
+          XINYI_AUTH_REQUIRE_POSTGRES: "true"
+          DATABASE_URL: postgres://dummy:dummy@db.example.test:5432/dummy
+          PGSSLMODE: require
+          KIMI_API_KEY: ci-kimi-key-placeholder
+          XINYI_API_AUTH_TOKEN: ci-token-for-preflight-check
+          AUTH_SMOKE_ACCOUNT: admin@example.test
+          AUTH_SMOKE_PASSWORD: admin-pass-123
+          XINYI_SESSION_AUTH_REQUIRED: "1"
+          XINYI_SESSION_ROLE_ENFORCEMENT: "1"
+          XINYI_SESSION_COOKIE_SECURE: "1"
+          CORS_ALLOWED_ORIGINS: https://example.test
+          VITE_AI_BACKEND_URL: /api/ai
+          VITE_AUTH_REQUIRED: "1"
+          VITE_INTEL_LOCAL_FALLBACKS_ENABLED: "0"
+          VITE_STATE_SYNC_ENABLED: "1"
+          VITE_LEADS_API_ENABLED: "1"
+          VITE_LEADS_API_READ_ENABLED: "1"
+          VITE_LEADS_API_VERIFY_WRITES_ENABLED: "1"
+          VITE_CUSTOMERS_API_ENABLED: "1"
+          VITE_CUSTOMERS_API_READ_ENABLED: "1"
+          VITE_CUSTOMERS_API_VERIFY_WRITES_ENABLED: "1"
+          VITE_CONTRACTS_API_READ_ENABLED: "1"
+          VITE_CONTRACTS_API_WRITE_ENABLED: "1"
+          VITE_CONTRACTS_API_VERIFY_WRITES_ENABLED: "1"
+          VITE_PROJECTS_API_READ_ENABLED: "1"
+          VITE_PROJECTS_API_WRITE_ENABLED: "1"
+          VITE_PROJECTS_API_VERIFY_WRITES_ENABLED: "1"
+        run: npm run health:preflight:test
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E smoke
+        run: npm run e2e

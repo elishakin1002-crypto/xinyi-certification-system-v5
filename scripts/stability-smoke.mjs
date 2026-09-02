@@ -1,5 +1,14 @@
 const backendBase = process.env.STABILITY_BACKEND_BASE || 'http://127.0.0.1:3001';
 const proxyBase = process.env.STABILITY_PROXY_BASE || 'http://127.0.0.1:3000';
+const apiToken = String(process.env.XINYI_API_AUTH_TOKEN || process.env.API_AUTH_TOKEN || '').trim();
+
+const withAuthHeaders = (init = {}) => ({
+  ...init,
+  headers: {
+    ...(init.headers || {}),
+    ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {})
+  }
+});
 
 const ensureEnvelope = (obj) => {
   if (!obj || typeof obj !== 'object') return { pass: false, reason: 'not-json-object' };
@@ -12,7 +21,7 @@ const ensureEnvelope = (obj) => {
 const request = async (name, base, path, init) => {
   const started = Date.now();
   try {
-    const res = await fetch(`${base}${path}`, init);
+    const res = await fetch(`${base}${path}`, withAuthHeaders(init));
     const elapsedMs = Date.now() - started;
     const text = await res.text();
     let json = null;

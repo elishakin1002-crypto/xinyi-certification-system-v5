@@ -5,6 +5,7 @@ import { FileText, Download, Search, X, Upload, Loader2, BrainCircuit, Trash2, D
 import { AuditEvidence, AuditIssue, KnowledgeDoc, RoleID } from '../types';
 import { SYSTEM_ROLES } from '../constants';
 import { aiService } from '../services/aiService';
+import { extractForSummary, buildSummaryPrompt } from '../src/utils/summaryExtract';
 import { IngestionUploader } from '../components/IngestionUploader';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -12,6 +13,7 @@ import { extractTextFromDocx } from '../services/documentParsers';
 import { buildKnowledgeDedupeHash, findDuplicateKnowledgeDoc } from '../src/utils/knowledgeDedupe';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
+import { adviseIntake } from '../src/modules/knowledge/intake';
 import { APP_ROUTES } from '../src/routes';
 
 const Knowledge = () => {
@@ -30,8 +32,21 @@ const Knowledge = () => {
   const [newDocCategory, setNewDocCategory] = useState<'Company Profile' | 'Product Service' | 'Standard' | 'Template' | 'Training' | 'PDCA' | 'AI生成' | 'Other'>('Company Profile');
   const [visibleRoles, setVisibleRoles] = useState<RoleID[]>(['ADMIN', 'MANAGER', 'CONSULTANT', 'FINANCE']);
   
-  // V5.0 Security: AI Permission Toggle
-  const [aiVisible, setAiVisible] = useState(true);
+  /*
+    「让 AI 学习」默认**不勾**。
+
+    原来默认勾上，于是每一份传上去的文件都自动进 AI 语料——
+    包括体系文件范本、空白记录表单这类内容。它们有两个问题：
+      · 花钱：每次检索都要过一遍，token 是按量算的
+      · 污染：100 家客户的记录表单 90% 是相同的，检索时把真正有用的
+        复盘和案例挤下去，AI 答出来的东西越来越像模板
+
+    默认不勾不是不信任 AI，是让「这份值得让 AI 学」变成一次**明确的判断**，
+    而不是上传时顺手带过去的副作用。真正有价值的文档（客户复盘、
+    不符合项整改经验、AI 交付物）由系统自动生成时仍然默认可见——
+    那些是沉淀，不是模板。
+  */
+  const [aiVisible, setAiVisible] = useState(false);
 
   // Preview Drawer State
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDoc | null>(null);
@@ -178,33 +193,37 @@ const Knowledge = () => {
       }
   }, [location.state, accessibleDocs, knowledgeDocs]);
 
-  useEffect(() => {
-      // Auto-generate summary when opening preview if missing
-      if (previewDoc && !previewDoc.summary && !isSummarizing && previewDoc.aiVisible) {
-          const generateSummary = async () => {
-              setIsSummarizing(true);
-              try {
-                  // Fallback to title if content is missing (for mock binaries)
-                  const contentSnippet = previewDoc.content 
-                    ? previewDoc.content.slice(0, 2000) 
-                    : `(Document Title: ${previewDoc.title}. Category: ${previewDoc.category}. Note: Content is binary/PDF/Image. Please generate a plausible summary based on the title.)`;
-                  
-                  const prompt = `请为以下文档生成一份精炼的摘要（100字以内），突出核心价值和关键信息点：\n\n${contentSnippet}`;
-                  const summary = await aiService.generateText('kimi-k2.5', prompt);
-                  
-                  // Update global state
-                  updateKnowledgeDoc(previewDoc.id, { summary });
-                  // Update local preview state to show immediately
-                  setPreviewDoc(prev => prev ? { ...prev, summary } : null);
-              } catch (e) {
-                  console.error("Summary generation failed", e);
-              } finally {
-                  setIsSummarizing(false);
-              }
-          };
-          generateSummary();
+  /**
+   * 生成摘要。改了三处（P0-11 / P0-12）：
+   *
+   * ① 不再自动触发。原来一打开预览就同步调 AI——点一下花一次钱还要干等，
+   *    而且大多数时候人只是想看看原文。改成显式点按钮。
+   * ② 取材按长度分层，不再固定 slice(0, 2000)。
+   *    5970 字的培训手册原来只读到前三分之一，摘要必然是封面目录的废话。
+   * ③ 正文为空时直接拒绝。原来会给模型一句
+   *    「Please generate a plausible summary based on the title」——
+   *    那是让 AI 照着标题编，编出来的摘要看着像真的，比没有更糟。
+   */
+  const generateSummary = async (doc: KnowledgeDoc) => {
+      const extracted = extractForSummary(doc.content);
+      if (extracted.tier === 'empty') {
+          alert('该文档没有正文内容，无法生成摘要。\n（不会让 AI 照着标题编——编出来的摘要看着像真的，比没有更糟）');
+          return;
       }
-  }, [previewDoc]);
+      setIsSummarizing(true);
+      try {
+          const summary = await aiService.generateText('kimi-k2.5', buildSummaryPrompt(doc.title, extracted));
+          updateKnowledgeDoc(doc.id, { summary });
+          setPreviewDoc(prev => prev ? { ...prev, summary } : null);
+      } catch (e) {
+          console.error("Summary generation failed", e);
+          alert('摘要生成失败，请稍后重试');
+      } finally {
+          setIsSummarizing(false);
+      }
+  };
+
+
 
   const toggleVisibleRole = (roleId: RoleID) => {
       setVisibleRoles(prev => {
@@ -262,16 +281,41 @@ const Knowledge = () => {
               else detectedFormat = 'png'; 
           }
 
+          const finalTitle = newDocTitle || file.name.replace(/\.[^/.]+$/, "");
+
+          /*
+            入库准入检查。挡两类东西，性质完全不同：
+              · 空白记录表单／通用模板 —— 100 家客户的同类表单大同小异，
+                每家存一份会把真正有价值的复盘从检索结果里挤下去
+              · 客户填好的记录 —— **合规风险**：客户的生产、检验、人员数据
+                属于客户自己，存进我们系统意味着我们要为保管和泄露负责
+
+            做成提示而不是硬拦：识别靠特征匹配，一定有误判。
+            硬拦会让人传不上真正要传的文件，然后他绕过系统发微信——那比存进来更糟。
+            所以让人看到理由后自己决定，只是默认不进 AI 语料。
+          */
+          const advice = adviseIntake(finalTitle, extractedText);
+          let finalAiVisible = aiVisible;
+          if (advice.verdict !== 'ok') {
+              const proceed = window.confirm(
+                  `${advice.reason}\n\n识别依据：${advice.signals.join('、')}\n\n`
+                  + (advice.discourageStore
+                      ? '⚠️ 这类文件建议不要存进系统。确定仍要上传？'
+                      : '仍要上传吗？（会存下来，但不让 AI 学习）'));
+              if (!proceed) return;
+              finalAiVisible = false;   // 无论原来勾没勾，这两类都不进语料
+          }
+
           const newDoc: KnowledgeDoc = {
               id: `DOC-${Date.now()}`,
-              title: newDocTitle || file.name.replace(/\.[^/.]+$/, ""),
+              title: finalTitle,
               category: newDocCategory,
               format: detectedFormat,
               size: `${(file.size / 1024).toFixed(1)} KB`,
               updatedAt: new Date().toISOString().split('T')[0],
               content: extractedText,
               sourceUrl: URL.createObjectURL(file), // Create object URL for preview/download
-              aiVisible: aiVisible, // V5.0 Security Flag
+              aiVisible: finalAiVisible,
               accessRoles: visibleRoles
           };
           const added = await tryAddKnowledgeDoc(newDoc, file);
@@ -533,7 +577,7 @@ const Knowledge = () => {
 
       {/* Upload Modal with Security Toggle */}
       {isModalOpen && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in duration-200">
                   <div className="flex justify-between items-center mb-6">
                       <h2 className="text-xl font-bold text-gray-900 flex items-center">
@@ -818,6 +862,12 @@ const Knowledge = () => {
                                           <Sparkles className="w-4 h-4 mb-2 text-yellow-500" />
                                           {previewDoc.summary}
                                       </div>
+                                      <button
+                                        onClick={() => generateSummary(previewDoc)}
+                                        className="w-full text-[11px] font-bold text-gray-500 border border-gray-200 rounded-lg py-1.5 hover:bg-gray-50 transition-colors"
+                                      >
+                                          <RefreshCw className="w-3 h-3 inline mr-1" /> 重新生成摘要
+                                      </button>
                                       <div className="border-t border-gray-100 pt-4">
                                           <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-2">建议用途</h4>
                                           <ul className="list-disc list-inside text-xs text-gray-500 space-y-1">
@@ -829,13 +879,23 @@ const Knowledge = () => {
                                   </div>
                               ) : (
                                   <div className="text-center py-10">
-                                      <p className="text-xs text-gray-400 mb-4">暂无摘要</p>
-                                      <button 
-                                        onClick={() => setPreviewDoc({...previewDoc, summary: ''})}
-                                        className="text-xs bg-indigo-50 text-indigo-600 px-3 py-2 rounded-lg font-bold hover:bg-indigo-100 transition-colors"
+                                      <p className="text-xs text-gray-400 mb-1">暂无摘要</p>
+                                      {/* 不再自动生成：打开预览就调 AI，点一下花一次钱还要干等（P0-12） */}
+                                      <p className="text-[10px] text-gray-400 mb-4 leading-4">摘要按需生成，不会自动运行</p>
+                                      <button
+                                        onClick={() => generateSummary(previewDoc)}
+                                        className="text-xs bg-indigo-600 text-white px-3 py-2 rounded-lg font-bold hover:bg-indigo-700 active:scale-95 transition-all"
                                       >
-                                          <RefreshCw className="w-3 h-3 inline mr-1" /> 重新生成
+                                          <Sparkles className="w-3 h-3 inline mr-1" /> 生成摘要
                                       </button>
+                                      {(() => {
+                                        const ex = extractForSummary(previewDoc.content);
+                                        const tip = ex.tier === 'empty' ? '该文档没有正文，无法生成'
+                                          : ex.tier === 'full' ? `将读取全文（${ex.originalLength} 字）`
+                                          : ex.tier === 'outline' ? `全文 ${ex.originalLength} 字，将取开头 + 结构 + 结尾`
+                                          : `全文 ${ex.originalLength} 字，仅提取标题结构`;
+                                        return <p className="text-[10px] text-gray-400 mt-3 leading-4">{tip}</p>;
+                                      })()}
                                   </div>
                               )}
                           </div>

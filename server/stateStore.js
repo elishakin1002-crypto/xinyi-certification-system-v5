@@ -1,7 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 
-const fileStorePath = path.resolve(__dirname, './state_store.json');
+const legacyFileStorePath = path.resolve(__dirname, './state_store.json');
+const fileStorePath = (() => {
+  const configured = String(process.env.STATE_STORE_PATH || process.env.XINYI_STATE_STORE_PATH || '').trim();
+  if (configured) {
+    return path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured);
+  }
+  return path.resolve(process.cwd(), '.runtime/state_store.json');
+})();
 const MAX_DATASET_KEY_LENGTH = 128;
 const DATASET_KEY_PATTERN = /^[a-z0-9_]+$/;
 
@@ -11,6 +18,19 @@ let backend = {
   ready: false,
   reason: 'not-initialized'
 };
+
+const parseBoolean = (raw, fallback = false) => {
+  const text = String(raw ?? '').trim().toLowerCase();
+  if (!text) return fallback;
+  if (['1', 'true', 'yes', 'on'].includes(text)) return true;
+  if (['0', 'false', 'no', 'off'].includes(text)) return false;
+  return fallback;
+};
+
+const requirePostgres = () => parseBoolean(
+  process.env.XINYI_REQUIRE_POSTGRES ?? process.env.REQUIRE_POSTGRES,
+  false
+);
 
 const nowIso = () => new Date().toISOString();
 
@@ -27,6 +47,20 @@ const normalizeFileRecord = (record, fallbackNow) => {
 };
 
 const ensureFileStore = () => {
+  const dir = path.dirname(fileStorePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  if (!fs.existsSync(fileStorePath) && fs.existsSync(legacyFileStorePath)) {
+    try {
+      fs.copyFileSync(legacyFileStorePath, fileStorePath);
+      return;
+    } catch {
+      // noop: fallback to empty store initialization
+    }
+  }
+
   if (!fs.existsSync(fileStorePath)) {
     fs.writeFileSync(
       fileStorePath,
@@ -83,16 +117,22 @@ const normalizeDatasetEntries = (datasets) => {
     .filter(([key]) => Boolean(key));
 };
 
-const usePostgres = () => {
-  const url = String(process.env.DATABASE_URL || '').trim();
-  return Boolean(url);
-};
+/*
+  同一个数据库历史上存在两个变量名：本文件用 DATABASE_URL，
+  系统其余部分用 XINYI_DB_URL。DATABASE_URL 从没设过，
+  于是 PG 后端从未初始化、建表语句根本没执行，一切静默落回 JSON 文件——
+  工作日志、不符合项、任务模板因此被困在文件里，SQL 和 AI 都查不到。
+  这里做兼容解析，两个变量任一存在即可。
+*/
+const resolveDbUrl = () => String(process.env.DATABASE_URL || process.env.XINYI_DB_URL || '').trim();
+
+const usePostgres = () => Boolean(resolveDbUrl());
 
 const initPostgresStore = async () => {
   // Lazy import so non-DB environments work without requiring pg.
   const { Pool } = require('pg');
   pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: resolveDbUrl(),
     ssl: String(process.env.PGSSLMODE || '').toLowerCase() === 'require'
       ? { rejectUnauthorized: false }
       : undefined
@@ -130,12 +170,21 @@ const initPostgresStore = async () => {
 };
 
 const initStateStore = async () => {
+  const mustUsePostgres = requirePostgres();
   if (!usePostgres()) {
+    if (mustUsePostgres) {
+      backend = {
+        mode: 'file',
+        ready: false,
+        reason: 'postgres-required-but-database-url-missing'
+      };
+      throw new Error('XINYI_REQUIRE_POSTGRES=true 但 DATABASE_URL / XINYI_DB_URL 都未配置');
+    }
     ensureFileStore();
     backend = {
       mode: 'file',
       ready: true,
-      reason: 'DATABASE_URL not configured'
+      reason: 'DATABASE_URL / XINYI_DB_URL 均未配置'
     };
     return backend;
   }
@@ -148,6 +197,14 @@ const initStateStore = async () => {
       reason: 'connected'
     };
   } catch (error) {
+    if (mustUsePostgres) {
+      backend = {
+        mode: 'postgres',
+        ready: false,
+        reason: `postgres-required-connect-failed: ${error?.message || 'unknown'}`
+      };
+      throw error;
+    }
     ensureFileStore();
     backend = {
       mode: 'file',
@@ -178,9 +235,81 @@ const upsertStateBatchFile = async (datasets, meta) => {
   return { written: entries.length };
 };
 
+
+/**
+ * 写入前比一下条数，掉太多就留下痕迹。
+ *
+ * **绝不抛异常**：这是观察设施，不能反过来让保存失败。
+ * 检测本身出错时静默跳过——那时最坏的结果是少一条提示，
+ * 而抛出去会让用户存不了数据。
+ */
+const warnOnShrinkage = async (entries, meta) => {
+  try {
+    const ts = require('typescript');
+    const fsx = require('fs');
+    const pathx = require('path');
+    if (!warnOnShrinkage._mod) {
+      const src = fsx.readFileSync(pathx.join(__dirname, '../src/modules/state_guard/shrinkage.ts'), 'utf8');
+      const js = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+      const m = { exports: {} };
+      new Function('module', 'exports', js)(m, m.exports);
+      warnOnShrinkage._mod = m.exports;
+    }
+    const { checkShrinkage, countOf } = warnOnShrinkage._mod;
+
+    const keys = entries.map(([k]) => k);
+    const { rows } = await pool.query(
+      'SELECT dataset_key, dataset_value FROM app_state_latest WHERE dataset_key = ANY($1::text[])', [keys]);
+    const beforeByKey = new Map(rows.map((r) => [r.dataset_key, countOf(r.dataset_value)]));
+
+    for (const [key, value] of entries) {
+      const before = beforeByKey.get(key);
+      const after = countOf(value);
+      if (before === undefined || before < 0 || after < 0) continue;   // 非数组数据集不适用
+
+      const v = checkShrinkage(key, before, after);
+      if (!v.suspicious) continue;
+
+      console.warn(`[stateGuard] ⚠️  ${v.reason}`);
+      /*
+        写进业务事件账本。console 会被日志轮转冲掉，
+        而这条记录是「某次保存吃掉了数据」的唯一长期证据，
+        也是事后能顺着时间点去 app_state_history 翻回去的线索。
+      */
+      try {
+        const { businessEventRepo } = require('./repos/businessEventRepo');
+        await businessEventRepo.recordDenied({
+          actor: { id: meta.actorUserId || '', name: '', roles: [] },
+          action: 'STATE_SHRINK_WARNING',
+          resource: { type: 'dataset', id: key },
+          policy: 'state.shrink',
+          reason: v.reason,
+        });
+      } catch { /* 记账失败不影响保存 */ }
+    }
+  } catch (e) {
+    console.warn('[stateGuard] 缩水检测出错，已跳过：', e?.message || e);
+  }
+};
+
 const upsertStateBatchPostgres = async (datasets, meta) => {
   const entries = normalizeDatasetEntries(datasets);
   if (entries.length === 0) return { written: 0 };
+
+  /*
+    ── 缩水检测（2026-09-01 补）──────────────────────────────────
+    整份数组写入的老毛病：两个地方各持一份副本，后写的盖掉先写的。
+    2026-08-28 就这么丢过 11 个员工账号，**没有任何报错**。
+
+    app_state_history 每次写都留完整快照，所以理论上都能翻回去。
+    但真正的问题是**没人会发现**——页面上就是「少了几条」，
+    等三个月后有人问「那个客户怎么没了」，备份早轮转掉了。
+
+    所以这里只报警不拦截：拦了会误伤真实的批量清理，
+    而一个会误伤的保护最后一定会被要求关掉。
+  */
+  await warnOnShrinkage(entries, meta);
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -239,10 +368,27 @@ const upsertStateBatchPostgres = async (datasets, meta) => {
 
 const upsertStateBatch = async (datasets, meta = {}) => {
   if (!backend.ready) await initStateStore();
+  const result = (backend.mode === 'postgres' && pool)
+    ? await upsertStateBatchPostgres(datasets, meta)
+    : await upsertStateBatchFile(datasets, meta);
+
+  /*
+    投影到关系表（不符合项、工作日志、任务模板）。
+
+    挂在这里是因为**这是所有数据集写入的唯一入口**——
+    /api/state/sync、事务接口、后端服务写的都要过这一关。
+    挂在任何一个调用方身上都会漏掉另外几条路。
+
+    放在 state store 写成功之后：关系表是派生数据，
+    主存储没写成就不该有派生。projectToRelational 内部只警告不抛，
+    投影失败不会让已经成功的业务写入回滚。
+  */
   if (backend.mode === 'postgres' && pool) {
-    return upsertStateBatchPostgres(datasets, meta);
+    const { projectToRelational } = require('./services/relationalProjection');
+    await projectToRelational(datasets, meta);
   }
-  return upsertStateBatchFile(datasets, meta);
+
+  return result;
 };
 
 const getStateBatchFile = async (keys) => {

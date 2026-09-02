@@ -41,12 +41,14 @@ const normalizeFetchError = (e: unknown) => {
 const buildApiBaseCandidates = () => {
   const configured = String(import.meta.env.VITE_API_BASE_URL || '').trim();
   const configuredPort = Number(import.meta.env.VITE_API_PORT || 0);
+  const enableLocalFallbacks = /^(1|true|yes|on)$/i.test(
+    String(import.meta.env.VITE_INTEL_LOCAL_FALLBACKS_ENABLED || '').trim()
+  );
   const list = [
     '',
     configured,
     configuredPort > 0 ? `http://127.0.0.1:${configuredPort}` : '',
-    'http://127.0.0.1:3101',
-    'http://127.0.0.1:3001'
+    ...(enableLocalFallbacks ? ['http://127.0.0.1:3101', 'http://127.0.0.1:3001'] : [])
   ].filter(Boolean);
   return Array.from(new Set(list));
 };
@@ -95,6 +97,7 @@ export const intelService = {
           const res = await fetch(joinApiUrl(base, '/api/intel/fetch'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             signal: controller.signal,
             body: JSON.stringify({
               regions: config.regions,
@@ -130,8 +133,8 @@ export const intelService = {
           return {
             ok: true,
             signals,
-            source: 'server',
-            stale: false,
+            source: payload?.source === 'cache' ? 'cache' : 'server',
+            stale: Boolean(payload?.stale),
             droppedStale: Number(payload?.droppedStale || 0),
             droppedUndated: Number(payload?.droppedUndated || 0),
             rescuedUndated: Number(payload?.rescuedUndated || 0),
@@ -153,7 +156,7 @@ export const intelService = {
       const candidates = buildApiBaseCandidates();
       let lastError = '拉取失败';
       for (const base of candidates) {
-        const res = await fetch(joinApiUrl(base, '/api/intel/latest'));
+        const res = await fetch(joinApiUrl(base, '/api/intel/latest'), { credentials: 'include' });
         const { data, error } = await safeReadJson(res);
         if (!data) {
           lastError = error || `拉取失败（HTTP ${res.status}）`;

@@ -53,7 +53,9 @@ export const processKnowledge = async (file: File, options?: { aiVisible?: boole
       content: content,
       summary: summary,
       sourceUrl: URL.createObjectURL(file),
-      aiVisible: options?.aiVisible ?? true
+      // 默认不开放给 AI：调用方明确需要时再显式传 true。
+      // 反过来（默认 true）的话，任何新接入的自动归档都会悄悄进检索库（P0-13）
+      aiVisible: options?.aiVisible ?? false
     };
 
     return {

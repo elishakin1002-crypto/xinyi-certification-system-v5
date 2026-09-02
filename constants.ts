@@ -1,54 +1,195 @@
 
 
-import { Lead, Customer, Contract, Project, Status, Role, TaskTemplate, Vendor, StrategicTask, RoleID, PermissionCode, UserProfile, RoleCapability, ServiceCatalogItem, ServiceWorkflowTemplate, ServiceCategory, ServiceDeliveryMode } from './types';
+import { Lead, Customer, Contract, Project, Status, Role, TaskTemplate, Vendor, StrategicTask, RoleID, PermissionCode, UserProfile, RoleCapability, ServiceCatalogItem, ServiceWorkflowTemplate, ServiceCategory, ServiceDeliveryMode, ActionCode, SysAdminMode, CustomerVisibilityPolicy } from './types';
 
 // --- 权限能力矩阵 (Capability Matrix) ---
 export const ROLE_CAPABILITIES: Record<RoleID, RoleCapability> = {
+  // 老板：业务最高权限
   ADMIN: {
     actions: [
-      'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER', 'PROJECT_PAUSE',
+      'PROJECT_VIEW', 'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER', 'PROJECT_PAUSE',
       'TASK_CREATE', 'TASK_COMPLETE', 'TASK_DELETE',
-      'CONTRACT_CREATE', 'CONTRACT_VIEW_AMOUNT',
-      'CUSTOMER_CREATE', 'LEAD_CONVERT'
-    ],
-    dataScope: 'ALL'
+      'CONTRACT_CREATE', 'CONTRACT_VIEW_AMOUNT', 'PAYMENT_CONFIRM', 'SETTLEMENT_VIEW',
+      'CUSTOMER_CREATE', 'LEAD_CONVERT',
+      'EMPLOYEE_VIEW', 'EMPLOYEE_CREATE', 'EMPLOYEE_UPDATE', 'EMPLOYEE_UPDATE_ROLE',
+      'EMPLOYEE_DISABLE', 'EMPLOYEE_RESET_PASSWORD', 'AUTH_AUDIT_VIEW'
+    ,
+      'PROJECT_AI_DIAGNOSE', 'SYSTEM_DIAGNOSE', 'WORKLOG_DELETE_ANY',
+      'LEAD_CREATE', 'SETTLEMENT_MANAGE', 'KNOWLEDGE_WRITE', 'REMINDER_WRITE',
+      'CUSTOMER_EDIT', 'LEAD_EDIT', 'CONTRACT_EDIT',
+      'LEAD_CLAIM', 'LEAD_ASSIGN_OWNER', 'CONTRACT_ASSIGN_OWNER', 'PROJECT_ASSIGN_OWNER'],
+    dataScope: 'ALL',   // 旧字段，保留兼容
+    // 老板：全局
+    readScope: 'ALL',
+    writeScope: 'ALL'
   },
+  // 系统管理员：技术维护。稳定运行前与 ADMIN 等权（SYS_ADMIN_MODE='full'），
+  // 切到 'limited' 后由 resolveSysAdminActions 收窄为业务只读。
+  SYS_ADMIN: {
+    actions: [
+      'PROJECT_VIEW', 'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER', 'PROJECT_PAUSE',
+      'TASK_CREATE', 'TASK_COMPLETE', 'TASK_DELETE',
+      'CONTRACT_CREATE', 'CONTRACT_VIEW_AMOUNT', 'PAYMENT_CONFIRM', 'SETTLEMENT_VIEW',
+      'CUSTOMER_CREATE', 'LEAD_CONVERT',
+      'EMPLOYEE_VIEW', 'EMPLOYEE_CREATE', 'EMPLOYEE_UPDATE', 'EMPLOYEE_UPDATE_ROLE',
+      'EMPLOYEE_DISABLE', 'EMPLOYEE_RESET_PASSWORD', 'AUTH_AUDIT_VIEW'
+    ,
+      'PROJECT_AI_DIAGNOSE', 'SYSTEM_DIAGNOSE', 'WORKLOG_DELETE_ANY',
+      'LEAD_CREATE', 'SETTLEMENT_MANAGE', 'KNOWLEDGE_WRITE', 'REMINDER_WRITE',
+      'CUSTOMER_EDIT', 'LEAD_EDIT', 'CONTRACT_EDIT',
+      'LEAD_CLAIM', 'LEAD_ASSIGN_OWNER', 'CONTRACT_ASSIGN_OWNER', 'PROJECT_ASSIGN_OWNER'],
+    dataScope: 'ALL',   // 旧字段，保留兼容
+    // 系统管理员：稳定后可收窄，见 SYS_ADMIN_MODE
+    readScope: 'ALL',
+    writeScope: 'ALL'
+  },
+  // 总助：代老板统筹派活与进度，不碰钱
   MANAGER: {
     actions: [
-      'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER', 'PROJECT_PAUSE',
+      'PROJECT_VIEW', 'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER', 'PROJECT_PAUSE',
       'TASK_CREATE', 'TASK_COMPLETE', 'TASK_DELETE',
       'CONTRACT_CREATE', 'CONTRACT_VIEW_AMOUNT',
       'CUSTOMER_CREATE', 'LEAD_CONVERT'
-    ],
-    dataScope: 'DEPARTMENT' // 实际业务中通常指交付部范围
+    ,
+      'PROJECT_AI_DIAGNOSE', 'WORKLOG_DELETE_ANY',
+      /*
+        总助能建线索（2026-08-31 补）。
+        原来她能给线索加跟进、能把线索转客户，**唯独不能新建一条**——
+        老板在外面谈到一个客户回来让她记一下，她做不了。
+        「能改不能建」这种缺口不是设计，是漏了。
+      */
+      'LEAD_CREATE',
+      'KNOWLEDGE_WRITE', 'REMINDER_WRITE',
+      'CUSTOMER_EDIT', 'LEAD_EDIT', 'CONTRACT_EDIT',
+      // 总助可指派线索和项目归属；合同归属牵扯金额，留给老板/财务
+      'LEAD_ASSIGN_OWNER', 'PROJECT_ASSIGN_OWNER'],
+    dataScope: 'DEPARTMENT',   // 旧字段，保留兼容
+    // 总助：看全部，改本部门
+    readScope: 'ALL',
+    writeScope: 'DEPARTMENT' // 实际业务中通常指交付部范围
   },
+  // 销售：管到签约为止。可看交付进度（客户会问），但不能改。
+  SALES: {
+    actions: [
+      'PROJECT_VIEW',
+      'CONTRACT_CREATE', 'CONTRACT_VIEW_AMOUNT',
+      'CUSTOMER_CREATE', 'LEAD_CONVERT',
+      'LEAD_CREATE', 'REMINDER_WRITE',
+      'CUSTOMER_EDIT', 'LEAD_EDIT', 'CONTRACT_EDIT',
+      // 认领无主线索。刻意**不给** *_ASSIGN_OWNER——
+      // 指派是管理动作，销售能自己认领，但不能把活派给别人（或抢别人的）。
+      'LEAD_CLAIM'
+    ],
+    dataScope: 'OWN',   // 旧字段，保留兼容
+    // 销售：可看全部客户，只能改自己名下的
+    readScope: 'ALL',
+    writeScope: 'OWN'
+  },
+  // 咨询师：管交付执行。刻意不给 CONTRACT_VIEW_AMOUNT，避免与客户议价、同事间比价。
   CONSULTANT: {
     actions: [
+      'PROJECT_VIEW',
       'TASK_CREATE', 'TASK_COMPLETE',
+      /*
+        顾问可以完成**自己的**项目（2026-08-31 补，writeScope='OWN' 限定范围）。
+
+        原来挡着是出于「完成会触发结算」的顾虑。但实测看清楚了：
+        完成生成的是结算**草稿**（status='draft'），真正发放要 SETTLEMENT_MANAGE，
+        只有老板和财务有——**钱那道闸本来就在下游**。
+
+        而挡着的代价很实在：活是顾问做的，什么时候真做完只有他知道。
+        要老板或总助来点这一下，就成了「等一个不知道情况的人来确认一件他不清楚的事」。
+        老板还是公司主要销售，常年在外面跑，这种确认会一直压着。
+
+        另外完成本身有硬门槛：所有任务必须交代过（完成或跳过），点不了糊弄。
+      */
+      'PROJECT_EDIT_INFO',
       'CONTRACT_CREATE',
-      'CUSTOMER_CREATE'
+      'CUSTOMER_CREATE',
+      'KNOWLEDGE_WRITE', 'REMINDER_WRITE',
+      // 顾问改客户资料（现场了解到的信息），但不碰线索和合同——那是销售的地盘
+      'CUSTOMER_EDIT'
     ],
-    dataScope: 'OWN'
+    dataScope: 'OWN',   // 旧字段，保留兼容
+    // 咨询顾问：可看全部项目进度，只能改自己参与的任务
+    readScope: 'ALL',
+    writeScope: 'OWN'
   },
   FINANCE: {
     actions: [
+      'PROJECT_VIEW',
       'CONTRACT_VIEW_AMOUNT',
-      'PAYMENT_CONFIRM'
+      'PAYMENT_CONFIRM',
+      'SETTLEMENT_VIEW',
+      'SETTLEMENT_MANAGE', 'REMINDER_WRITE',
+      // 合同归属牵扯金额与提成归属，由财务指定；MANAGER 刻意没有这一条
+      'CONTRACT_EDIT', 'CONTRACT_ASSIGN_OWNER'
     ],
-    dataScope: 'ALL' // 财务通常看所有合同回款
+    dataScope: 'ALL',   // 旧字段，保留兼容
+    // 财务：回款结算需要全量视野
+    readScope: 'ALL',
+    writeScope: 'ALL' // 财务通常看所有合同回款
   }
 };
 
+/**
+ * 系统管理员权限模式。上线到稳定运行期间保持 'full'；
+ * 稳定后改为 'limited'，业务写动作被收走，只保留技术与只读能力。
+ */
+export const SYS_ADMIN_MODE: SysAdminMode =
+  (String(import.meta.env?.VITE_SYS_ADMIN_MODE || '').trim() as SysAdminMode) || 'full';
+
+/** limited 模式下系统管理员保留的动作：账号/审计等技术能力 + 业务只读 */
+export const SYS_ADMIN_LIMITED_ACTIONS: ActionCode[] = [
+  'PROJECT_VIEW',
+  'CONTRACT_VIEW_AMOUNT',
+  'SETTLEMENT_VIEW',
+  'EMPLOYEE_VIEW', 'EMPLOYEE_CREATE', 'EMPLOYEE_UPDATE', 'EMPLOYEE_UPDATE_ROLE',
+  'EMPLOYEE_DISABLE', 'EMPLOYEE_RESET_PASSWORD', 'AUTH_AUDIT_VIEW'
+];
+
+/**
+ * 客户/线索可见范围策略（公司级）。
+ * 当前十几人团队默认 'all'；团队扩大后切 'dedupe' 可防撬单又不误撞单。
+ */
+export const CUSTOMER_VISIBILITY_POLICY: CustomerVisibilityPolicy =
+  (String(import.meta.env?.VITE_CUSTOMER_VISIBILITY || '').trim() as CustomerVisibilityPolicy) || 'all';
+
 export const SYSTEM_ROLES: Role[] = [
   { id: 'ADMIN', name: '老板', description: '全局视野，关注风险与利润' },
-  { id: 'MANAGER', name: '交付负责人', description: '关注资源分配与项目节点' },
+  { id: 'SYS_ADMIN', name: '系统管理员', description: '系统维护、账号与配置，稳定后可收窄为业务只读' },
+  /*
+    总助（总经理助理）。2026-08-24 由「交付负责人」改名。
+
+    按实际职能定名：代老板统筹派活、盯项目节点、管客户与合同资料，
+    但**不碰钱**（没有确认到账、没有结算权限）。
+    不叫「行政」是因为行政通常管后勤考勤，不管项目分派，名不副实。
+
+    改名前界面上还有一处 hack 把它显示成「销售」，
+    导致选「销售」实际拿到的是一个**不能建线索、不能认领线索，
+    却能删任务和删别人工作日志**的角色。那个 hack 已一并移除。
+  */
+  { id: 'MANAGER', name: '总助', description: '代老板统筹派活与进度，管资料不碰钱' },
+  { id: 'SALES', name: '销售', description: '线索到签约，可查看交付进度但不改' },
   { id: 'CONSULTANT', name: '咨询顾问', description: '具体执行任务与客户沟通' },
   { id: 'FINANCE', name: '财务', description: '关注回款、开票与结算' },
 ];
 
+/**
+ * 角色的中文名。所有面向用户的文案一律用它，不要直接显示 RoleID。
+ * withCode=true 时显示「中文（CODE）」，用于管理员配置界面这类需要对照的场景。
+ */
+export const roleLabel = (roleId: RoleID, withCode = false): string => {
+  const name = SYSTEM_ROLES.find(role => role.id === roleId)?.name || roleId;
+  return withCode && name !== roleId ? `${name}（${roleId}）` : name;
+};
+
 export const ROLE_PERMISSIONS: Record<RoleID, PermissionCode[]> = {
   ADMIN: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_FINANCE', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_STRATEGY', 'NAV_AI_CENTER'],
+  SYS_ADMIN: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_FINANCE', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_STRATEGY', 'NAV_AI_CENTER'],
   MANAGER: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_STRATEGY', 'NAV_AI_CENTER'],
+  // 销售可进交付看进度（客户会问证书什么时候下来），但动作权限里没有编辑类
+  SALES: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_AI_CENTER'],
   CONSULTANT: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_AI_CENTER'],
   FINANCE: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_FINANCE', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_AI_CENTER']
 };
@@ -65,7 +206,7 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
 
 export const DEFAULT_USER_PROFILES: UserProfile[] = [
   { id: 'U-001', name: '老板（示例）', roles: ['ADMIN', 'CONSULTANT'], activeRole: 'ADMIN', positionTags: ['公司负责人', '销售'] },
-  { id: 'U-002', name: '交付负责人（示例）', roles: ['MANAGER'], activeRole: 'MANAGER', positionTags: ['交付管理'] },
+  { id: 'U-002', name: '总助（示例）', roles: ['MANAGER'], activeRole: 'MANAGER', positionTags: ['统筹派活'] },
   { id: 'U-003', name: '财务（示例）', roles: ['FINANCE'], activeRole: 'FINANCE', positionTags: ['对公财务'] },
   { id: 'U-004', name: '咨询顾问1（示例）', roles: ['CONSULTANT'], activeRole: 'CONSULTANT', positionTags: ['食品包装认证指导负责人'] },
   { id: 'U-005', name: '咨询顾问2（示例）', roles: ['CONSULTANT'], activeRole: 'CONSULTANT', positionTags: ['体系认证'] },
@@ -466,3 +607,61 @@ export const MOCK_SETTLEMENTS = [];
 export const MOCK_AUDITS = [];
 export const MOCK_DOCS = [];
 export const MOCK_STRATEGY_TASKS = [];
+
+/**
+ * 动作码的中文名与分组。给员工账号页的「单项权限」用。
+ *
+ * ── 为什么必须有中文名 ────────────────────────────────────────
+ * 让老板在一堆 `PAYMENT_CONFIRM` `WORKLOG_DELETE_ANY` 里勾选，
+ * 他只能凭猜。**看不懂的权限开关等于没有开关**——
+ * 要么不敢动，要么乱勾，两种都比没有更糟。
+ *
+ * ── 为什么标风险等级 ──────────────────────────────────────────
+ * 「查看合同金额」和「确认回款到账」在界面上长得一样，
+ * 但一个是看，一个是不可撤销的写。危险的要显眼。
+ */
+export const ACTION_META: Record<string, { label: string; group: string; risk?: 'high' }> = {
+  PROJECT_VIEW:            { label: '查看项目', group: '项目交付' },
+  PROJECT_CREATE:          { label: '新建项目', group: '项目交付' },
+  PROJECT_EDIT_INFO:       { label: '修改项目信息 / 完成项目', group: '项目交付' },
+  PROJECT_ASSIGN_MANAGER:  { label: '指派项目负责人', group: '项目交付' },
+  PROJECT_ASSIGN_OWNER:    { label: '指派项目归属', group: '项目交付' },
+  PROJECT_PAUSE:           { label: '暂停项目', group: '项目交付' },
+  PROJECT_AI_DIAGNOSE:     { label: '运行项目 AI 诊断', group: '项目交付' },
+
+  TASK_CREATE:             { label: '新建任务', group: '任务与日志' },
+  TASK_COMPLETE:           { label: '完成任务', group: '任务与日志' },
+  TASK_DELETE:             { label: '删除任务', group: '任务与日志' },
+  WORKLOG_DELETE_ANY:      { label: '删除别人的工作日志', group: '任务与日志', risk: 'high' },
+
+  LEAD_CREATE:             { label: '新建线索', group: '线索与客户' },
+  LEAD_EDIT:               { label: '修改线索', group: '线索与客户' },
+  LEAD_CLAIM:              { label: '认领无主线索', group: '线索与客户' },
+  LEAD_ASSIGN_OWNER:       { label: '把线索指派给别人', group: '线索与客户' },
+  LEAD_CONVERT:            { label: '线索转客户', group: '线索与客户' },
+  CUSTOMER_CREATE:         { label: '新建客户', group: '线索与客户' },
+  CUSTOMER_EDIT:           { label: '修改客户资料', group: '线索与客户' },
+
+  CONTRACT_CREATE:         { label: '录入合同', group: '合同与钱' },
+  CONTRACT_EDIT:           { label: '修改合同', group: '合同与钱' },
+  CONTRACT_VIEW_AMOUNT:    { label: '查看合同金额', group: '合同与钱' },
+  CONTRACT_ASSIGN_OWNER:   { label: '指定合同归属人', group: '合同与钱' },
+  PAYMENT_CONFIRM:         { label: '确认回款到账', group: '合同与钱', risk: 'high' },
+  SETTLEMENT_VIEW:         { label: '查看结算提成', group: '合同与钱' },
+  SETTLEMENT_MANAGE:       { label: '发放/调整结算提成', group: '合同与钱', risk: 'high' },
+
+  KNOWLEDGE_WRITE:         { label: '写入知识中心', group: '其他' },
+  REMINDER_WRITE:          { label: '创建提醒', group: '其他' },
+
+  EMPLOYEE_VIEW:           { label: '查看员工账号', group: '账号管理' },
+  EMPLOYEE_CREATE:         { label: '新建员工账号', group: '账号管理', risk: 'high' },
+  EMPLOYEE_UPDATE:         { label: '修改员工资料', group: '账号管理' },
+  EMPLOYEE_UPDATE_ROLE:    { label: '修改员工角色与权限', group: '账号管理', risk: 'high' },
+  EMPLOYEE_DISABLE:        { label: '停用员工账号', group: '账号管理', risk: 'high' },
+  EMPLOYEE_RESET_PASSWORD: { label: '重置员工密码', group: '账号管理', risk: 'high' },
+  AUTH_AUDIT_VIEW:         { label: '查看账号审计日志', group: '账号管理' },
+  SYSTEM_DIAGNOSE:         { label: '系统自检与自愈', group: '账号管理', risk: 'high' },
+};
+
+/** 分组顺序。钱和账号管理排最后——最危险的放在要滚动才看到的地方 */
+export const ACTION_GROUPS = ['项目交付', '任务与日志', '线索与客户', '其他', '合同与钱', '账号管理'];

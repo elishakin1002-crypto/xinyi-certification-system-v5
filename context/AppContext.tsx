@@ -1,19 +1,39 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
+import { detectStandards, buildPdcaTitle } from '../src/modules/knowledge/standards';
 import { Lead, Customer, Contract, ContractAttachment, Project, Settlement, Reminder, AuditIssue, Status, KnowledgeDoc, Vendor, ProjectTask, ServiceItem, RoleID, DashboardPersona, TaskTemplate, UserProfile, PermissionCode, FollowUpRecord, AuditNode, StrategicTask, Receivable, CertificateDetail, ProjectCategory, AIDecisionLog, AIAction, ActionCode, AIAllowedAction, AggregatedReminder, ReminderSeverity, ImportRecord, MarketSignal, ProjectWorkLog } from '../types';
-import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, ROLE_CAPABILITIES, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG } from '../constants';
+import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG } from '../constants';
 import { dataService } from '../services/dataService';
 import { aiService } from '../services/aiService';
-import { wechatService } from '../services/wechatService';
 import { importService } from '../services/importService';
 import { intelService } from '../services/intelService';
 import { stateSyncService } from '../services/stateSyncService';
+import { leadService } from '../services/leadService';
+import { customerService } from '../services/customerService';
+import { contractService } from '../services/contractService';
+import { projectService, type ProjectTransactionDatasets } from '../services/projectService';
+import { signalService } from '../services/signalService';
+import { knowledgeService } from '../services/knowledgeService';
+import { settlementService } from '../services/settlementService';
+import { reminderService } from '../services/reminderService';
+import { authService } from '../services/authService';
 import { serializeWorldState } from '../services/dataSerializer';
 import { buildDashboardMetrics, DashboardMetricsBundle } from '../services/dashboardMetrics';
 import { seedDemoData } from '../services/demoDataSeeder';
 import { ARCHIVE_STATUS, MARKET_SIGNAL_STATUS, TASK_STATUS, WORK_LOG_SOURCE } from '../src/constants/status.ts';
-import { inferProjectMeta, resolveProjectCapabilities } from '../src/utils/projectCapabilities';
+import { inferProjectMeta, resolveProjectCapabilities, buildDefaultServiceItem, attachTasksToDefaultService } from '../src/utils/projectCapabilities';
 import { findDuplicateKnowledgeDoc } from '../src/utils/knowledgeDedupe';
+import { checkRoleActionPermission } from '../src/utils/actionPermissions';
+
+type CompleteProjectOptions = {
+  source?: 'manual' | 'auto';
+  tasksOverride?: ProjectTask[];
+  projectWorkLogsOverride?: {
+    next: ProjectWorkLog[];
+    previous: ProjectWorkLog[];
+    expectedLogId?: string;
+  };
+};
 
 export interface AppContextType {
   leads: Lead[]; customers: Customer[]; contracts: Contract[]; projects: Project[];
@@ -25,6 +45,7 @@ export interface AppContextType {
 
   currentUser: UserProfile;
   userProfiles: UserProfile[];
+  isAuthRequired: boolean;
   switchUser: (userId: string) => void;
   updateUserProfile: (userId: string, updates: Partial<UserProfile>) => void;
   addUserProfile: (profile: UserProfile) => void;
@@ -37,7 +58,7 @@ export interface AppContextType {
   userPermissions: PermissionCode[];
   hasPermission: (permission: PermissionCode) => boolean;
   
-  // 新增：全能大脑动作权限校验
+  // 新增：智能助手动作权限校验
   checkActionPermission: (action: ActionCode, context?: any) => { allowed: boolean; reason?: string };
 
   visibleReminders: Reminder[];
@@ -54,7 +75,7 @@ export interface AppContextType {
   
   // 核心操作
   addProject: (p: AddProjectInput) => void;
-  assignProjectManager: (projectId: string, manager: string) => { ok: boolean; reason?: string };
+  assignProjectManager: (projectId: string, manager: string, ownerUserId?: string) => { ok: boolean; reason?: string };
   createFollowUpProjectFromLead: (leadId: string, opts?: { owner?: string; expiryDate?: string }) => string | null;
   createFollowUpProjectFromCustomer: (customerId: string, opts?: { owner?: string; expiryDate?: string; certificateId?: string }) => string | null;
   updateProjectTask: (projectId: string, taskId: string, updates: Partial<ProjectTask>) => void;
@@ -97,6 +118,8 @@ export interface AppContextType {
   updateAuditIssue: (id: string, updates: Partial<AuditIssue>) => void;
 
   rejectReceivable: (contractId: string, receivableId: string, reason: string) => void;
+  /** 销售报备已收款，推待办给财务核对；不改回款状态 */
+  claimReceivablePaid: (contractId: string, receivableId: string, note?: string) => { ok: boolean; reason?: string };
   importSettlements: (items: Settlement[]) => void;
   updateSettlementStatus: (settlementId: string, status: Settlement['status']) => void;
 
@@ -105,7 +128,7 @@ export interface AppContextType {
   backfillPdcaForPaidContracts: () => { scanned: number; created: number; updated: number; skipped: number };
   upsertMarketSignals: (signals: MarketSignal[]) => void;
   updateMarketSignal: (id: string, updates: Partial<MarketSignal>) => void;
-  convertSignalToFollowUpProject: (signalId: string) => { ok: boolean; projectId?: string; reason?: string };
+  convertSignalToFollowUpProject: (signalId: string) => Promise<{ ok: boolean; projectId?: string; reason?: string }>;
   convertIntelProjectToLead: (projectId: string) => { ok: boolean; leadId?: string; reason?: string };
   bindFollowUpProjectToCustomer: (projectId: string, customerId: string) => { ok: boolean; reason?: string };
 
@@ -124,7 +147,6 @@ export interface AppContextType {
   
   // 原有业务保全
   toggleReceivableStatus: (contractId: string, receivableId: string) => void;
-  generateProjectSettlement: (p: Project, a?: number, n?: string) => void;
   addReminder: (reminder: Omit<Reminder, 'id' | 'isRead'> & { id?: string }) => void;
   dismissReminder: (id: string) => void;
   addKnowledgeDoc: (doc: KnowledgeDoc) => Promise<{ ok: boolean; reason?: string; duplicateId?: string }>;
@@ -133,7 +155,7 @@ export interface AppContextType {
   // AI Decision Center
   aiDecisionLogs: AIDecisionLog[];
   runProjectDiagnosis: (projectId: string) => Promise<any>;
-  completeProject: (projectId: string, opts?: { source?: 'manual' | 'auto'; tasksOverride?: ProjectTask[] }) => { ok: boolean; eventId?: string; reason?: string };
+  completeProject: (projectId: string, opts?: CompleteProjectOptions) => Promise<{ ok: boolean; eventId?: string; reason?: string }>;
   reopenProject: (projectId: string) => { ok: boolean; reason?: string };
   updateProjectCost: (projectId: string, amount: number) => { ok: boolean; reason?: string }; // T-002 Cost Update
 }
@@ -170,7 +192,9 @@ const asObjectOrNull = <T extends object>(value: unknown): T | null => (
 const asStringOrNull = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 const ROLE_TO_PERSONA: Record<RoleID, DashboardPersona> = {
   ADMIN: 'boss',
+  SYS_ADMIN: 'boss',
   MANAGER: 'sales',
+  SALES: 'sales',
   CONSULTANT: 'consultant',
   FINANCE: 'finance'
 };
@@ -188,9 +212,23 @@ const normalizePersona = (value?: string | null): DashboardPersona | null => {
   return null;
 };
 
-export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+const normalizeUserProfile = (user: UserProfile): UserProfile => ({
+  ...user,
+  roles: Array.isArray(user.roles) && user.roles.length > 0 ? user.roles : ['CONSULTANT'],
+  activeRole: Array.isArray(user.roles) && user.roles.includes(user.activeRole)
+    ? user.activeRole
+    : (Array.isArray(user.roles) && user.roles[0]) || 'CONSULTANT'
+});
+
+export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: UserProfile | null; authRequired?: boolean }> = ({ children, authenticatedUser = null, authRequired = false }) => {
+  /*
+    示例数据种子（P0-5）。默认关闭，靠 VITE_DEMO_SEED_ENABLED=1 显式打开。
+    上线前必须是关的：真实业务数据和示例数据混在一起，测试期就没法判读
+    ——同事报上来的问题分不清是系统的还是假数据造成的。
+    现在 8 个模块都开了 API 读取，页面数据来自 PG，不靠这个种子。
+  */
   const [demoSeedVersion] = useState(() => {
-    seedDemoData();
+    if (String(import.meta.env?.VITE_DEMO_SEED_ENABLED || '').trim() === '1') seedDemoData();
     return 1;
   });
   const [leads, setLeads] = useState<Lead[]>(() => dataService.get('leads_v8', MOCK_LEADS));
@@ -242,6 +280,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isAnalyzingStrategy, setIsAnalyzingStrategy] = useState<boolean>(false);
   const [strategicTasks, setStrategicTasks] = useState<StrategicTask[]>(() => dataService.get('strategic_tasks_v1', dataService.get('strategicTasks_v1', [])));
   const [backendReadReadyUserId, setBackendReadReadyUserId] = useState<string>('');
+  const wechatPushAttemptedIdsRef = React.useRef<Set<string> | null>(null);
   void demoSeedVersion;
 
   const [userProfiles, setUserProfiles] = useState<UserProfile[]>(() => {
@@ -255,6 +294,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (stored && userProfiles.some(u => u.id === stored)) return stored;
     return userProfiles[0]?.id || DEFAULT_USER_PROFILE.id;
   });
+
+  useEffect(() => {
+    if (!authRequired || !authenticatedUser?.id) return;
+    const nextUser = normalizeUserProfile(authenticatedUser);
+    setUserProfiles(prev => {
+      return prev.some(u => u.id === nextUser.id)
+        ? prev.map(u => u.id === nextUser.id ? { ...u, ...nextUser } : u)
+        : [nextUser, ...prev];
+    });
+    setCurrentUserId(authenticatedUser.id);
+  }, [authRequired, authenticatedUser?.id]);
 
   const currentUser = userProfiles.find(u => u.id === currentUserId) || userProfiles[0] || DEFAULT_USER_PROFILE;
   const safeActiveRole: RoleID = currentUser.roles.includes(currentUser.activeRole) ? currentUser.activeRole : currentUser.roles[0] || 'CONSULTANT';
@@ -338,14 +388,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setTemplatesNormalized(false);
         }
         if (userProfilesData && userProfilesData.length > 0) {
-          setUserProfiles(userProfilesData);
-          if (currentUserIdData && userProfilesData.some(u => u.id === currentUserIdData)) {
+          const nextUserProfiles = authRequired && authenticatedUser?.id
+            ? (
+              userProfilesData.some(u => u.id === authenticatedUser.id)
+                ? userProfilesData.map(u => u.id === authenticatedUser.id ? { ...u, ...normalizeUserProfile(authenticatedUser) } : u)
+                : [normalizeUserProfile(authenticatedUser), ...userProfilesData]
+            )
+            : userProfilesData;
+          setUserProfiles(nextUserProfiles);
+          if (authRequired && authenticatedUser?.id) {
+            setCurrentUserId(authenticatedUser.id);
+          } else if (currentUserIdData && nextUserProfiles.some(u => u.id === currentUserIdData)) {
             setCurrentUserId(currentUserIdData);
-          } else if (!userProfilesData.some(u => u.id === effectiveUserId)) {
-            setCurrentUserId(userProfilesData[0].id);
+          } else if (!nextUserProfiles.some(u => u.id === effectiveUserId)) {
+            setCurrentUserId(nextUserProfiles[0].id);
           }
         } else if (currentUserIdData) {
-          setCurrentUserId(currentUserIdData);
+          setCurrentUserId(authRequired && authenticatedUser?.id ? authenticatedUser.id : currentUserIdData);
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -357,6 +416,174 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setBackendReadReadyUserId('');
     hydrateFromBackend();
+    return () => { cancelled = true; };
+  }, [effectiveUserId, authRequired, authenticatedUser?.id]);
+
+  useEffect(() => {
+    if (!leadService.isReadEnabled()) return;
+    let cancelled = false;
+
+    const hydrateLeadsFromApi = async () => {
+      try {
+        const apiLeads = await leadService.listLeads();
+        if (cancelled) return;
+        setLeads(apiLeads);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn('[LeadService] read failed, fallback to local leads', msg);
+      }
+    };
+
+    hydrateLeadsFromApi();
+    return () => { cancelled = true; };
+  }, [effectiveUserId]);
+
+  useEffect(() => {
+    if (!customerService.isReadEnabled()) return;
+    let cancelled = false;
+
+    const hydrateCustomersFromApi = async () => {
+      try {
+        const apiCustomers = await customerService.listCustomers();
+        if (cancelled) return;
+        setCustomers(apiCustomers);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn('[CustomerService] read failed, fallback to local customers', msg);
+      }
+    };
+
+    hydrateCustomersFromApi();
+    return () => { cancelled = true; };
+  }, [effectiveUserId]);
+
+  useEffect(() => {
+    if (!contractService.isReadEnabled()) return;
+    let cancelled = false;
+
+    const hydrateContractsFromApi = async () => {
+      try {
+        const apiContracts = await contractService.listContracts();
+        if (cancelled) return;
+        setContracts(apiContracts);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn('[ContractService] read failed, fallback to local contracts', msg);
+      }
+    };
+
+    hydrateContractsFromApi();
+    return () => { cancelled = true; };
+  }, [effectiveUserId]);
+
+  useEffect(() => {
+    if (!projectService.isReadEnabled()) return;
+    let cancelled = false;
+
+    const hydrateProjectsFromApi = async () => {
+      try {
+        const apiProjects = await projectService.listProjects();
+        if (cancelled) return;
+        setProjects(apiProjects);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn('[ProjectService] read failed, fallback to local projects', msg);
+      }
+    };
+
+    hydrateProjectsFromApi();
+    return () => { cancelled = true; };
+  }, [effectiveUserId]);
+
+  useEffect(() => {
+    if (!signalService.isReadEnabled()) return;
+    let cancelled = false;
+    const hydrateSignalsFromApi = async () => {
+      try {
+        const apiSignals = await signalService.listSignals();
+        if (cancelled) return;
+        setMarketSignals(apiSignals);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn('[SignalService] read failed, fallback to local signals', msg);
+      }
+    };
+    hydrateSignalsFromApi();
+    return () => { cancelled = true; };
+  }, [effectiveUserId]);
+
+  useEffect(() => {
+    if (!knowledgeService.isReadEnabled()) return;
+    let cancelled = false;
+    const hydrateKnowledgeFromApi = async () => {
+      try {
+        const apiDocs = await knowledgeService.listDocs();
+        if (cancelled) return;
+        setKnowledgeDocs(apiDocs);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn('[KnowledgeService] read failed, fallback to local docs', msg);
+      }
+    };
+    hydrateKnowledgeFromApi();
+    return () => { cancelled = true; };
+  }, [effectiveUserId]);
+
+  useEffect(() => {
+    if (!settlementService.isReadEnabled()) return;
+    let cancelled = false;
+    const hydrateSettlementsFromApi = async () => {
+      try {
+        const apiSettlements = await settlementService.listSettlements();
+        if (cancelled) return;
+        setSettlements(apiSettlements);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn('[SettlementService] read failed, fallback to local settlements', msg);
+      }
+    };
+    hydrateSettlementsFromApi();
+    return () => { cancelled = true; };
+  }, [effectiveUserId]);
+
+  useEffect(() => {
+    if (!reminderService.isReadEnabled()) return;
+    let cancelled = false;
+    const hydrateRemindersFromApi = async () => {
+      try {
+        const apiReminders = await reminderService.listReminders();
+        if (cancelled) return;
+        setReminders(apiReminders);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn('[ReminderService] read failed, fallback to local reminders', msg);
+      }
+    };
+    hydrateRemindersFromApi();
+    return () => { cancelled = true; };
+  }, [effectiveUserId]);
+
+  // 人员花名册单一真相源：从「员工账号」(auth_users) 同步，业务(项目负责人/看板/提醒)与登录账号统一
+  useEffect(() => {
+    let cancelled = false;
+    const hydrateProfilesFromAuth = async () => {
+      try {
+        const accounts = await authService.listUsers();
+        if (cancelled || !Array.isArray(accounts) || accounts.length === 0) return;
+        setUserProfiles(accounts.map((a: any) => ({
+          id: a.id,
+          name: a.name,
+          roles: Array.isArray(a.roles) && a.roles.length ? a.roles : ['CONSULTANT'],
+          activeRole: a.activeRole || (Array.isArray(a.roles) && a.roles[0]) || 'CONSULTANT',
+          positionTags: Array.isArray(a.positionTags) ? a.positionTags : [],
+          reportsToUserId: a.reportsToUserId || undefined,
+        })) as UserProfile[]);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn('[AuthProfiles] 同步员工账号失败，沿用本地花名册', msg);
+      }
+    };
+    hydrateProfilesFromAuth();
     return () => { cancelled = true; };
   }, [effectiveUserId]);
 
@@ -496,6 +723,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       return [doc, ...prev];
     });
+    if (result.ok && knowledgeService.isEnabled()) {
+      knowledgeService.createDoc(doc).catch(e => console.warn('[KnowledgeService] create failed', e));
+    }
     return result;
   };
 
@@ -772,50 +1002,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Inside AppProvider
   const upsertSystemReminder = (id: string, r: Omit<Reminder, 'id' | 'isRead'>) => {
+    const isNew = !reminders.some(x => x.id === id);
     setReminders(prev => {
       if (prev.some(x => x.id === id)) return prev;
-      
-      const newReminder: Reminder = { ...r, id, isRead: false };
-
-      // --- WeChat Push Integration (System Level) ---
-      let targetUserIds: string[] = [];
-      
-      // 1. Resolve Targets
-      if (newReminder.forUserIds && newReminder.forUserIds.length > 0) {
-        targetUserIds = newReminder.forUserIds;
-      } else if (newReminder.forRole && newReminder.forRole.length > 0) {
-        // Find users who have one of the target roles
-        targetUserIds = userProfiles
-          .filter(u => u.roles.some(role => newReminder.forRole!.includes(role)))
-          .map(u => u.id);
-      }
-
-      // 2. AI Filter & Push
-      targetUserIds.forEach(uid => {
-        const binding = wechatService.getBinding(uid);
-        if (binding && wechatService.shouldPush(newReminder, binding)) {
-          // Perform Push
-          const success = wechatService.pushMessage(uid, newReminder);
-          if (success) {
-            newReminder.pushedToWeChat = true;
-            newReminder.channels = [...(newReminder.channels || []), 'wechat'];
-          }
-        }
-      });
-
-      return [newReminder, ...prev];
+      return [{ ...r, id, isRead: false }, ...prev];
     });
+    if (isNew && reminderService.isEnabled()) {
+      reminderService.createReminder({ ...(r as any), id, isRead: false }).catch(e => console.warn('[ReminderService] create failed', e));
+    }
   };
 
-  // Auto-bind users for Demo purposes
-  useEffect(() => {
-    userProfiles.forEach(u => {
-      if (!wechatService.getBinding(u.id)) {
-        // Mock Binding: user_id -> wx_openid_user_id
-        wechatService.bindUser(u, `wx_openid_${u.id.split('-').pop()}`);
-      }
-    });
-  }, [userProfiles]);
 
   const canManageTaskTemplate = (template: TaskTemplate) => {
     if (template?.isBuiltIn) return false;
@@ -942,6 +1138,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [backendReadReadyUserId, leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, marketSignals, projectWorkLogs, strategicInsight, strategicTasks, userProfiles, currentUserId, activeRole, aiDecisionLogs, taskTemplates, effectiveUserId, normalizedCurrentUser.id]);
 
   const switchUser = (userId: string) => {
+    if (authRequired) return;
     if (!userProfiles.some(u => u.id === userId)) return;
     setCurrentUserId(userId);
   };
@@ -989,6 +1186,48 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return userIds.length > 0 ? { forUserIds: userIds } : { forRole: fallbackRoles };
   };
 
+  useEffect(() => {
+    if (wechatPushAttemptedIdsRef.current === null) {
+      wechatPushAttemptedIdsRef.current = new Set(reminders.map(r => r.id));
+      return;
+    }
+
+    const attempted = wechatPushAttemptedIdsRef.current;
+    reminders.forEach((newReminder) => {
+      if (attempted.has(newReminder.id) || newReminder.pushedToWeChat) return;
+      attempted.add(newReminder.id);
+
+      let targetUserIds: string[] = [];
+      if (newReminder.forUserIds && newReminder.forUserIds.length > 0) {
+        targetUserIds = newReminder.forUserIds;
+      } else if (newReminder.forRole && newReminder.forRole.length > 0) {
+        targetUserIds = userProfiles
+          .filter(u => u.roles.some(role => newReminder.forRole!.includes(role)))
+          .map(u => u.id);
+      }
+
+      /*
+        2026-08-24 移除了微信推送的模拟实现。
+
+        原来这里会给每个用户自动绑一个假 openid（wx_openid_xxx），
+        然后把提醒标成 pushedToWeChat: true——**一条从没发出去的消息被记成已推送**。
+        界面上看是「已微信通知」，同事那边什么都没收到；
+        更糟的是这个标记会让人以为"系统已经提醒过他了"，从而不再当面跟进。
+
+        真接微信/企业微信时在这里接：拿到用户的真实 userid（企业微信）
+        或 openid（服务号），调用对应的消息接口，**发送成功才置这个标记**。
+      */
+      const pushed = false;
+
+      if (pushed) {
+        setReminders(prev => prev.map(item => item.id === newReminder.id
+          ? { ...item, pushedToWeChat: true, channels: Array.from(new Set([...(item.channels || []), 'wechat'])) }
+          : item
+        ));
+      }
+    });
+  }, [reminders, userProfiles]);
+
   const upsertMarketSignals = (signals: MarketSignal[]) => {
     const list = Array.isArray(signals) ? signals : [];
     if (list.length === 0) return;
@@ -998,11 +1237,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       list.forEach(s => map.set(s.id, s));
       return Array.from(map.values()).sort((a, b) => b.score - a.score);
     });
+    if (signalService.isEnabled()) {
+      signalService.upsertSignals(list).catch(e => console.warn('[SignalService] bulk upsert failed', e));
+    }
   };
 
   const updateMarketSignal = (id: string, updates: Partial<MarketSignal>) => {
     if (!id) return;
     setMarketSignals(prev => prev.map(s => s.id === id ? { ...s, ...updates, updatedAt: new Date().toISOString() } : s));
+    if (signalService.isEnabled()) {
+      signalService.updateSignal(id, updates).catch(e => console.warn('[SignalService] update failed', e));
+    }
   };
 
   // Intel Radar: auto-refresh cached signals + in-app reminder while the app is open.
@@ -1049,76 +1294,49 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, [canIntel]);
 
-  const convertSignalToFollowUpProject = (signalId: string) => {
+  /*
+    这里原来有一份 convertSignalToFollowUpProjectLocal —— 情报转跟进项目的
+    纯前端级联，作为回退。2026-08-24 与 completeProjectLocal 一起删除。
+
+    同一个理由：同一件事两份实现，必然漂移，而漂移不报错。
+    情报写开关（VITE_SIGNALS_API_ENABLED）实测为开，这条路到不了。
+  */
+
+  // 单一业务权威入口：情报写开关开启时委托后端原子级联，前端仅刷新受影响数据集并补建转化通知；否则回退本地。
+  const convertSignalToFollowUpProject = async (signalId: string): Promise<{ ok: boolean; projectId?: string; reason?: string }> => {
     const signal = marketSignals.find(s => s.id === signalId);
     if (!signal) return { ok: false, reason: '信号不存在' };
     if (signal.status === MARKET_SIGNAL_STATUS.CONVERTED && signal.convertedTo?.projectId) return { ok: true, projectId: signal.convertedTo.projectId };
 
-    const nowStr = todayStr();
-    const projectId = `P-INTEL-${Date.now()}`;
-    const projectName = `【情报跟进】${signal.title}`.slice(0, 60);
-    const managerName = normalizedCurrentUser.name;
-
-    const newProject: Project = {
-      id: projectId,
-      name: projectName,
-      contractRef: `INTEL:${signal.id}`,
-      sourceType: 'intel',
-      sourceRef: signal.id,
-      projectMode: 'followup',
-      projectCategory: 'FollowUp',
-      manager: managerName,
-      progress: 0,
-      status: Status.Active,
-      paymentStatus: 'unpaid',
-      deadline: signal.deadline || nowStr,
-      duration: 14,
-      projectType: 'Self-Operated',
-      tasks: [
-        {
-          id: `T-INTEL-${Date.now()}-1`,
-          title: '快速研判：适用范围/截止时间/申报入口',
-          deadline: nowStr,
-          status: TASK_STATUS.PENDING,
-          priority: 'High',
-          category: 'Core',
-          owner: managerName
-        },
-        {
-          id: `T-INTEL-${Date.now()}-2`,
-          title: '匹配潜在客户（存量客户+同业画像）并制定触达话术',
-          deadline: nowStr,
-          status: TASK_STATUS.PENDING,
-          priority: 'Medium',
-          category: 'Auxiliary',
-          owner: managerName
-        },
-        {
-          id: `T-INTEL-${Date.now()}-3`,
-          title: '建立跟进节奏：电话/微信/上门，记录反馈与下一步',
-          deadline: nowStr,
-          status: TASK_STATUS.PENDING,
-          priority: 'Medium',
-          category: 'Core',
-          owner: managerName
+    if (signalService.isEnabled()) {
+      try {
+        const res = await signalService.convert(signalId, { manager: normalizedCurrentUser.name });
+        // 刷新受影响：项目(新建跟进项目) + 情报(状态转 converted)
+        await Promise.all([
+          projectService.isReadEnabled() ? projectService.listProjects().then(setProjects).catch(() => {}) : Promise.resolve(),
+          signalService.isReadEnabled() ? signalService.listSignals().then(setMarketSignals).catch(() => {}) : Promise.resolve(),
+        ]);
+        // 转化通知是前端衍生（后端不建），仅首次转化时补建。
+        if (!res.already && res.projectId) {
+          addReminder({
+            title: `📡 情报已转化为跟进项目`,
+            content: `已基于“${signal.title}”生成跟进项目`,
+            date: todayStr(),
+            type: 'opportunity',
+            linkId: res.projectId,
+            linkType: 'project',
+            ...buildReminderTarget([normalizedCurrentUser.name], ['MANAGER'])
+          });
         }
-      ],
-      settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' }
-    };
+        return { ok: true, projectId: res.projectId };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return { ok: false, reason };
+      }
+    }
 
-    setProjects(prev => [newProject, ...prev]);
-    updateMarketSignal(signalId, { status: MARKET_SIGNAL_STATUS.CONVERTED, convertedTo: { ...(signal.convertedTo || {}), projectId } });
-    addReminder({
-      title: `📡 情报已转化为跟进项目`,
-      content: `已基于“${signal.title}”生成跟进项目：${projectName}`,
-      date: nowStr,
-      type: 'opportunity',
-      linkId: projectId,
-      linkType: 'project',
-      ...buildReminderTarget([managerName], ['MANAGER'])
-    });
-
-    return { ok: true, projectId };
+    // 开关关掉时明确报错，不静默走另一套逻辑
+    return { ok: false, reason: '情报转化需要后端服务（VITE_SIGNALS_API_ENABLED 未开启）' };
   };
 
   const inferLeadCompanyFromSignal = (signal?: MarketSignal) => {
@@ -1170,7 +1388,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setLeads(prev => [newLead, ...prev]);
     }
 
-    setProjects(prev => prev.map(p => {
+    // 项目改名与来源改写必须落库：线索已新建并写后端，项目侧不能只改内存
+    const previousProjectsForIntel = projects;
+    const nextProjectsForIntel = projects.map(p => {
       if (p.id !== projectId) return p;
       const nextName = p.name.startsWith('【情报跟进】')
         ? p.name.replace('【情报跟进】', '【线索跟进】')
@@ -1183,7 +1403,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         projectMode: p.projectMode || 'followup',
         name: nextName
       };
-    }));
+    });
+    setProjects(nextProjectsForIntel);
+    commitProjectTransaction({
+      projectId,
+      nextProjects: nextProjectsForIntel,
+      previousProjects: previousProjectsForIntel
+    });
 
     if (signalId) {
       const convertedTo = signal?.convertedTo || {};
@@ -1625,18 +1851,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // --- 进度自动计算算法 ---
   const calculateProjectProgress = (tasks: ProjectTask[]): number => {
     if (tasks.length === 0) return 0;
-    const coreTasks = tasks.filter(t => t.category === 'Core');
+    // 已跳过的任务不进分母：跳过一个任务后进度永远到不了 100%，那是假的卡住
+    const coreTasks = tasks.filter(t => t.category === 'Core' && t.status !== 'Skipped');
     if (coreTasks.length === 0) return 0;
     const completedCount = coreTasks.filter(t => t.status === 'Completed').length;
     return Math.round((completedCount / coreTasks.length) * 100);
   };
 
   // --- 项目操作逻辑 ---
-  const addProject = (p: AddProjectInput) => {
+  const buildProjectFromInput = (p: AddProjectInput): Project | null => {
     // 强制校验：必须有负责人
     if (!p.manager || p.manager === '待定') {
       console.warn('拒绝创建无负责人项目');
-      return; 
+      return null;
     }
 
     const incomingAmount = Number((p as any).projectAmount ?? 0);
@@ -1655,7 +1882,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       sourceRef: (p as any).sourceRef,
       projectMode: (p as any).projectMode
     } as Project);
-    
+
     const disableDefaultTemplateTasks = Boolean((p as any).disableDefaultTemplateTasks);
 
     // 1. 跟进项目：自动套用跟进模板
@@ -1745,7 +1972,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
-    const newProject: Project = {
+    return {
       id: `P-${Date.now()}`,
       name: p.name || '未命名项目',
       contractRef: incomingContractRef,
@@ -1766,10 +1993,34 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       serviceItems: initialServiceItems,
       settlementConfig: p.settlementConfig || { rule: 'Ratio', value: 10, base: 'Revenue' }
     };
-    setProjects(prev => [...prev, newProject]);
   };
 
-  const assignProjectManager = (projectId: string, manager: string): { ok: boolean; reason?: string } => {
+  const addProject = (p: AddProjectInput) => {
+    const newProject = buildProjectFromInput(p);
+    if (!newProject) return;
+    const previousProjects = projects;
+    const nextProjects = [...projects, newProject];
+    setProjects(nextProjects);
+
+    if (projectService.isWriteEnabled()) {
+      projectService.createProject(newProject)
+        .then(async () => {
+          if (!projectService.shouldVerifyWrites()) return;
+          const persisted = await projectService.getProject(newProject.id);
+          if (!persisted || persisted.name !== newProject.name) {
+            throw new Error('project create readback mismatch');
+          }
+        })
+        .catch(error => {
+          console.warn('[ProjectService] create failed', error);
+          if (projectService.shouldVerifyWrites()) {
+            setProjects(previousProjects);
+          }
+        });
+    }
+  };
+
+  const assignProjectManager = (projectId: string, manager: string, ownerUserId?: string): { ok: boolean; reason?: string } => {
     const nextManager = (manager || '').trim();
     if (!nextManager) return { ok: false, reason: '必须指定负责人' };
 
@@ -1779,15 +2030,41 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const perm = checkActionPermission('PROJECT_ASSIGN_MANAGER', project);
     if (!perm.allowed) return { ok: false, reason: perm.reason || '无权限' };
 
-    setProjects(prev => prev.map(p => {
+    // 负责人以用户 ID 为准：manager 只作显示用，改名不会让"我的项目"失联。
+    // 未显式传 ID 时按姓名回查一次，兼容旧调用。
+    const resolvedOwnerId = String(
+      ownerUserId || userProfiles.find(u => u.name === nextManager)?.id || ''
+    ).trim();
+
+    const previousProjects = projects;
+    const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
       const oldManager = p.manager;
       const tasks = (p.tasks || []).map(t => {
         if (t.owner === '待指派' || t.owner === oldManager) return { ...t, owner: nextManager };
         return t;
       });
-      return { ...p, manager: nextManager, tasks };
-    }));
+      return { ...p, manager: nextManager, ...(resolvedOwnerId ? { ownerUserId: resolvedOwnerId } : {}), tasks };
+    });
+    setProjects(nextProjects);
+
+    if (projectService.isWriteEnabled()) {
+      const nextProject = nextProjects.find(p => p.id === projectId);
+      projectService.updateProject(projectId, nextProject || { manager: nextManager })
+        .then(async () => {
+          if (!projectService.shouldVerifyWrites()) return;
+          const persisted = await projectService.getProject(projectId);
+          if (!persisted || persisted.manager !== nextManager) {
+            throw new Error('project manager readback mismatch');
+          }
+        })
+        .catch(error => {
+          console.warn('[ProjectService] manager update failed', error);
+          if (projectService.shouldVerifyWrites()) {
+            setProjects(previousProjects);
+          }
+        });
+    }
 
     return { ok: true };
   };
@@ -1854,11 +2131,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       costStatus: '待补全',
       projectAmount: 0,
       
-      tasks,
-      serviceItems: [],
+      // 每个项目至少有一个服务项，避免系统里出现「有服务项 / 没服务项」两种结构
+      tasks: attachTasksToDefaultService(tasks, `SVC-DEFAULT-${projectId}`),
+      serviceItems: [buildDefaultServiceItem({
+        projectId, projectName: `${lead.company} 认证到期挖角跟进`, owner
+      })],
       settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' }
     };
-    setProjects(prev => [...prev, newProject]);
+    // 必须落库：线索会被锁成「已转化」并写入后端，项目若只进内存，
+    // 刷新后就成了「线索已转化但项目不存在」，且线索无法再转，属于不可恢复的不一致。
+    const previousProjectsForLead = projects;
+    const nextProjectsForLead = [...projects, newProject];
+    setProjects(nextProjectsForLead);
+    commitProjectTransaction({
+      projectId,
+      nextProjects: nextProjectsForLead,
+      previousProjects: previousProjectsForLead
+    });
     updateLead(leadId, { status: Status.Converted }); // Hard Lock
     
     // addLeadFollowUp is no longer needed for Converted leads in active list, but good for history
@@ -1903,11 +2192,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       deadline: tasks.map(t => t.deadline).sort().slice(-1)[0] || new Date().toISOString().split('T')[0],
       duration: 30,
       projectType: 'Self-Operated',
-      tasks,
-      serviceItems: [],
+      // 同上：默认服务项保证任务不会悬空
+      tasks: attachTasksToDefaultService(tasks, `SVC-DEFAULT-${projectId}`),
+      serviceItems: [buildDefaultServiceItem({
+        projectId, projectName: `${customer.name} 认证到期跟进`, owner
+      })],
       settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' }
     };
-    setProjects(prev => [...prev, newProject]);
+    // 同样必须落库：客户跟进记录会写后端，项目不能只留内存
+    const previousProjectsForCustomer = projects;
+    const nextProjectsForCustomer = [...projects, newProject];
+    setProjects(nextProjectsForCustomer);
+    commitProjectTransaction({
+      projectId,
+      nextProjects: nextProjectsForCustomer,
+      previousProjects: previousProjectsForCustomer
+    });
     addCustomerFollowUp(customerId, {
       date: new Date().toISOString().split('T')[0],
       type: 'system',
@@ -2024,37 +2324,173 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return { ok: true };
   };
 
-  const updateProjectTask = (projectId: string, taskId: string, updates: Partial<ProjectTask>) => {
-    const project = projects.find(p => p.id === projectId);
-    if (project) {
-      const oldTask = (project.tasks || []).find(t => t.id === taskId);
-      const newTasks = (project.tasks || []).map(t => t.id === taskId ? { ...t, ...updates } : t);
-      const statusChangedToCompleted = updates.status === 'Completed' && oldTask?.status !== 'Completed';
-      if (statusChangedToCompleted) {
-        addProjectWorkLog({
-          projectId,
-          taskId,
-          serviceItemId: String((updates.serviceItemId || oldTask?.serviceItemId || '')).trim() || undefined,
-          logDate: todayStr(),
-          workContent: `完成任务：${String(updates.title || oldTask?.title || '未命名任务')}`,
-          actualHours: 0.5,
-          issueNote: '',
-          nextPlan: '',
-          source: WORK_LOG_SOURCE.TASK_TRANSITION
-        });
-      }
-      const allCompleted = newTasks.length > 0 && newTasks.every(t => t.status === 'Completed');
-      if (statusChangedToCompleted && allCompleted && project.status !== Status.Completed) {
-        completeProject(projectId, { source: 'auto', tasksOverride: newTasks });
-        return;
-      }
+  const commitProjectTransaction = (params: {
+    projectId?: string;
+    nextProjects: Project[];
+    nextProjectWorkLogs?: ProjectWorkLog[];
+    nextCustomers?: Customer[];
+    nextReminders?: Reminder[];
+    nextKnowledgeDocs?: KnowledgeDoc[];
+    previousProjects: Project[];
+    previousProjectWorkLogs?: ProjectWorkLog[];
+    previousCustomers?: Customer[];
+    previousReminders?: Reminder[];
+    previousKnowledgeDocs?: KnowledgeDoc[];
+    verify?: (datasets: Record<string, unknown>) => void;
+  }) => {
+    if (!projectService.isWriteEnabled()) return;
+
+    const datasets: ProjectTransactionDatasets = {
+      projects_v8: params.nextProjects
+    };
+    const readbackKeys = ['projects_v8'];
+
+    if (params.nextProjectWorkLogs) {
+      datasets.project_work_logs_v1 = params.nextProjectWorkLogs;
+      readbackKeys.push('project_work_logs_v1');
+    }
+    if (params.nextCustomers) {
+      datasets.customers_v8 = params.nextCustomers;
+      readbackKeys.push('customers_v8');
+    }
+    if (params.nextReminders) {
+      datasets.reminders_v8 = params.nextReminders;
+      readbackKeys.push('reminders_v8');
+    }
+    if (params.nextKnowledgeDocs) {
+      datasets.knowledge_docs_v8 = params.nextKnowledgeDocs;
+      readbackKeys.push('knowledge_docs_v8');
     }
 
-    setProjects(prev => prev.map(p => {
+    projectService.commitTransaction(datasets, params.projectId)
+      .then(async () => {
+        if (!projectService.shouldVerifyWrites()) return;
+        const readback = await stateSyncService.fetchState(readbackKeys);
+        if (!readback?.ok) throw new Error(readback?.error || 'project transaction readback failed');
+        const readbackDatasets = (readback.datasets || {}) as Record<string, unknown>;
+        if (params.projectId) {
+          const readbackProjects = asArray<Project>(readbackDatasets.projects_v8) || [];
+          if (!readbackProjects.some(item => item.id === params.projectId)) {
+            throw new Error('project transaction readback missing project');
+          }
+        }
+        params.verify?.(readbackDatasets);
+      })
+      .catch(error => {
+        console.warn('[ProjectService] transaction failed', error);
+        if (!projectService.shouldVerifyWrites()) return;
+        setProjects(params.previousProjects);
+        if (params.previousProjectWorkLogs) setProjectWorkLogs(params.previousProjectWorkLogs);
+        if (params.previousCustomers) setCustomers(params.previousCustomers);
+        if (params.previousReminders) setReminders(params.previousReminders);
+        if (params.previousKnowledgeDocs) setKnowledgeDocs(params.previousKnowledgeDocs);
+      });
+  };
+
+  const updateProjectTask = (projectId: string, taskId: string, updates: Partial<ProjectTask>) => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) {
+      setProjects(prev => prev.map(p => {
+        if (p.id !== projectId) return p;
+        const newTasks = (p.tasks || []).map(t => t.id === taskId ? { ...t, ...updates } : t);
+        return { ...p, tasks: newTasks, progress: calculateProjectProgress(newTasks) };
+      }));
+      return;
+    }
+
+    const previousProjects = projects;
+    const previousProjectWorkLogs = projectWorkLogs;
+    const oldTask = (project.tasks || []).find(t => t.id === taskId);
+    const newTasks = (project.tasks || []).map(t => t.id === taskId ? { ...t, ...updates } : t);
+    const statusChangedToCompleted = Boolean(oldTask && updates.status === 'Completed' && oldTask.status !== 'Completed');
+    const allCompleted = newTasks.length > 0 && newTasks.every(t => t.status === 'Completed');
+    const inferredServiceItemId = String((updates.serviceItemId || oldTask?.serviceItemId || '')).trim();
+    const canAppendTaskLog = statusChangedToCompleted && (
+      !inferredServiceItemId || (project.serviceItems || []).some(si => si.id === inferredServiceItemId)
+    );
+
+    if (statusChangedToCompleted && allCompleted && project.status !== Status.Completed) {
+      const nowIso = new Date().toISOString();
+      const createdLog: ProjectWorkLog | null = canAppendTaskLog ? {
+        id: `WLOG-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+        projectId,
+        serviceItemId: inferredServiceItemId || undefined,
+        taskId,
+        logDate: todayStr(),
+        workContent: `完成任务：${String(updates.title || oldTask?.title || '未命名任务')}`,
+        actualHours: 0.5,
+        issueNote: undefined,
+        nextPlan: undefined,
+        source: WORK_LOG_SOURCE.TASK_TRANSITION,
+        operatorUserId: effectiveUserId,
+        operatorName: normalizedCurrentUser.name,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      } : null;
+      const nextProjectWorkLogs = createdLog ? [createdLog, ...projectWorkLogs] : projectWorkLogs;
+      if (createdLog) setProjectWorkLogs(nextProjectWorkLogs);
+      void completeProject(projectId, {
+        source: 'auto',
+        tasksOverride: newTasks,
+        projectWorkLogsOverride: createdLog ? {
+          next: nextProjectWorkLogs,
+          previous: projectWorkLogs,
+          expectedLogId: createdLog.id
+        } : undefined
+      });
+      return;
+    }
+
+    const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
-      const newTasks = (p.tasks || []).map(t => t.id === taskId ? { ...t, ...updates } : t);
       return { ...p, tasks: newTasks, progress: calculateProjectProgress(newTasks) };
-    }));
+    });
+
+    const nowIso = new Date().toISOString();
+    const createdLog: ProjectWorkLog | null = canAppendTaskLog ? {
+      id: `WLOG-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      projectId,
+      serviceItemId: inferredServiceItemId || undefined,
+      taskId,
+      logDate: todayStr(),
+      workContent: `完成任务：${String(updates.title || oldTask?.title || '未命名任务')}`,
+      actualHours: 0.5,
+      issueNote: undefined,
+      nextPlan: undefined,
+      source: WORK_LOG_SOURCE.TASK_TRANSITION,
+      operatorUserId: effectiveUserId,
+      operatorName: normalizedCurrentUser.name,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    } : null;
+    const nextProjectWorkLogs = createdLog ? [createdLog, ...projectWorkLogs] : projectWorkLogs;
+
+    if (createdLog) setProjectWorkLogs(nextProjectWorkLogs);
+    setProjects(nextProjects);
+
+    if (typeof updates.status === 'string') {
+      commitProjectTransaction({
+        projectId,
+        nextProjects,
+        nextProjectWorkLogs: createdLog ? nextProjectWorkLogs : undefined,
+        previousProjects,
+        previousProjectWorkLogs: createdLog ? previousProjectWorkLogs : undefined,
+        verify: datasets => {
+          const readbackProjects = asArray<Project>(datasets.projects_v8) || [];
+          const readbackProject = readbackProjects.find(item => item.id === projectId);
+          const readbackTask = (readbackProject?.tasks || []).find(item => item.id === taskId);
+          if (!readbackTask || readbackTask.status !== updates.status) {
+            throw new Error('project task status readback mismatch');
+          }
+          if (createdLog) {
+            const readbackLogs = asArray<ProjectWorkLog>(datasets.project_work_logs_v1) || [];
+            if (!readbackLogs.some(item => item.id === createdLog.id && item.projectId === projectId && item.taskId === taskId)) {
+              throw new Error('project task log readback mismatch');
+            }
+          }
+        }
+      });
+    }
   };
 
   const buildWorkflowTasks = (project: Project, serviceItemId: string, templateId?: string, ownerName?: string): ProjectTask[] => {
@@ -2084,7 +2520,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const status = item?.status || 'Pending';
     const owner = item?.owner;
     const notes = item?.notes;
-    setProjects(prev => prev.map(p => {
+    const previousProjects = projects;
+    let createdServiceItem: ServiceItem | null = null;
+    let generatedTaskIds: string[] = [];
+    const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
       const serviceItems = Array.isArray(p.serviceItems) ? p.serviceItems : [];
       const allowAutoTasks = item?.autoGenerateTasks !== false;
@@ -2104,51 +2543,125 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deliveryMode: item?.deliveryMode,
         workflowTemplateId: resolvedTemplateId
       };
+      createdServiceItem = next;
       const generatedTasks = buildWorkflowTasks(p, next.id, resolvedTemplateId, owner || p.manager);
+      generatedTaskIds = generatedTasks.map(task => task.id);
       const tasks = [...(p.tasks || []), ...generatedTasks];
       return { ...p, serviceItems: [...serviceItems, next], tasks, progress: calculateProjectProgress(tasks) };
-    }));
+    });
+    setProjects(nextProjects);
+
+    if (createdServiceItem) {
+      commitProjectTransaction({
+        projectId,
+        nextProjects,
+        previousProjects,
+        verify: datasets => {
+          const readbackProjects = asArray<Project>(datasets.projects_v8) || [];
+          const readbackProject = readbackProjects.find(project => project.id === projectId);
+          const serviceItems = Array.isArray(readbackProject?.serviceItems) ? readbackProject!.serviceItems : [];
+          if (!serviceItems.some(serviceItem => serviceItem.id === createdServiceItem!.id && serviceItem.name === createdServiceItem!.name)) {
+            throw new Error('project service item create readback mismatch');
+          }
+          if (generatedTaskIds.length > 0) {
+            const tasks = Array.isArray(readbackProject?.tasks) ? readbackProject!.tasks : [];
+            const persistedTaskIds = new Set(tasks.map(task => task.id));
+            if (!generatedTaskIds.every(taskId => persistedTaskIds.has(taskId))) {
+              throw new Error('project service item generated tasks readback mismatch');
+            }
+          }
+        }
+      });
+    }
   };
 
   const updateProjectServiceItem = (projectId: string, itemId: string, updates: Partial<ServiceItem>) => {
-    setProjects(prev => prev.map(p => {
+    const previousProjects = projects;
+    let updatedServiceItem: ServiceItem | null = null;
+    const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
       const serviceItems = Array.isArray(p.serviceItems) ? p.serviceItems : [];
       const next = serviceItems.map(si => {
         if (si.id !== itemId) return si;
         const name = typeof updates.name === 'string' ? updates.name : si.name;
         const normalizedName = (name || '').trim() || '未命名服务项';
-        return { ...si, ...updates, name: normalizedName };
+        updatedServiceItem = { ...si, ...updates, name: normalizedName };
+        return updatedServiceItem;
       });
       return { ...p, serviceItems: next };
-    }));
+    });
+    setProjects(nextProjects);
+
+    if (updatedServiceItem) {
+      commitProjectTransaction({
+        projectId,
+        nextProjects,
+        previousProjects,
+        verify: datasets => {
+          const readbackProjects = asArray<Project>(datasets.projects_v8) || [];
+          const readbackProject = readbackProjects.find(project => project.id === projectId);
+          const serviceItems = Array.isArray(readbackProject?.serviceItems) ? readbackProject!.serviceItems : [];
+          if (!serviceItems.some(serviceItem => serviceItem.id === itemId && serviceItem.name === updatedServiceItem!.name)) {
+            throw new Error('project service item update readback mismatch');
+          }
+        }
+      });
+    }
   };
 
   const deleteProjectServiceItem = (projectId: string, itemId: string) => {
-    setProjects(prev => prev.map(p => {
+    const previousProjects = projects;
+    const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
       const serviceItems = Array.isArray(p.serviceItems) ? p.serviceItems : [];
       const nextItems = serviceItems.filter(si => si.id !== itemId);
       const tasks = (p.tasks || []).map(t => (t.serviceItemId === itemId ? { ...t, serviceItemId: undefined } : t));
       return { ...p, serviceItems: nextItems, tasks };
-    }));
+    });
+    setProjects(nextProjects);
+    commitProjectTransaction({ projectId, nextProjects, previousProjects });
   };
 
   const addProjectTask = (projectId: string, task: Omit<ProjectTask, 'id'>) => {
-    setProjects(prev => prev.map(p => {
+    const previousProjects = projects;
+    let createdTask: ProjectTask | null = null;
+    const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
       // 使用更随机的 ID 避免快速点击时的冲突
-      const newTasks = [...p.tasks, { ...task, id: `T-${Date.now()}-${Math.floor(Math.random() * 10000)}` }];
+      createdTask = { ...task, id: `T-${Date.now()}-${Math.floor(Math.random() * 10000)}` };
+      const newTasks = [...p.tasks, createdTask];
       return { ...p, tasks: newTasks, progress: calculateProjectProgress(newTasks) };
-    }));
+    });
+    setProjects(nextProjects);
+
+    if (projectService.isWriteEnabled() && createdTask) {
+      projectService.addTask(projectId, createdTask)
+        .then(async () => {
+          if (!projectService.shouldVerifyWrites()) return;
+          const persisted = await projectService.getProject(projectId);
+          const tasks = Array.isArray(persisted?.tasks) ? persisted.tasks : [];
+          if (!tasks.some(item => item.id === createdTask!.id && item.title === createdTask!.title)) {
+            throw new Error('project task create readback mismatch');
+          }
+        })
+        .catch(error => {
+          console.warn('[ProjectService] task create failed', error);
+          if (projectService.shouldVerifyWrites()) {
+            setProjects(previousProjects);
+          }
+        });
+    }
   };
 
   const deleteProjectTask = (projectId: string, taskId: string) => {
-    setProjects(prev => prev.map(p => {
+    const previousProjects = projects;
+    const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
       const newTasks = p.tasks.filter(t => t.id !== taskId);
       return { ...p, tasks: newTasks, progress: calculateProjectProgress(newTasks) };
-    }));
+    });
+    setProjects(nextProjects);
+    commitProjectTransaction({ projectId, nextProjects, previousProjects });
   };
 
   const resolveProjectPDCAContext = (project: Project, contractOverride?: Contract) => {
@@ -2266,9 +2779,19 @@ ${receivableLines}
     if (contract?.id) tags.push(`contract:${contract.id}`);
     if (project?.id) tags.push(`project:${project.id}`);
 
+    /*
+      标准识别与标题拼装走共用模块，和服务端 completeProject.js 用同一份规则。
+
+      2026-08-24 之前两边是各写各的：服务端那份带标准号、可信层级、行业标签，
+      这份只有标题和分类。于是同一个业务动作产出的复盘质量
+      **取决于一个环境变量**，而没人知道，也不会有任何报错。
+    */
+    const standards = detectStandards(serviceLabel, contract?.serviceLine, contract?.title,
+                                      project?.name, content);
+
     return {
       id: `DOC-PDCA-${Date.now()}`,
-      title: `客户复盘｜${params.customer.name}｜${serviceLabel}`,
+      title: buildPdcaTitle(params.customer.name, serviceLabel, standards),
       category: 'PDCA',
       format: 'Markdown',
       size: '2 KB',
@@ -2278,10 +2801,14 @@ ${receivableLines}
       aiVisible: true,
       source: 'system',
       autoGenerated: true,
+      // 复盘是我们自己的经验，不是标准原文——AI 引用时要说明出处
+      trustLevel: 'ourExperience',
+      standards,
+      industry: params.customer.industry || '',
       linkType: 'customer',
       linkId: params.customer.id,
       linkTitle: params.customer.name,
-      tags,
+      tags: [...tags, ...standards],
       accessRoles: KNOWLEDGE_MANAGEMENT_ROLES
     };
   };
@@ -2293,312 +2820,64 @@ ${receivableLines}
     }));
   };
 
-  const completeProject = (projectId: string, opts?: { source?: 'manual' | 'auto'; tasksOverride?: ProjectTask[] }) => {
+  /*
+    这里原来有一份 completeProjectLocal —— 纯前端的项目完成级联，
+    作为「后端写开关关闭时」的回退。2026-08-24 删除。
+
+    删的理由不是它没用，是**两套实现已经产出不同的结果**：
+    后端会生成客户复盘 PDCA 知识文档，前端本地版一份都不生成
+    （实测 0 处知识文档相关代码）。而复盘正是知识中心最值钱的部分。
+
+    也就是说，一旦走回退路径，项目完成了、客户分级更新了、提醒发了，
+    **唯独复盘没了**——而没有人会发现，因为没有任何报错。
+
+    写开关（VITE_PROJECTS_API_WRITE_ENABLED）实测为开，回退路径到不了。
+    留着一条到不了、又和主路径不一致的代码，只会在将来某次
+    「临时关掉开关排查问题」时悄悄少写一份复盘。
+
+    现在关掉开关会**明确报错**，而不是静默走另一套逻辑。
+  */
+
+  // 项目完成级联后，从 PG 重拉受影响数据集，让 UI 反映后端权威结果（客户分级/提醒/PDCA/结算草稿）。
+  const refreshAfterProjectCompletion = async () => {
+    await Promise.all([
+      projectService.isReadEnabled() ? projectService.listProjects().then(setProjects).catch(() => {}) : Promise.resolve(),
+      customerService.isReadEnabled() ? customerService.listCustomers().then(setCustomers).catch(() => {}) : Promise.resolve(),
+      reminderService.isReadEnabled() ? reminderService.listReminders().then(setReminders).catch(() => {}) : Promise.resolve(),
+      settlementService.isReadEnabled() ? settlementService.listSettlements().then(setSettlements).catch(() => {}) : Promise.resolve(),
+      knowledgeService.isReadEnabled() ? knowledgeService.listDocs().then(setKnowledgeDocs).catch(() => {}) : Promise.resolve(),
+    ]);
+  };
+
+  // 单一业务权威入口：写开关开启时委托后端原子级联，前端仅用返回结果刷新；否则回退到 completeProjectLocal（迁移前）。
+  const completeProject = async (projectId: string, opts?: CompleteProjectOptions): Promise<{ ok: boolean; eventId?: string; reason?: string }> => {
     const project = projects.find(p => p.id === projectId);
     if (!project) return { ok: false, reason: '项目不存在' };
     if (project.status === Status.Completed) return { ok: false, reason: '项目已完成' };
-    const projectCaps = resolveProjectCapabilities(project);
-    const isIntelFollowUpProject = projectCaps.allowFastFollowUpComplete;
-    const nextTasks = Array.isArray(opts?.tasksOverride) ? opts!.tasksOverride! : (project.tasks || []);
-    const now = new Date();
-    const nowStr = now.toISOString().split('T')[0];
-    const eventId = `EVT-PCOMP-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-    const source = opts?.source || 'manual';
 
-    // Only intel-origin follow-up projects can be completed without financial closure.
-    // Other follow-up projects follow normal financial/project closure rules.
-    if (isIntelFollowUpProject) {
-      const createdTs = Number(project.id.split('-')[1]);
-      const createdAt = Number.isFinite(createdTs) ? new Date(createdTs) : now;
-      const rawDuration = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 3600 * 24));
-      const duration = rawDuration > 0 ? rawDuration : (project.duration || 1);
-      const totalTasks = nextTasks.length;
-      const completedTasks = nextTasks.filter(t => t.status === 'Completed').length;
-      const delayedTasks = nextTasks.filter(t => new Date(t.deadline) < now && t.status !== 'Completed').length;
-      const taskCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 100;
-      const rating = delayedTasks === 0 ? 'A' : delayedTasks < 3 ? 'B' : 'C';
-
-      setProjects(prev => prev.map(p => {
-        if (p.id !== projectId) return p;
-        return {
-          ...p,
-          status: Status.Completed,
-          progress: 100,
-          tasks: nextTasks,
-          completionRecord: {
-            eventId,
-            completedAt: now.toISOString(),
-            actualEndDate: nowStr,
-            duration,
-            passRate: delayedTasks === 0,
-            taskCompletionRate,
-            delayedTasksCount: delayedTasks,
-            rating,
-            autoCompleted: source === 'auto',
-            customerId: p.customerId
-          }
-        };
-      }));
-
-      return { ok: true, eventId };
-    }
-
-    // --- T-001 Cost Closure Check ---
-    if (project.costStatus !== '已确认') {
-       const linkedContract = contracts.find(c => c.id === project.contractRef || c.contractNo === project.contractRef);
-       const hasReceivables = (linkedContract?.receivables || []).length > 0;
-       if (hasReceivables) {
-         return { ok: false, reason: '❌ 已存在回款记录，请先补录项目合同金额并确认后再完结。' };
-       }
-       return { ok: false, reason: '❌ 项目费用未确认，禁止完结！请先补全金额并确认。' };
-    }
-    if (!project.projectAmount || project.projectAmount <= 0) {
-       const linkedContract = contracts.find(c => c.id === project.contractRef || c.contractNo === project.contractRef);
-       const hasReceivables = (linkedContract?.receivables || []).length > 0;
-       if (hasReceivables) {
-         return { ok: false, reason: '❌ 已存在回款记录，请先补录项目合同金额并确认后再完结。' };
-       }
-       return { ok: false, reason: '❌ 项目金额无效，禁止完结！' };
-    }
-    // --------------------------------
-
-    const createdTs = Number(project.id.split('-')[1]);
-    const createdAt = Number.isFinite(createdTs) ? new Date(createdTs) : now;
-    const rawDuration = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 3600 * 24));
-    const duration = rawDuration > 0 ? rawDuration : (project.duration || 1);
-
-    const totalTasks = nextTasks.length;
-    const completedTasks = nextTasks.filter(t => t.status === 'Completed').length;
-    const delayedTasks = nextTasks.filter(t => new Date(t.deadline) < now && t.status !== 'Completed').length;
-    const taskCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 100;
-    const rating = delayedTasks === 0 ? 'S' : delayedTasks < 3 ? 'A' : 'B';
-
-    // --- PDCA Logic: 1. Bind Customer (Find or Create) ---
-    let targetCustomer: Customer | undefined;
-    let targetCustomerId = project.customerId;
-    let isNewCustomer = false;
-
-    // A. Attempt to find existing
-    if (targetCustomerId) {
-      targetCustomer = customers.find(c => c.id === targetCustomerId);
-    }
-
-    if (!targetCustomer) {
-      // B. Resolve via References
-      const ref = project.contractRef || '';
-      
-      if (ref.startsWith('CUST:')) {
-         targetCustomerId = ref.split(':')[1];
-         targetCustomer = customers.find(c => c.id === targetCustomerId);
-      } else if (ref.startsWith('LEAD:')) {
-         const leadId = ref.split(':')[1];
-         const lead = leads.find(l => l.id === leadId);
-         if (lead) {
-            // Try match by Code or Name
-            if (lead.unifiedSocialCreditCode) {
-               targetCustomer = customers.find(c => c.unifiedSocialCreditCode === lead.unifiedSocialCreditCode);
-            }
-            if (!targetCustomer) {
-               targetCustomer = customers.find(c => c.name === lead.company);
-            }
-            
-            // C. Create from Lead if not found
-            if (!targetCustomer) {
-               isNewCustomer = true;
-               targetCustomerId = `C-AUTO-${Date.now()}`;
-               targetCustomer = {
-                  id: targetCustomerId,
-                  name: lead.company,
-                  contactPerson: lead.name,
-                  mobile: lead.mobile,
-                  unifiedSocialCreditCode: lead.unifiedSocialCreditCode,
-                  registeredAddress: lead.registeredAddress,
-                  registeredCapital: lead.registeredCapital,
-                  businessScope: lead.businessScope,
-                  legalRepresentative: lead.legalRepresentative,
-                  industry: lead.industry,
-                  totalValue: 0,
-                  riskStatus: 'low',
-                  activeContracts: 0,
-                  status: Status.Active,
-                  cooperationCount: 0,
-                  serviceCount: 0
-               };
-            }
-         }
-      } else {
-         // Contract or Name fallback
-         const contract = contracts.find(c => c.id === ref);
-         const possibleName = contract?.customerName || (project.name.includes(' ') ? project.name.split(' ')[0] : project.name);
-         
-         targetCustomer = customers.find(c => c.name === possibleName);
-         
-         if (!targetCustomer) {
-            isNewCustomer = true;
-            targetCustomerId = `C-AUTO-${Date.now()}`;
-            targetCustomer = {
-               id: targetCustomerId,
-               name: possibleName,
-               contactPerson: project.manager,
-               totalValue: 0,
-               riskStatus: 'low',
-               activeContracts: 0,
-               status: Status.Active,
-               cooperationCount: 0,
-               serviceCount: 0
-            };
-         }
-      }
-    }
-
-    if (targetCustomer && !targetCustomerId) targetCustomerId = targetCustomer.id;
-
-    // --- PDCA Logic: 2. Prepare Updates ---
-    const { projectTypeLabel, nextOpportunity, isCertProject } = resolveProjectPDCAContext(project);
-
-    // --- PDCA Logic: 3. Reminders ---
-    const remindersToAdd: Reminder[] = [];
-    const reminderIds: string[] = [];
-    
-    if (targetCustomer && targetCustomerId) {
-      if (isCertProject) {
-         // Expiry reminders... (simplified logic from original)
-         const certs = (targetCustomer.certificates || []).filter(c => c.expiryDate).sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
-         const expiryStr = certs[0]?.expiryDate || new Date(now.getTime() + 365 * 3 * 24 * 3600 * 1000).toISOString().split('T')[0];
-         
-         [90, 60, 30].forEach((days, idx) => {
-            const remindDate = new Date(new Date(expiryStr).getTime() - days * 24 * 3600 * 1000);
-            const id = `REM-${eventId}-EXP-${idx}`;
-            reminderIds.push(id);
-            remindersToAdd.push({
-               id,
-               title: `客户【${targetCustomer!.name}】证书到期提醒（剩余${days}天）`,
-               content: `关联项目：${project.name}。建议提前跟进续证事宜。`,
-               date: remindDate.toISOString().split('T')[0],
-               type: 'expire',
-               isRead: false,
-               linkId: targetCustomerId!,
-               linkType: 'customer'
-            });
-         });
-      } else {
-         // Upsell
-         const id = `REM-${eventId}-UPSELL`;
-         reminderIds.push(id);
-         remindersToAdd.push({
-            id,
-            title: `客户【${targetCustomer.name}】复购提示`,
-            content: `关联项目：${project.name}。建议评估二次转化机会（当前推断机会：${nextOpportunity}）。`,
-            date: new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString().split('T')[0],
-            type: 'opportunity',
-            isRead: false,
-            linkId: targetCustomerId,
-            linkType: 'customer'
-         });
-      }
-    }
-
-    // --- PDCA Logic: 4. Execute State Updates ---
-    
-    // Update Customer
-    if (targetCustomer) {
-       setCustomers(prev => {
-          // Calculate Stats (T-001)
-          const allProjects = projects.filter(p => p.customerId === targetCustomerId && p.status === Status.Completed && p.costStatus === '已确认');
-          // Include CURRENT project which is being completed right now
-          const currentAmount = project.projectAmount || 0;
-          const totalAmount = allProjects.reduce((sum, p) => sum + (p.projectAmount || 0), 0) + currentAmount;
-          
-          const currentYear = new Date().getFullYear();
-          const yearProjects = allProjects.filter(p => p.completionRecord?.actualEndDate?.startsWith(String(currentYear)));
-          const isCurrentYear = nowStr.startsWith(String(currentYear));
-          const yearAmount = yearProjects.reduce((sum, p) => sum + (p.projectAmount || 0), 0) + (isCurrentYear ? currentAmount : 0);
-          
-          // Level Logic
-          let level: 'A' | 'B' | 'C' = 'C';
-          if (totalAmount >= 100000) level = 'A';
-          else if (totalAmount >= 30000) level = 'B';
-          
-          if (isNewCustomer) {
-             const newC: Customer = {
-                ...targetCustomer!,
-                cooperationCount: 1,
-                lastProjectAt: nowStr,
-                lastProjectType: projectTypeLabel,
-                nextOpportunity,
-                serviceCount: 1,
-                lastServiceDate: nowStr,
-                firstServiceDate: nowStr,
-                
-                // T-001 Stats
-                totalAmount,
-                yearAmount,
-                level
-             };
-             return [newC, ...prev];
-          } else {
-             return prev.map(c => {
-                if (c.id !== targetCustomerId) return c;
-                return {
-                   ...c,
-                   cooperationCount: (c.cooperationCount || 0) + 1,
-                   lastProjectAt: nowStr,
-                   lastProjectType: projectTypeLabel,
-                   nextOpportunity,
-                   serviceCount: (c.serviceCount || 0) + 1,
-                   lastServiceDate: nowStr,
-                   firstServiceDate: c.firstServiceDate || nowStr,
-                   
-                   // T-001 Stats
-                   totalAmount: (c.totalAmount || 0) + currentAmount, // Simple increment for now, full recalc is better but expensive
-                   yearAmount: (c.yearAmount || 0) + (isCurrentYear ? currentAmount : 0),
-                   level
-                };
-             });
-          }
-       });
-    }
-
-    // Update Project
-    setProjects(prev => prev.map(p => {
-      if (p.id !== projectId) return p;
-      return {
-        ...p,
-        status: Status.Completed,
-        progress: 100,
-        customerId: targetCustomerId, // Bind
-        tasks: nextTasks,
-        completionRecord: {
-          eventId,
-          completedAt: now.toISOString(),
-          actualEndDate: nowStr,
-          duration,
-          passRate: true,
-          taskCompletionRate,
-          delayedTasksCount: delayedTasks,
-          rating,
-          autoCompleted: source === 'auto',
-          customerId: targetCustomerId,
-          generatedReminderIds: reminderIds,
-          customerPatchBefore: targetCustomer ? {
-             status: targetCustomer.status,
-             firstServiceDate: targetCustomer.firstServiceDate,
-             lastServiceDate: targetCustomer.lastServiceDate,
-             serviceCount: targetCustomer.serviceCount
-          } : undefined
+    if (projectService.isWriteEnabled()) {
+      try {
+        const res = await projectService.complete(projectId, {
+          source: opts?.source,
+          tasksOverride: opts?.tasksOverride,
+        });
+        // 工作日志是前端侧衍生（未迁 PG，txUpsert 显式忽略），保持本地行为即可。
+        if (opts?.projectWorkLogsOverride?.next) {
+          setProjectWorkLogs(opts.projectWorkLogsOverride.next);
         }
-      };
-    }));
-
-    if (remindersToAdd.length > 0) {
-      setReminders(prevR => {
-        const existing = new Set(prevR.map(r => r.id));
-        const add = remindersToAdd.filter(r => !existing.has(r.id));
-        return [...add, ...prevR];
-      });
+        await refreshAfterProjectCompletion();
+        return { ok: true, eventId: res.eventId };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return { ok: false, reason };
+      }
     }
 
-    return { ok: true, eventId };
+    /*
+      不再有前端回退。开关关掉时明确报错，而不是悄悄走另一套逻辑——
+      静默降级比报错危险：两条路产出的结果不一样，而没人会发现。
+    */
+    return { ok: false, reason: '项目完成需要后端服务（VITE_PROJECTS_API_WRITE_ENABLED 未开启）' };
   };
 
   const reopenProject = (projectId: string) => {
@@ -2610,45 +2889,126 @@ ${receivableLines}
     const reminderIds = Array.isArray(record.generatedReminderIds) ? record.generatedReminderIds : [];
     const customerId = record.customerId;
     const customerPatchBefore = record.customerPatchBefore;
+    const previousProjects = projects;
+    const previousReminders = reminders;
+    const previousCustomers = customers;
 
-    setProjects(prev => prev.map(p => {
+    const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
       const progress = calculateProjectProgress(p.tasks || []);
       return { ...p, status: Status.Active, progress, completionRecord: undefined };
-    }));
+    });
 
+    let nextReminders = reminders;
     if (reminderIds.length > 0) {
       const idSet = new Set(reminderIds);
-      setReminders(prevR => prevR.filter(r => !idSet.has(r.id)));
+      nextReminders = reminders.filter(r => !idSet.has(r.id));
     }
 
+    let nextCustomers = customers;
     if (customerId && customerPatchBefore) {
-      setCustomers(prevCust => prevCust.map(c => {
+      nextCustomers = customers.map(c => {
         if (c.id !== customerId) return c;
         return {
           ...c,
           status: customerPatchBefore.status,
           firstServiceDate: customerPatchBefore.firstServiceDate,
           lastServiceDate: customerPatchBefore.lastServiceDate,
-          serviceCount: customerPatchBefore.serviceCount
+          serviceCount: customerPatchBefore.serviceCount,
+          cooperationCount: customerPatchBefore.cooperationCount,
+          lastProjectAt: customerPatchBefore.lastProjectAt,
+          lastProjectType: customerPatchBefore.lastProjectType,
+          nextOpportunity: customerPatchBefore.nextOpportunity,
+          totalAmount: customerPatchBefore.totalAmount,
+          yearAmount: customerPatchBefore.yearAmount,
+          level: customerPatchBefore.level
         };
-      }));
+      });
     }
+
+    setProjects(nextProjects);
+    if (reminderIds.length > 0) setReminders(nextReminders);
+    if (customerId && customerPatchBefore) setCustomers(nextCustomers);
+
+    commitProjectTransaction({
+      projectId,
+      nextProjects,
+      nextReminders: reminderIds.length > 0 ? nextReminders : undefined,
+      nextCustomers: customerId && customerPatchBefore ? nextCustomers : undefined,
+      previousProjects,
+      previousReminders: reminderIds.length > 0 ? previousReminders : undefined,
+      previousCustomers: customerId && customerPatchBefore ? previousCustomers : undefined,
+      verify: datasets => {
+        const readbackProjects = asArray<Project>(datasets.projects_v8) || [];
+        const readbackProject = readbackProjects.find(item => item.id === projectId);
+        if (readbackProject?.status !== Status.Active || readbackProject.completionRecord) {
+          throw new Error('project reopen readback mismatch');
+        }
+        if (reminderIds.length > 0) {
+          const readbackReminders = asArray<Reminder>(datasets.reminders_v8) || [];
+          const persistedReminderIds = new Set(readbackReminders.map(item => item.id));
+          if (reminderIds.some(id => persistedReminderIds.has(id))) {
+            throw new Error('project reopen reminder cleanup readback mismatch');
+          }
+        }
+        if (customerId && customerPatchBefore) {
+          const readbackCustomers = asArray<Customer>(datasets.customers_v8) || [];
+          const readbackCustomer = readbackCustomers.find(item => item.id === customerId);
+          if (!readbackCustomer) throw new Error('project reopen customer readback missing');
+          if (
+            readbackCustomer.firstServiceDate !== customerPatchBefore.firstServiceDate ||
+            readbackCustomer.lastServiceDate !== customerPatchBefore.lastServiceDate ||
+            readbackCustomer.serviceCount !== customerPatchBefore.serviceCount ||
+            readbackCustomer.cooperationCount !== customerPatchBefore.cooperationCount ||
+            readbackCustomer.lastProjectAt !== customerPatchBefore.lastProjectAt ||
+            readbackCustomer.lastProjectType !== customerPatchBefore.lastProjectType ||
+            readbackCustomer.nextOpportunity !== customerPatchBefore.nextOpportunity ||
+            readbackCustomer.totalAmount !== customerPatchBefore.totalAmount ||
+            readbackCustomer.yearAmount !== customerPatchBefore.yearAmount ||
+            readbackCustomer.level !== customerPatchBefore.level
+          ) {
+            throw new Error('project reopen customer rollback readback mismatch');
+          }
+        }
+      }
+    });
 
     return { ok: true };
   };
 
   const updateProjectCost = (projectId: string, amount: number) => {
     if (amount <= 0) return { ok: false, reason: '项目金额必须大于 0' };
-    
-    setProjects(prev => prev.map(p => {
+
+    const previousProjects = projects;
+    const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
       return {
         ...p,
         projectAmount: amount,
-        costStatus: '已确认' // T-002 Auto Linkage
+        costStatus: '已确认' as const // T-002 Auto Linkage
       };
-    }));
+    });
+    setProjects(nextProjects);
+
+    if (projectService.isWriteEnabled()) {
+      projectService.updateProject(projectId, {
+        projectAmount: amount,
+        costStatus: '已确认' as const
+      })
+        .then(async () => {
+          if (!projectService.shouldVerifyWrites()) return;
+          const persisted = await projectService.getProject(projectId);
+          if (!persisted || Number(persisted.projectAmount || 0) !== amount || persisted.costStatus !== '已确认') {
+            throw new Error('project cost readback mismatch');
+          }
+        })
+        .catch(error => {
+          console.warn('[ProjectService] cost update failed', error);
+          if (projectService.shouldVerifyWrites()) {
+            setProjects(previousProjects);
+          }
+        });
+    }
     return { ok: true };
   };
 
@@ -2656,7 +3016,9 @@ ${receivableLines}
     const template = taskTemplates.find(t => t.id === templateId);
     if (!template) return;
     const now = todayStr();
-    setProjects(prev => prev.map(p => {
+    // 套模板会一次生成一批任务，不落库的话刷新就全没了
+    const previousProjects = projects;
+    const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
       const baseDate = new Date();
       const newTasks: ProjectTask[] = template.tasks.map((t, idx) => ({
@@ -2668,7 +3030,9 @@ ${receivableLines}
         deadline: new Date(baseDate.getTime() + (idx + 1) * 5 * 24 * 3600 * 1000).toISOString().split('T')[0]
       }));
       return { ...p, tasks: [...p.tasks, ...newTasks], progress: calculateProjectProgress([...p.tasks, ...newTasks]) };
-    }));
+    });
+    setProjects(nextProjects);
+    commitProjectTransaction({ projectId, nextProjects, previousProjects });
     setTaskTemplates(prev => prev.map(t => {
       if (t.id !== templateId) return t;
       const usageCount = Number.isFinite(Number(t.usageCount)) ? Number(t.usageCount) : 0;
@@ -2679,33 +3043,137 @@ ${receivableLines}
 
 
   const addLead = (lead: Omit<Lead, 'id'>) => {
-    const newLead: Lead = { ...lead, id: `L-${Date.now()}` };
+    // 归属人以用户 ID 落库：判断「我的线索」不再靠姓名比对，改名/重名都不会串
+    const newLead: Lead = {
+      ...lead,
+      id: `L-${Date.now()}`,
+      ownerUserId: lead.ownerUserId || normalizedCurrentUser.id
+    };
+    const previousLeads = leads;
     setLeads(prev => [newLead, ...prev]);
+    if (leadService.isEnabled()) {
+      leadService.createLead(newLead)
+        .then(async savedLead => {
+          if (leadService.shouldVerifyWrites()) {
+            const verifiedLead = await leadService.getLead(savedLead.id);
+            if (verifiedLead.id !== savedLead.id || verifiedLead.company !== savedLead.company) {
+              throw new Error('created lead readback mismatch');
+            }
+          }
+          setLeads(prev => prev.map(l => l.id === newLead.id ? savedLead : l));
+        })
+        .catch(error => {
+          console.warn('[LeadService] create failed', error);
+          if (leadService.shouldVerifyWrites()) {
+            setLeads(previousLeads);
+          }
+        });
+    }
   };
 
   const updateLead = (id: string, updates: Partial<Lead>) => {
+    const previousLeads = leads;
     setLeads(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
+    if (leadService.isEnabled()) {
+      leadService.updateLead(id, updates)
+        .then(async savedLead => {
+          if (leadService.shouldVerifyWrites()) {
+            const verifiedLead = await leadService.getLead(savedLead.id);
+            if (verifiedLead.id !== savedLead.id || verifiedLead.company !== savedLead.company) {
+              throw new Error('updated lead readback mismatch');
+            }
+          }
+          setLeads(prev => prev.map(l => l.id === id ? savedLead : l));
+        })
+        .catch(error => {
+          console.warn('[LeadService] update failed', error);
+          if (leadService.shouldVerifyWrites()) {
+            setLeads(previousLeads);
+          }
+        });
+    }
   };
 
   const addLeadFollowUp = (leadId: string, record: Omit<FollowUpRecord, 'id'>) => {
+    const newRecord = { ...record, id: `F-${Date.now()}` };
+    const previousLeads = leads;
     setLeads(prev => prev.map(l => {
       if (l.id !== leadId) return l;
-      const followUpRecords = [...(l.followUpRecords || []), { ...record, id: `F-${Date.now()}` }];
+      const followUpRecords = [...(l.followUpRecords || []), newRecord];
       return { ...l, followUpRecords };
     }));
+    if (leadService.isEnabled()) {
+      leadService.addFollowUp(leadId, newRecord)
+        .then(async ({ lead: savedLead, record: savedRecord }) => {
+          if (leadService.shouldVerifyWrites()) {
+            const verifiedLead = await leadService.getLead(savedLead.id);
+            const records = Array.isArray(verifiedLead.followUpRecords) ? verifiedLead.followUpRecords : [];
+            if (!records.some(item => item.id === savedRecord.id)) {
+              throw new Error('follow-up readback mismatch');
+            }
+          }
+          setLeads(prev => prev.map(l => l.id === leadId ? savedLead : l));
+        })
+        .catch(error => {
+          console.warn('[LeadService] follow-up failed', error);
+          if (leadService.shouldVerifyWrites()) {
+            setLeads(previousLeads);
+          }
+        });
+    }
   };
 
   const addCustomer = (customer: Omit<Customer, 'id'>) => {
     const newCustomer: Customer = { ...customer, id: `C-${Date.now()}` };
+    const previousCustomers = customers;
     setCustomers(prev => [newCustomer, ...prev]);
+    if (customerService.isEnabled()) {
+      customerService.createCustomer(newCustomer)
+        .then(async savedCustomer => {
+          if (customerService.shouldVerifyWrites()) {
+            const verifiedCustomer = await customerService.getCustomer(savedCustomer.id);
+            if (verifiedCustomer.id !== savedCustomer.id || verifiedCustomer.name !== savedCustomer.name) {
+              throw new Error('created customer readback mismatch');
+            }
+          }
+          setCustomers(prev => prev.map(c => c.id === newCustomer.id ? savedCustomer : c));
+        })
+        .catch(error => {
+          console.warn('[CustomerService] create failed', error);
+          if (customerService.shouldVerifyWrites()) {
+            setCustomers(previousCustomers);
+          }
+        });
+    }
   };
 
   const addCustomerFollowUp = (customerId: string, record: Omit<FollowUpRecord, 'id'>) => {
+    const newRecord = { ...record, id: `F-${Date.now()}` };
+    const previousCustomers = customers;
     setCustomers(prev => prev.map(c => {
       if (c.id !== customerId) return c;
-      const followUpRecords = [...(c.followUpRecords || []), { ...record, id: `F-${Date.now()}` }];
+      const followUpRecords = [...(c.followUpRecords || []), newRecord];
       return { ...c, followUpRecords };
     }));
+    if (customerService.isEnabled()) {
+      customerService.addFollowUp(customerId, newRecord)
+        .then(async ({ customer: savedCustomer, record: savedRecord }) => {
+          if (customerService.shouldVerifyWrites()) {
+            const verifiedCustomer = await customerService.getCustomer(savedCustomer.id);
+            const records = Array.isArray(verifiedCustomer.followUpRecords) ? verifiedCustomer.followUpRecords : [];
+            if (!records.some(item => item.id === savedRecord.id)) {
+              throw new Error('customer follow-up readback mismatch');
+            }
+          }
+          setCustomers(prev => prev.map(c => c.id === customerId ? savedCustomer : c));
+        })
+        .catch(error => {
+          console.warn('[CustomerService] follow-up failed', error);
+          if (customerService.shouldVerifyWrites()) {
+            setCustomers(previousCustomers);
+          }
+        });
+    }
   };
 
   const importExcel = async (file: File): Promise<ImportRecord | null> => {
@@ -2740,7 +3208,17 @@ ${receivableLines}
       
       // 5. 写入 Leads 数据库
       if (newLeads.length > 0) {
+        const previousLeads = leads;
         setLeads(prev => [...newLeads, ...prev]);
+        // 必须落库：导入几百条只进内存的话，刷新后全部丢失
+        if (leadService.isEnabled()) {
+          leadService.bulkUpsertLeads(newLeads)
+            .catch(error => {
+              console.warn('[LeadService] bulk import failed', error);
+              alert('导入的线索保存失败，已撤销本次导入，请重试。');
+              setLeads(previousLeads);
+            });
+        }
       }
       
       return batch;
@@ -2910,9 +3388,14 @@ ${receivableLines}
     autoCreatedCustomerName?: string;
   } => {
     const id = raw.id || `CT-${Date.now()}`;
+    const previousContracts = contracts;
+    const previousCustomers = customers;
+    const previousProjects = projects;
+    const previousLeads = leads;
     const incomingContractNo = normalizeContractNo(raw.contractNo);
     let linkedCustomerId = resolveContractCustomerId(raw || {});
     const normalizedServiceItems = normalizeContractServiceSeeds(raw || {});
+    let seededCustomer: Customer | null = null;
     let autoCreatedCustomerId: string | undefined;
     let autoCreatedCustomerName: string | undefined;
 
@@ -2944,7 +3427,7 @@ ${receivableLines}
             mobile: fallbackMobile || undefined,
             isPrimary: true
           };
-          const seededCustomer: Customer = {
+          seededCustomer = {
             id: `C-${now}`,
             name: customerName,
             contactPerson: fallbackContactName,
@@ -2967,7 +3450,6 @@ ${receivableLines}
           linkedCustomerId = seededCustomer.id;
           autoCreatedCustomerId = seededCustomer.id;
           autoCreatedCustomerName = seededCustomer.name;
-          setCustomers(prev => [seededCustomer, ...prev]);
         }
       }
     }
@@ -3002,12 +3484,17 @@ ${receivableLines}
         workflowTemplateId: item.workflowTemplateId
       }))
     };
-    setContracts(prev => [newContract, ...prev]);
+
+    const nextContracts = [newContract, ...contracts];
+    const nextCustomers = seededCustomer ? [seededCustomer, ...customers] : customers;
+    let nextProjects = projects;
+    let createdProject: Project | null = null;
+
     if (createProject) {
       const ref = newContract.id;
       const existingProject = projects.find(p => p.status === Status.Active && (p.contractRef === ref || (newContract.contractNo && p.contractRef === newContract.contractNo)));
       if (!existingProject) {
-        addProject({
+        createdProject = buildProjectFromInput({
           name: `${newContract.customerName} ${newContract.title}`,
           contractRef: ref,
           customerId: linkedCustomerId,
@@ -3020,12 +3507,128 @@ ${receivableLines}
           initialServiceItems: normalizedServiceItems,
           disableDefaultTemplateTasks: normalizedServiceItems.length > 0
         });
+        if (createdProject) {
+          nextProjects = [...projects, createdProject];
+        }
       }
     }
+
+    const nextLeads = fromLeadId
+      ? leads.map(l => l.id === fromLeadId ? { ...l, status: Status.Converted } : l)
+      : leads;
+
+    setContracts(nextContracts);
+    if (seededCustomer) setCustomers(nextCustomers);
+    if (createdProject) setProjects(nextProjects);
     if (fromLeadId) {
-      updateLead(fromLeadId, { status: Status.Converted });
+      setLeads(nextLeads);
     }
+
+    if (contractService.isWriteEnabled()) {
+      contractService.commitTransaction({
+        contracts_v8: nextContracts,
+        customers_v8: nextCustomers,
+        projects_v8: nextProjects,
+        leads_v8: nextLeads
+      }, newContract.id)
+        .then(async () => {
+          if (!contractService.shouldVerifyWrites()) return;
+          const readback = await stateSyncService.fetchState(['contracts_v8', 'customers_v8', 'projects_v8', 'leads_v8']);
+          const readbackContracts = Array.isArray(readback.datasets?.contracts_v8) ? readback.datasets.contracts_v8 as Contract[] : [];
+          const persistedContract = readbackContracts.find(item => item.id === newContract.id);
+          if (!persistedContract || persistedContract.title !== newContract.title) {
+            throw new Error('contract transaction readback mismatch');
+          }
+          if (seededCustomer) {
+            const readbackCustomers = Array.isArray(readback.datasets?.customers_v8) ? readback.datasets.customers_v8 as Customer[] : [];
+            if (!readbackCustomers.some(item => item.id === seededCustomer!.id)) {
+              throw new Error('contract transaction customer readback mismatch');
+            }
+          }
+          if (createdProject) {
+            const readbackProjects = Array.isArray(readback.datasets?.projects_v8) ? readback.datasets.projects_v8 as Project[] : [];
+            if (!readbackProjects.some(item => item.id === createdProject!.id && item.contractRef === newContract.id)) {
+              throw new Error('contract transaction project readback mismatch');
+            }
+          }
+          if (fromLeadId) {
+            const readbackLeads = Array.isArray(readback.datasets?.leads_v8) ? readback.datasets.leads_v8 as Lead[] : [];
+            if (!readbackLeads.some(item => item.id === fromLeadId && item.status === Status.Converted)) {
+              throw new Error('contract transaction lead readback mismatch');
+            }
+          }
+        })
+        .catch(error => {
+          console.warn('[ContractService] transaction failed', error);
+          if (contractService.shouldVerifyWrites()) {
+            setContracts(previousContracts);
+            setCustomers(previousCustomers);
+            setProjects(previousProjects);
+            setLeads(previousLeads);
+          }
+        });
+    }
+
     return { ok: true, autoCreatedCustomerId, autoCreatedCustomerName };
+  };
+
+  const commitContractTransaction = (params: {
+    contractId?: string;
+    nextContracts: Contract[];
+    nextCustomers?: Customer[];
+    nextProjects?: Project[];
+    nextLeads?: Lead[];
+    nextKnowledgeDocs?: KnowledgeDoc[];
+    previousContracts?: Contract[];
+    previousCustomers?: Customer[];
+    previousProjects?: Project[];
+    previousLeads?: Lead[];
+    previousKnowledgeDocs?: KnowledgeDoc[];
+    verify?: (datasets: Record<string, unknown>) => void;
+  }) => {
+    if (!contractService.isWriteEnabled()) return;
+
+    const {
+      contractId,
+      nextContracts,
+      nextCustomers = customers,
+      nextProjects = projects,
+      nextLeads = leads,
+      nextKnowledgeDocs = knowledgeDocs,
+      previousContracts = contracts,
+      previousCustomers = customers,
+      previousProjects = projects,
+      previousLeads = leads,
+      previousKnowledgeDocs = knowledgeDocs,
+      verify
+    } = params;
+
+    contractService.commitTransaction({
+      contracts_v8: nextContracts,
+      customers_v8: nextCustomers,
+      projects_v8: nextProjects,
+      leads_v8: nextLeads,
+      knowledge_docs_v8: nextKnowledgeDocs
+    }, contractId)
+      .then(async () => {
+        if (!contractService.shouldVerifyWrites()) return;
+        const readback = await stateSyncService.fetchState(['contracts_v8', 'customers_v8', 'projects_v8', 'leads_v8', 'knowledge_docs_v8']);
+        const readbackContracts = Array.isArray(readback.datasets?.contracts_v8) ? readback.datasets.contracts_v8 as Contract[] : [];
+        if (contractId && !readbackContracts.some(item => item.id === contractId)) {
+          throw new Error('contract transaction readback missing contract');
+        }
+        verify?.(readback.datasets || {});
+      })
+      .catch(error => {
+        console.warn('[ContractService] transaction failed', error);
+        if (contractService.shouldVerifyWrites()) {
+          setContracts(previousContracts);
+          setCustomers(previousCustomers);
+          setProjects(previousProjects);
+          setLeads(previousLeads);
+          setKnowledgeDocs(previousKnowledgeDocs);
+        }
+      });
   };
 
   const deleteContract = (id: string) => {
@@ -3033,20 +3636,50 @@ ${receivableLines}
   };
 
   const archiveContract = (id: string) => {
-    setContracts(prev => prev.map(c => c.id === id ? { ...c, archiveStatus: ARCHIVE_STATUS.ARCHIVED } : c));
+    const previousContracts = contracts;
+    const nextContracts = contracts.map(c => c.id === id ? { ...c, archiveStatus: ARCHIVE_STATUS.ARCHIVED } : c);
+    setContracts(nextContracts);
+    commitContractTransaction({
+      contractId: id,
+      nextContracts,
+      previousContracts,
+      verify: (datasets) => {
+        const readbackContracts = Array.isArray(datasets.contracts_v8) ? datasets.contracts_v8 as Contract[] : [];
+        const archived = readbackContracts.find(item => item.id === id);
+        if (!archived || archived.archiveStatus !== ARCHIVE_STATUS.ARCHIVED) {
+          throw new Error('contract archive readback mismatch');
+        }
+      }
+    });
   };
 
   const addContractAttachment = (contractId: string, attachment: ContractAttachment) => {
     if (!contractId || !attachment?.id) return { ok: false, reason: '参数错误' };
-    let updated = false;
-    setContracts(prev => prev.map(c => {
+    const previousContracts = contracts;
+    let updatedContract: Contract | null = null;
+    const nextContracts = contracts.map(c => {
       if (c.id !== contractId) return c;
       const nextAttachments = Array.isArray(c.attachments) ? c.attachments : [];
       if (nextAttachments.some(a => a.id === attachment.id)) return c;
-      updated = true;
-      return { ...c, attachments: [...nextAttachments, attachment] };
-    }));
-    return updated ? { ok: true } : { ok: false, reason: '合同不存在' };
+      updatedContract = { ...c, attachments: [...nextAttachments, attachment] };
+      return updatedContract;
+    });
+    if (!updatedContract) return { ok: false, reason: '合同不存在' };
+    setContracts(nextContracts);
+    commitContractTransaction({
+      contractId,
+      nextContracts,
+      previousContracts,
+      verify: (datasets) => {
+        const readbackContracts = Array.isArray(datasets.contracts_v8) ? datasets.contracts_v8 as Contract[] : [];
+        const contract = readbackContracts.find(item => item.id === contractId);
+        const attachments = Array.isArray(contract?.attachments) ? contract.attachments : [];
+        if (!attachments.some(item => item.id === attachment.id)) {
+          throw new Error('contract attachment readback mismatch');
+        }
+      }
+    });
+    return { ok: true };
   };
 
   const removeContractAttachment = (contractId: string, attachmentId: string) => {
@@ -3068,19 +3701,38 @@ ${receivableLines}
     if (!targetCustomer) return { ok: false, reason: '客户不存在' };
 
     let linkedContract: Contract | null = null;
-    setContracts(prev => prev.map(contract => {
+    const previousContracts = contracts;
+    const previousProjects = projects;
+    const nextContracts = contracts.map(contract => {
       if (contract.id !== contractId) return contract;
       linkedContract = { ...contract, customerId };
       return linkedContract;
-    }));
+    });
 
     if (!linkedContract) return { ok: false, reason: '合同不存在' };
 
-    setProjects(prev => prev.map(project => {
+    const nextProjects = projects.map(project => {
       if (project.contractRef !== linkedContract!.id && project.contractRef !== linkedContract!.contractNo) return project;
       if (project.customerId === customerId) return project;
       return { ...project, customerId };
-    }));
+    });
+
+    setContracts(nextContracts);
+    setProjects(nextProjects);
+    commitContractTransaction({
+      contractId,
+      nextContracts,
+      nextProjects,
+      previousContracts,
+      previousProjects,
+      verify: (datasets) => {
+        const readbackContracts = Array.isArray(datasets.contracts_v8) ? datasets.contracts_v8 as Contract[] : [];
+        const contract = readbackContracts.find(item => item.id === contractId);
+        if (!contract || contract.customerId !== customerId) {
+          throw new Error('contract customer binding readback mismatch');
+        }
+      }
+    });
 
     return { ok: true };
   };
@@ -3185,6 +3837,7 @@ ${receivableLines}
   };
 
   const rejectReceivable = (contractId: string, receivableId: string, reason: string) => {
+    let nextReceivables: Contract['receivables'] | null = null;
     setContracts(prev => prev.map(c => {
       if (c.id !== contractId) return c;
       const receivables = c.receivables.map(r => {
@@ -3192,12 +3845,58 @@ ${receivableLines}
         const next = { ...r, status: 'unpaid' as const, rejectionReason: reason };
         return { ...next, status: deriveReceivableStatus(next) };
       });
+      nextReceivables = receivables;
       return { ...c, receivables };
     }));
+    // 无专用后端接口：经合同 PATCH 持久化回款数组（消除纯本地态）。
+    if (contractService.isWriteEnabled() && nextReceivables) {
+      contractService.updateContract(contractId, { receivables: nextReceivables }).catch(e => console.warn('[ContractService] rejectReceivable persist failed', e));
+    }
+  };
+
+  /**
+   * 销售报备"客户已付款，请财务核对"。
+   * 刻意不改 status——确认到账只有财务能做（PAYMENT_CONFIRM）。
+   * 这里只记录报备事实并推一条待办给财务，责任链是：销售报信 → 财务确认。
+   */
+  const claimReceivablePaid: AppContextType['claimReceivablePaid'] = (contractId, receivableId, note) => {
+    const contract = contracts.find(c => c.id === contractId);
+    if (!contract) return { ok: false, reason: '合同不存在' };
+    const receivable = (contract.receivables || []).find(r => r.id === receivableId);
+    if (!receivable) return { ok: false, reason: '回款节点不存在' };
+    if (receivable.status === 'paid') return { ok: false, reason: '该节点已确认到账，无需报备' };
+    if (receivable.paymentClaim) return { ok: false, reason: '已报备过，财务核对中' };
+
+    const claim = {
+      claimedBy: normalizedCurrentUser.name,
+      claimedByUserId: normalizedCurrentUser.id,
+      claimedAt: new Date().toISOString(),
+      note: String(note || '').trim() || undefined
+    };
+    const nextReceivables = contract.receivables.map(r => (r.id === receivableId ? { ...r, paymentClaim: claim } : r));
+    setContracts(prev => prev.map(c => (c.id === contractId ? { ...c, receivables: nextReceivables } : c)));
+    if (contractService.isWriteEnabled()) {
+      contractService.updateContract(contractId, { receivables: nextReceivables })
+        .catch(e => console.warn('[ContractService] claimReceivablePaid persist failed', e));
+    }
+
+    addReminder({
+      title: '💰 待核对到账',
+      content: `${claim.claimedBy} 报备：客户【${contract.customerName}】的「${receivable.node}」已付款 ¥${Number(receivable.amount || 0).toLocaleString()}，请核对银行流水后确认到账。${claim.note ? `备注：${claim.note}` : ''}`,
+      date: new Date().toISOString().split('T')[0],
+      type: 'payment',
+      linkType: 'contract',
+      linkId: contractId,
+      ...buildReminderTarget([], ['FINANCE', 'ADMIN'])
+    });
+    return { ok: true };
   };
 
   const importSettlements = (items: Settlement[]) => {
     setSettlements(prev => [...items, ...prev]);
+    if (settlementService.isEnabled() && Array.isArray(items) && items.length > 0) {
+      settlementService.upsertMany(items).catch(e => console.warn('[SettlementService] bulk upsert failed', e));
+    }
   };
 
   const updateSettlementStatus = (settlementId: string, status: Settlement['status']) => {
@@ -3219,14 +3918,23 @@ ${receivableLines}
         forRole: ['FINANCE', 'MANAGER']
       });
     }
+    if (settlementService.isEnabled()) {
+      settlementService.updateStatus(settlementId, status).catch(e => console.warn('[SettlementService] update failed', e));
+    }
   };
 
   const deleteKnowledgeDoc = (id: string) => {
     setKnowledgeDocs(prev => prev.filter(d => d.id !== id));
+    if (knowledgeService.isEnabled()) {
+      knowledgeService.deleteDoc(id).catch(e => console.warn('[KnowledgeService] delete failed', e));
+    }
   };
 
   const updateKnowledgeDoc = (id: string, updates: Partial<KnowledgeDoc>) => {
     setKnowledgeDocs(prev => prev.map(d => d.id === id ? { ...d, ...updates } : d));
+    if (knowledgeService.isEnabled()) {
+      knowledgeService.updateDoc(id, updates).catch(e => console.warn('[KnowledgeService] update failed', e));
+    }
   };
 
   const normalizeStrategicTask = (task: any, fallbackIndex = 0): StrategicTask | null => {
@@ -3361,25 +4069,29 @@ ${receivableLines}
   };
 
   const updateCertificateAuditStatus = (customerId: string, certificateId: string, auditNodeId: string, status: AuditNode['status']) => {
-    setCustomers(prev => prev.map(c => {
-      if (c.id !== customerId) return c;
-      const certificates = (c.certificates || []).map(cert => {
-        if (cert.id !== certificateId) return cert;
-        const auditPlan = (cert.auditPlan || []).map(node => node.id === auditNodeId ? { ...node, status } : node);
-        return { ...cert, auditPlan };
-      });
-      return { ...c, certificates };
-    }));
+    // 复用 updateCustomer 落库，避免"标记完成后刷新又变回未完成"
+    const target = customers.find(c => c.id === customerId);
+    if (!target) return;
+    const certificates = (target.certificates || []).map(cert => {
+      if (cert.id !== certificateId) return cert;
+      const auditPlan = (cert.auditPlan || []).map(node => node.id === auditNodeId ? { ...node, status } : node);
+      return { ...cert, auditPlan };
+    });
+    updateCustomer(customerId, { certificates });
   };
 
 
 
-  // --- 原有财务联动保全 ---
-  const toggleReceivableStatus = (cid: string, rid: string) => {
+  // 【双大脑遗留】纯前端回款级联版，仅在合同写开关关闭时作为迁移前回退；云端启用后应整体删除。
+  const toggleReceivableStatusLocal = (cid: string, rid: string) => {
     let paidCompleted = false;
     let updatedContract: Contract | null = null;
+    const previousContracts = contracts;
+    const previousProjects = projects;
+    const previousCustomers = customers;
+    const previousKnowledgeDocs = knowledgeDocs;
 
-    setContracts(prev => prev.map(c => {
+    const nextContracts = contracts.map(c => {
       if (c.id !== cid) return c;
       const updatedReceivables = c.receivables.map(r => {
         if (r.id !== rid) return r;
@@ -3393,19 +4105,24 @@ ${receivableLines}
       paidCompleted = allPaid;
       updatedContract = { ...c, receivables: updatedReceivables };
       return updatedContract;
-    }));
+    });
+    setContracts(nextContracts);
 
+    let nextProjects = projects;
     if (updatedContract) {
       const nextPaymentStatus = deriveProjectPaymentStatus(updatedContract.receivables || []);
-      setProjects(prev => prev.map(project => {
+      nextProjects = projects.map(project => {
         if (project.contractRef !== updatedContract!.id && project.contractRef !== updatedContract!.contractNo) return project;
         if (project.paymentStatus === nextPaymentStatus) return project;
         return { ...project, paymentStatus: nextPaymentStatus };
-      }));
+      });
+      setProjects(nextProjects);
     }
 
+    let nextCustomers = customers;
+    let nextKnowledgeDocs = knowledgeDocs;
     if (paidCompleted && updatedContract) {
-      const relatedProject = projects.find(p => p.contractRef === updatedContract!.id || (updatedContract!.contractNo && p.contractRef === updatedContract!.contractNo));
+      const relatedProject = nextProjects.find(p => p.contractRef === updatedContract!.id || (updatedContract!.contractNo && p.contractRef === updatedContract!.contractNo));
       const customerByContractId = updatedContract.customerId ? customers.find(c => c.id === updatedContract.customerId) : undefined;
       const customerByProjectId = relatedProject?.customerId ? customers.find(c => c.id === relatedProject.customerId) : undefined;
       const customerByName = findCustomerByName(updatedContract!.customerName);
@@ -3441,7 +4158,7 @@ ${receivableLines}
           if (totalAmount >= 100000) level = 'A';
           else if (totalAmount >= 30000) level = 'B';
 
-          applyCustomerPDCAUpdate(targetCustomer.id, {
+          const customerUpdate = {
             lastProjectAt: nowStr,
             lastProjectType: projectTypeLabel,
             nextOpportunity,
@@ -3449,7 +4166,9 @@ ${receivableLines}
             yearAmount,
             level,
             pdcaPaidContractIds: [...(targetCustomer.pdcaPaidContractIds || []), updatedContract.id]
-          });
+          };
+          nextCustomers = nextCustomers.map(c => c.id === targetCustomer.id ? { ...c, ...customerUpdate } : c);
+          setCustomers(nextCustomers);
         }
 
         const hasPdcaDoc = knowledgeDocs.some(d =>
@@ -3457,35 +4176,83 @@ ${receivableLines}
           (d.tags || []).includes(`contract:${updatedContract.id}`)
         );
         if (!hasPdcaDoc) {
-          appendKnowledgeDoc(
-            buildPdcaKnowledgeDoc({
-              customer: targetCustomer,
-              contract: updatedContract,
-              project: relatedProject || ctxProject,
-              projectTypeLabel,
-              nextOpportunity
-            })
-          );
+          const nextDoc = buildPdcaKnowledgeDoc({
+            customer: targetCustomer,
+            contract: updatedContract,
+            project: relatedProject || ctxProject,
+            projectTypeLabel,
+            nextOpportunity
+          });
+          nextKnowledgeDocs = [nextDoc, ...nextKnowledgeDocs];
+          setKnowledgeDocs(nextKnowledgeDocs);
         }
       }
     }
+
+    if (updatedContract) {
+      commitContractTransaction({
+        contractId: updatedContract.id,
+        nextContracts,
+        nextCustomers,
+        nextProjects,
+        nextKnowledgeDocs,
+        previousContracts,
+        previousCustomers,
+        previousProjects,
+        previousKnowledgeDocs,
+        verify: (datasets) => {
+          const readbackContracts = Array.isArray(datasets.contracts_v8) ? datasets.contracts_v8 as Contract[] : [];
+          const contract = readbackContracts.find(item => item.id === updatedContract!.id);
+          const receivable = contract?.receivables?.find(item => item.id === rid);
+          const localReceivable = updatedContract!.receivables.find(item => item.id === rid);
+          if (!receivable || receivable.status !== localReceivable?.status) {
+            throw new Error('contract receivable readback mismatch');
+          }
+          if (nextKnowledgeDocs !== previousKnowledgeDocs) {
+            const readbackDocs = Array.isArray(datasets.knowledge_docs_v8) ? datasets.knowledge_docs_v8 as KnowledgeDoc[] : [];
+            if (!readbackDocs.some(item => (item.tags || []).includes(`contract:${updatedContract!.id}`))) {
+              throw new Error('contract pdca doc readback mismatch');
+            }
+          }
+        }
+      });
+    }
   };
 
-  const generateProjectSettlement = (p: Project, amount?: number, notes?: string) => {
-    const newSettlement: Settlement = {
-        id: `S-AUTO-${Date.now()}`,
-        type: p.projectType === 'Outsourced' ? 'External' : 'Internal',
-        beneficiary: p.projectType === 'Outsourced' ? (p.vendorName || '供应商') : p.manager,
-        contractRef: p.name,
-        month: new Date().toISOString().slice(0, 7),
-        amount: amount || 0,
-        status: 'draft'
-    };
-    setSettlements(prev => [newSettlement, ...prev]);
+  // 单一业务权威入口：合同写开关开启时委托后端回款级联，前端仅刷新受影响数据集；否则回退本地。
+  const toggleReceivableStatus = async (cid: string, rid: string): Promise<void> => {
+    if (contractService.isWriteEnabled()) {
+      try {
+        await contractService.confirmReceivable(cid, rid);
+        // 刷新受影响：合同(回款状态) + 项目(付款状态) + 客户(全额到账升级) + 知识(PDCA 文档)
+        await Promise.all([
+          contractService.isReadEnabled() ? contractService.listContracts().then(setContracts).catch(() => {}) : Promise.resolve(),
+          projectService.isReadEnabled() ? projectService.listProjects().then(setProjects).catch(() => {}) : Promise.resolve(),
+          customerService.isReadEnabled() ? customerService.listCustomers().then(setCustomers).catch(() => {}) : Promise.resolve(),
+          knowledgeService.isReadEnabled() ? knowledgeService.listDocs().then(setKnowledgeDocs).catch(() => {}) : Promise.resolve(),
+        ]);
+        return;
+      } catch (error) {
+        console.warn('[ContractService] confirmReceivable failed', error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
+    toggleReceivableStatusLocal(cid, rid);
   };
+
+  // 注：手动结算函数 generateProjectSettlement 已移除——项目完成结算草稿由后端 completeProject 级联自动生成（见 A1/A5）。
 
   // --- AI Decision Center Implementation ---
   
+  /** 把动作类型翻成人话，队列里要让人一眼看懂 AI 想干什么 */
+  const describeAiAction = (action: AIAction): string => ({
+    ADD_REMINDER: '建议加一条风险提醒',
+    SUGGEST_TASK: `建议补充任务：${action.payload?.title || ''}`,
+    UPDATE_RISK: `建议把风险等级调为 ${action.payload?.level || ''}`,
+    UPDATE_STATUS: `建议把状态改为 ${action.payload?.status || ''}`,
+    CREATE_CONTRACT: '建议创建合同',
+  }[action.type] || `建议执行 ${action.type}`);
+
   const executeAIAction = (action: AIAction, projectId: string) => {
     const project = projects.find(p => p.id === projectId);
     if (!project) return;
@@ -3535,22 +4302,53 @@ ${receivableLines}
 
       setAiDecisionLogs(prev => [log, ...prev]);
 
-      // Update project insight
-      setProjects(prev => prev.map(p => p.id === projectId ? {
+      // Update project insight —— 诊断花了 AI token，结果必须落库，否则刷新就白花了
+      const previousProjectsForDiagnosis = projects;
+      const nextProjectsForDiagnosis = projects.map(p => p.id === projectId ? {
         ...p,
         aiInsight: {
           lastAnalysisTime: new Date().toISOString(),
           riskLevel: analysis.riskLevel,
           summary: analysis.analysisSummary
         }
-      } : p));
-
-      // Auto-execute HIGH priority risk reminders
-      analysis.suggestedActions?.forEach((action: AIAction) => {
-          if (action.type === 'ADD_REMINDER' && action.payload.priority === 'High') {
-              executeAIAction(action, projectId);
-          }
+      } : p);
+      setProjects(nextProjectsForDiagnosis);
+      commitProjectTransaction({
+        projectId,
+        nextProjects: nextProjectsForDiagnosis,
+        previousProjects: previousProjectsForDiagnosis
       });
+
+      /*
+        AI 的建议一律入「待确认队列」，不再自动执行。
+
+        改之前：高优先级的 ADD_REMINDER 直接调 executeAIAction 落地，人不知道 AI 改了什么；
+        其余动作类型压根不执行，只在页面上展示（5 种声明，2 种实现）。
+        两头都错——该受监督的偷偷做了，该产生价值的只是摆着看。
+
+        现在：AI 只提案，人在工作台一键批准/驳回，批准后才执行。
+        驳回时必须填原因，那是让 AI 变准的唯一真实依据。
+      */
+      const proposals = (analysis.suggestedActions || []) as AIAction[];
+      const projectName = projects.find(p => p.id === projectId)?.name || projectId;
+      await Promise.all(proposals.map(action =>
+        fetch('/api/ai-proposals', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            source: 'project_diagnosis',
+            sourceRef: projectId,
+            title: `${describeAiAction(action)}｜${projectName}`,
+            action,
+            reason: action.reason || analysis.analysisSummary || '',
+            confidence: analysis.riskLevel === 'High' ? 'high' : analysis.riskLevel === 'Low' ? 'low' : 'medium',
+          }),
+        }).catch(err => {
+          // 入队失败不能让诊断整体失败——诊断结论本身还是有价值的
+          console.warn('[AI提案] 入队失败：', err?.message);
+        })
+      ));
     } catch (error) {
       console.error("AI Diagnosis failed", error);
     }
@@ -3600,42 +4398,44 @@ ${receivableLines}
 
     upsertSystemReminder(r?.id || `REM-${Date.now()}`, r);
   };
-  const dismissReminder = (id: string) => setReminders(prev => prev.filter(r => r.id !== id));
+  const dismissReminder = (id: string) => {
+    setReminders(prev => prev.filter(r => r.id !== id));
+    if (reminderService.isEnabled()) {
+      reminderService.removeReminder(id).catch(e => console.warn('[ReminderService] remove failed', e));
+    }
+  };
   const addKnowledgeDoc = async (doc: any) => appendKnowledgeDoc(doc);
-  const updateCustomer = (id: string, u: any) => setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...u } : c));
+  const updateCustomer = (id: string, u: any) => {
+    const previousCustomers = customers;
+    setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...u } : c));
+    if (customerService.isEnabled()) {
+      customerService.updateCustomer(id, u)
+        .then(async savedCustomer => {
+          if (customerService.shouldVerifyWrites()) {
+            const verifiedCustomer = await customerService.getCustomer(savedCustomer.id);
+            if (verifiedCustomer.id !== savedCustomer.id || verifiedCustomer.name !== savedCustomer.name) {
+              throw new Error('updated customer readback mismatch');
+            }
+          }
+          setCustomers(prev => prev.map(c => c.id === id ? savedCustomer : c));
+        })
+        .catch(error => {
+          console.warn('[CustomerService] update failed', error);
+          if (customerService.shouldVerifyWrites()) {
+            setCustomers(previousCustomers);
+          }
+        });
+    }
+  };
 
   const checkActionPermission = (action: ActionCode, context?: any): { allowed: boolean; reason?: string } => {
-    const capability = ROLE_CAPABILITIES[activeRole];
-    
-    // 1. 能力校验 (Capability Check)
-    if (!capability || !capability.actions.includes(action)) {
-      return { allowed: false, reason: `当前身份（${activeRole}）没有执行此动作的权限。` };
-    }
-
-    // 2. 数据范围校验 (Data Scope Check)
-    // 如果是 CONSULTANT，必须检查数据所有权
-    if (capability.dataScope === 'OWN' && context) {
-      const isOwner = context.manager === normalizedCurrentUser.name || 
-                      (context.tasks || []).some((t: any) => t.owner === normalizedCurrentUser.name) ||
-                      context.owner === normalizedCurrentUser.name; // 兼容不同对象结构
-      
-      if (!isOwner) {
-        return { allowed: false, reason: `您只能操作自己负责的项目或任务。` };
-      }
-    }
-
-    // 3. 特殊角色校验 (FINANCE 只能看财务相关)
-    if (activeRole === 'FINANCE' && !['CONTRACT_VIEW_AMOUNT', 'PAYMENT_CONFIRM'].includes(action)) {
-       return { allowed: false, reason: `财务角色无法执行非财务类操作。` };
-    }
-
-    return { allowed: true };
+    return checkRoleActionPermission(activeRole, normalizedCurrentUser, action, context);
   };
 
   return (
     <AppContext.Provider value={{
       leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, vendors, marketSignals, projectWorkLogs,
-      currentUser: normalizedCurrentUser, userProfiles, switchUser, updateUserProfile, addUserProfile, deleteUserProfile,
+      currentUser: normalizedCurrentUser, userProfiles, isAuthRequired: authRequired, switchUser, updateUserProfile, addUserProfile, deleteUserProfile,
       activeRole, setActiveRole, activePersona, availablePersonas, resolveDashboardPersona, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
       addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, updateProjectWorkLog, deleteProjectWorkLog,
       createFollowUpProjectFromLead,
@@ -3644,12 +4444,12 @@ ${receivableLines}
       addCustomer, addCustomerFollowUp,
       addContract, bindContractToCustomer, deleteContract, archiveContract, addContractAttachment, removeContractAttachment,
       addAuditIssue, updateAuditIssue,
-      rejectReceivable, importSettlements, updateSettlementStatus,
+      rejectReceivable, claimReceivablePaid, importSettlements, updateSettlementStatus,
       deleteKnowledgeDoc, updateKnowledgeDoc, backfillPdcaForPaidContracts,
       upsertMarketSignals, updateMarketSignal, convertSignalToFollowUpProject, convertIntelProjectToLead, bindFollowUpProjectToCustomer,
       strategicInsight, isAnalyzingStrategy, strategicTasks, runDeepAnalysis, generateStrategicTasksFromInsight, addStrategicTask, updateStrategicTaskStatus, deleteStrategicTask,
       runSystemScans, generateAuditPlan, updateCertificateAuditStatus,
-      toggleReceivableStatus, generateProjectSettlement, addReminder, dismissReminder, addKnowledgeDoc, updateCustomer,
+      toggleReceivableStatus, addReminder, dismissReminder, addKnowledgeDoc, updateCustomer,
       aiDecisionLogs, runProjectDiagnosis, completeProject, reopenProject, updateProjectCost,
       importRecords, importExcel // 暴露新功能
     }}>

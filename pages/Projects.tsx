@@ -1,19 +1,23 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog } from '../types';
+import { TaskSkipButton } from '../components/TaskSkipButton';
+import { ProjectCompleteChecklist } from '../components/ProjectCompleteChecklist';
+import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog, TaskSkipReason, TASK_SKIP_REASON_LABEL } from '../types';
 import { SERVICE_CATALOG, SERVICE_CATEGORIES, SERVICE_CATEGORY_DELIVERY_MODE, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY } from '../constants';
 import { 
   Briefcase, Search, Plus, Clock, AlertTriangle, 
   CheckCircle, ChevronDown, ChevronRight, DollarSign, Bell, 
   X, Wallet, PlayCircle, Sparkles, ShieldCheck, ArrowRight,
   ListTodo, Trash2, LayoutGrid, Timer, CheckCircle2, MoreHorizontal,
-  Brain, RefreshCw
+  Brain, RefreshCw, Zap
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { resolveProjectCapabilities } from '../src/utils/projectCapabilities';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { TASK_STATUS, WORK_LOG_SOURCE } from '../src/constants/status.ts';
+import { StatusBadge } from '../src/ui/statusBadge';
+import { Badge, SearchInput, EmptyState, StatCard, StatGrid, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 
 const normalizeServiceToken = (value: string) => (value || '')
   .toUpperCase()
@@ -47,7 +51,7 @@ const matchServiceCatalog = (input: string, category?: ServiceCategory | ''): Se
 };
 
 const Projects = () => {
-  const { projects, customers, contracts, marketSignals, projectWorkLogs, auditIssues, toggleReceivableStatus, addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, deleteProjectWorkLog, completeProject, reopenProject, updateProjectCost, convertIntelProjectToLead, bindFollowUpProjectToCustomer, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate, activeRole, currentUser, userProfiles, checkActionPermission, aiDecisionLogs, runProjectDiagnosis } = useApp();
+  const { projects, customers, contracts, marketSignals, projectWorkLogs, auditIssues, toggleReceivableStatus, claimReceivablePaid, addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, deleteProjectWorkLog, completeProject, reopenProject, updateProjectCost, convertIntelProjectToLead, bindFollowUpProjectToCustomer, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate, activeRole, currentUser, userProfiles, checkActionPermission, aiDecisionLogs, runProjectDiagnosis } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
@@ -60,6 +64,9 @@ const Projects = () => {
   const [assignManager, setAssignManager] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [viewScope, setViewScope] = useState<'all' | 'related'>(() => activeRole === 'CONSULTANT' ? 'related' : 'all');
+  // 交付项目与跟进项目分开看：跟进项目还没签约，混在一起会让交付数据失真
+  const [modeScope, setModeScope] = useState<'delivery' | 'followup' | 'all'>('delivery');
+  const [assignOwnerUserId, setAssignOwnerUserId] = useState('');
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [templateModalProjectId, setTemplateModalProjectId] = useState<string | null>(null);
   const [templateSearch, setTemplateSearch] = useState('');
@@ -190,7 +197,18 @@ const Projects = () => {
     date.setHours(0, 0, 0, 0);
     return date.getTime();
   })();
-  const isMineProject = (project: Project) => project.manager === currentUser.name || (project.tasks || []).some(task => String(task.owner || '') === currentUser.name);
+  /**
+   * 「与我相关」的判定。
+   * 一份合同常有多个服务项由不同咨询师负责，所以不能只认项目负责人——
+   * 只要我是负责人、负责其中任一服务项、或有任务在我名下，这个项目就与我相关。
+   */
+  const isMineProject = (project: Project) => {
+    const ownerId = String((project as any).ownerUserId || '').trim();
+    if (ownerId && ownerId === currentUser.id) return true;
+    if (project.manager === currentUser.name) return true;
+    if ((project.serviceItems || []).some(si => String((si as any).ownerUserId || '') === currentUser.id || String(si.owner || '') === currentUser.name)) return true;
+    return (project.tasks || []).some(task => String(task.owner || '') === currentUser.name);
+  };
   const isOpenTask = (task: ProjectTask) => task.status !== 'Completed';
   const isOverdueTask = (task: ProjectTask) => isOpenTask(task) && new Date(String(task.deadline || '')).getTime() < Date.now();
   const isDueSoonTask = (task: ProjectTask) => {
@@ -222,7 +240,8 @@ const Projects = () => {
     if (dashboardFocus.type === 'due_7d') return (project.tasks || []).some(task => dashboardFocus.owner === 'me' ? String(task.owner || '') === currentUser.name && isDueSoonTask(task) : isDueSoonTask(task));
     if (dashboardFocus.type === 'completed_7d') return projectWorkLogs.some(log => log.projectId === project.id && log.source === WORK_LOG_SOURCE.TASK_TRANSITION && String(log.operatorName || '') === currentUser.name && new Date(String(log.logDate || '')).getTime() >= weekStartMs);
     if (dashboardFocus.type === 'customer_confirm') return (project.tasks || []).some(task => String(task.owner || '') === currentUser.name && isOpenTask(task) && /确认|回传|审核|签字|盖章/.test(String(task.title || '')));
-    if (dashboardFocus.type === 'progress_lt_50') return project.status === Status.Active && Number(project.progress || 0) < 50;
+    // 同样按任务算，不用 project.progress（它和任务状态不同步）
+    if (dashboardFocus.type === 'progress_lt_50') return project.status === Status.Active && taskProgress(project).pct < 50;
     if (dashboardFocus.type === 'missing_contract_amount') return project.projectCategory === 'Delivery' && Number(project.projectAmount || 0) <= 0;
     if (dashboardFocus.type === 'delay') return (project.tasks || []).some(task => isOverdueTask(task));
     if (dashboardFocus.type === 'logs') return projectWorkLogs.some(log => log.projectId === project.id && (!dashboardFocus.owner || String(log.operatorName || '') === currentUser.name) && (!dashboardFocus.range || new Date(String(log.logDate || '')).getTime() >= weekStartMs));
@@ -246,6 +265,18 @@ const Projects = () => {
       setTaskViewMode(['overdue_tasks', 'due_7d', 'customer_confirm', 'busiest_owner'].includes(focus.type) ? 'flat' : 'grouped');
       setViewScope(focus.owner === 'me' || activeRole === 'CONSULTANT' ? 'related' : 'all');
       setFilterStatus(['revenue_completed', 'completed_7d'].includes(focus.type) ? 'Completed' : focus.type === 'team_overview' ? 'All' : 'Active');
+      /*
+        从工作台点进来时，「交付 / 跟进」开关要放开到两者都看。
+
+        本页默认只看交付项目，而工作台的指标（在制项目数、日志覆盖率、延误率…）
+        统计的是**所有**在制项目，跟进类项目也算在分母里。不放开的话，
+        卡片和列表算的根本不是同一批项目。
+
+        2026-08-24 实测：卡片「本周日志覆盖率 6.3%」，点进去却是「共 0 个项目」——
+        因为那唯一一个近 7 天有日志的在制项目是【情报跟进】类，被默认的交付筛选挡掉了。
+        用户看到的是「有个数字，点进去什么都没有」，只会认为系统在乱报。
+      */
+      setModeScope('all');
 
       if (focus.type === 'revenue_completed') setDashboardFocusLabel(focus.owner === 'me' ? '我的本月营收项目' : '本月营收项目');
       else if (focus.type === 'high_risk') setDashboardFocusLabel(focus.owner === 'me' ? '我的高风险项目' : '高风险项目');
@@ -308,33 +339,194 @@ const Projects = () => {
 
   const [filterStatus, setFilterStatus] = useState<'Active' | 'Completed' | 'All'>('Active');
   
+  /**
+   * 概览卡片的统计口径。
+   *
+   * 关键：只跟随「与我相关 / 全公司」这一个范围开关，不跟状态和类别筛选——
+   * 否则筛"进行中"时"已完成项目"会变成 0，卡片就没意义了。
+   *
+   * 之所以要跟随范围，是因为之前卡片按全量算、列表按角色范围算，
+   * 出现过"卡片说 13、列表只给 1 条"。现在两者同源，永远对得上。
+   */
+  const overviewStats = useMemo(() => {
+    /*
+      口径必须和列表完全一致，副标题就是这么承诺的。修之前有三处不一致：
+        ① 四张卡片内部就不统一 —— 前三张按「交付项目」算，红色那张按「交付+跟进」算；
+        ② 四张都不跟随眼前的「交付 / 跟进 / 两者都看」开关（useMemo 依赖里连 modeScope 都没有）；
+        ③ 结果是咨询顾问视角下出现「0 个进行中项目、共 0 个项目」却「3 个超期未完成任务」，
+           那 3 个任务在跟进项目里，而列表正筛着交付项目 —— 点卡片也找不到对应项目。
+      现在四张卡片同源：先按「与我相关 / 全公司」，再按「交付 / 跟进」，
+      只有状态和搜索不跟（那两个跟了卡片就没意义了，筛"进行中"时"已完成"会变 0）。
+    */
+    const base = projects
+      .filter(p => viewScope === 'all' || isMineProject(p))
+      .filter(p => {
+        if (modeScope === 'all') return true;
+        const isFollowUp = resolveProjectCapabilities(p).isFollowUpProject;
+        return modeScope === 'delivery' ? !isFollowUp : isFollowUp;
+      });
+    const active = base.filter(p => p.status === Status.Active);
+    return {
+      active: active.length,
+      completed: base.filter(p => p.status === Status.Completed).length,
+      stuck: active.filter(p => (p.tasks || []).some(t => isOverdueTask(t))).length,
+      overdueTasks: base
+        .filter(p => p.status !== Status.Completed)
+        .reduce((sum, p) => sum + (p.tasks || []).filter(t => isOverdueTask(t)).length, 0)
+    };
+  }, [projects, viewScope, modeScope, currentUser.id, currentUser.name]);
+
   const filteredProjects = useMemo(() => projects
     .filter(p => {
       if (filterStatus === 'Active' && p.status === Status.Completed) return false;
       if (filterStatus === 'Completed' && p.status !== Status.Completed) return false;
 
-      const capability = activeRole === 'CONSULTANT' ? { dataScope: 'OWN' } : { dataScope: 'ALL' };
-      if (capability.dataScope === 'OWN' && !isMineProject(p)) return false;
+      if (modeScope !== 'all') {
+        const isFollowUp = resolveProjectCapabilities(p).isFollowUpProject;
+        if (modeScope === 'delivery' && isFollowUp) return false;
+        if (modeScope === 'followup' && !isFollowUp) return false;
+      }
+
+      /*
+        项目列表对所有角色可见（只读），由「与我相关 / 全部项目」开关控制范围。
+        原来对咨询师硬过滤成 OWN，把这个开关架空了——选「全部项目」也只显示自己的，
+        而旁边的徽标却按全量算，同一屏两个口径。
+        交付有依赖关系（体系认证做完才能开始申报），咨询师需要看得到别人的进度；
+        真正的保护在动作权限（改任务/看金额），不在"看不见"。
+      */
       if (viewScope === 'related' && !isMineProject(p)) return false;
       if (!matchesProjectFocus(p)) return false;
 
       const q = searchTerm.trim();
       if (!q) return true;
       return p.name.includes(q) || p.manager.includes(q);
-    }), [projects, filterStatus, activeRole, viewScope, searchTerm, dashboardFocus, currentUser.name, projectWorkLogs]);
+    }), [projects, filterStatus, activeRole, viewScope, modeScope, searchTerm, dashboardFocus, currentUser.name, projectWorkLogs]);
 
-  const getStatusBadge = (status: Status) => {
-    switch(status) {
-      case Status.Active: return <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">执行中</span>;
-      case Status.Completed: return <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">已结项</span>;
-      default: return <span className="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">{status}</span>;
+  /** 金额与结算只给有 CONTRACT_VIEW_AMOUNT 的角色。咨询师刻意看不到，避免与客户议价、同事比价。 */
+  const canSeeMoney = checkActionPermission('CONTRACT_VIEW_AMOUNT', {}).allowed;
+  /**
+   * 结算/提成可见性，与「能看合同金额」刻意分开：
+   * 销售必须看得到自己谈的合同金额，但不该看到提成规则和结算对象——那是别人的收入。
+   * 只给老板、系统管理员、财务。长期看结算应完全移到「顾问结算」页面。
+   */
+  const canSeeSettlement = checkActionPermission('SETTLEMENT_VIEW', {}).allowed;
+  /** 确认到账是财务动作，项目详情里也必须按权限控制 */
+  const canConfirmPayment = checkActionPermission('PAYMENT_CONFIRM', {}).allowed;
+
+  /** AI 诊断只给管理角色：老板、系统管理员、交付负责人。咨询师是执行者，不需要。
+   *  原来写死成角色数组，绕过了权限矩阵；改走权限码后体检脚本才管得到。 */
+  const canSeeAiDiagnosis = checkActionPermission('PROJECT_AI_DIAGNOSE', {}).allowed;
+  const canDeleteOthersLog = checkActionPermission('WORKLOG_DELETE_ANY', {}).allowed;
+
+  /**
+   * 项目该显示哪个客户。
+   *
+   * 原来列表行只看 project.customerId，详情顶部却会回退到合同上的客户——
+   * 同一个项目，列表说「未关联客户」，展开后却显示客户名，自己跟自己矛盾。
+   * 24 个项目里 16 个 customerId 为空，所以列表上几乎全是「未关联客户」。
+   *
+   * 三级回退：项目自己的客户 → 合同关联的客户 → 合同上的客户名（还没建客户档案时）。
+   */
+  const resolveProjectCustomerName = (project: Project): string => {
+    const direct = project.customerId
+      ? customers.find(c => c.id === project.customerId)
+      : undefined;
+    if (direct) return direct.name;
+
+    const contract = contracts.find(c => c.id === project.contractRef || c.contractNo === project.contractRef);
+    if (contract?.customerId) {
+      const viaContract = customers.find(c => c.id === contract.customerId);
+      if (viaContract) return viaContract.name;
+    }
+    // 合同上有客户名但还没建客户档案：显示名字比显示「未关联客户」有用得多
+    if (contract?.customerName) return contract.customerName;
+    return '未关联客户';
+  };
+
+  /**
+   * 项目进度一律按任务算出来，不读 project.progress 字段。
+   *
+   * 那个字段和任务状态各写各的，库里 6 个项目是 progress=100% 但任务 0/5——
+   * 手机端卡片直接画它，于是显示满格进度条、实际一个任务没做。
+   * 表格列用的是「已完成/总数」，两套渲染口径不一致。
+   * 结论：以任务为唯一事实来源，progress 字段不再参与展示。
+   */
+  /**
+   * 跳过一条任务：改状态 + 记原因 + 写业务事件流。
+   *
+   * 事件流那一步是关键——「哪个任务在多少比例的项目里被跳过」
+   * 只能从事件里统计出来，任务本身被改状态后就查不到历史了。
+   * 事件写失败不影响跳过本身（后端 record 内部吞异常）。
+   */
+  /** 正在走完结清单的项目（有未完成任务时才弹） */
+  const [completing, setCompleting] = useState<{ project: Project; pending: ProjectTask[] } | null>(null);
+
+  /** 真正执行完结。清单里的决定先落地，再完结项目 */
+  const doCompleteProject = async (
+    project: Project,
+    decisions: Array<{ task: ProjectTask; action: 'complete' | 'skip'; reason?: TaskSkipReason }> = []
+  ) => {
+    for (const d of decisions) {
+      if (d.action === 'complete') {
+        updateProjectTask(project.id, d.task.id, { status: 'Completed' });
+      } else if (d.reason) {
+        skipProjectTask(project, d.task, d.reason);
+      }
+    }
+    const res = await completeProject(project.id, { source: 'manual' });
+    if (!res.ok) { alert(res.reason || '操作失败'); return; }
+    if (res.eventId) {
+      setUndoComplete({ projectId: project.id, eventId: res.eventId, expiresAt: Date.now() + 30_000 });
     }
   };
 
-  const getCategoryBadge = (category: any) => {
-    if (category === 'FollowUp') return <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">跟进项目</span>;
-    return <span className="bg-indigo-100 text-indigo-800 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">交付项目</span>;
+  const skipProjectTask = (project: Project, task: ProjectTask, reason: TaskSkipReason, note?: string) => {
+    updateProjectTask(project.id, task.id, { status: 'Skipped', skipReason: reason, skipNote: note });
+    void fetch('/api/business-events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        eventType: 'task.skipped',
+        subjectType: 'project',
+        subjectId: project.id,
+        summary: `跳过任务「${task.title}」`,
+        reason: note ? `${TASK_SKIP_REASON_LABEL[reason]}：${note}` : TASK_SKIP_REASON_LABEL[reason],
+        detail: { taskId: task.id, taskTitle: task.title, skipReason: reason, skipNote: note, serviceItemId: task.serviceItemId },
+      }),
+    }).catch(() => { /* 打点失败不该打断用户操作 */ });
   };
+
+  const taskProgress = (project: Project) => {
+    const all = project.tasks || [];
+    // 已跳过的不进分母，否则跳过一个任务后进度永远到不了 100%
+    const counted = all.filter(t => t.status !== 'Skipped');
+    const done = counted.filter(t => t.status === 'Completed').length;
+    const skipped = all.length - counted.length;
+    return {
+      done,
+      total: counted.length,
+      skipped,
+      pct: counted.length ? Math.round((done / counted.length) * 100) : 0,
+    };
+  };
+
+  /** 项目的下一步：最近截止的未完成任务。列表里给"该做什么"，比给进度百分比有用。 */
+  const getNextTask = (project: Project): ProjectTask | null => {
+    const open = (project.tasks || []).filter(t => t.status !== 'Completed');
+    if (open.length === 0) return null;
+    return open.slice().sort((a, b) => {
+      const at = new Date(String(a.deadline || '2099-12-31')).getTime();
+      const bt = new Date(String(b.deadline || '2099-12-31')).getTime();
+      return (Number.isFinite(at) ? at : 4102416000000) - (Number.isFinite(bt) ? bt : 4102416000000);
+    })[0];
+  };
+
+  const getStatusBadge = (status: Status) => <StatusBadge status={status} domain="project" />;
+
+  const getCategoryBadge = (category: any) => (
+    <Badge tone={category === 'FollowUp' ? 'amber' : 'indigo'}>{category === 'FollowUp' ? '跟进项目' : '交付项目'}</Badge>
+  );
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -347,7 +539,14 @@ const Projects = () => {
       alert('执行负责人请从列表选择（或选择“待指派”）。');
       return;
     }
-    addProject({ ...formData, manager });
+    const customerId = String(formData.customerId || '').trim();
+    if (!customerId) {
+      alert('请选择归属客户。不关联客户的项目在客户档案里看不到，也无法统计合作次数与金额。');
+      return;
+    }
+    // 负责人同时写入用户 ID，保证「我的项目」和数据权限按身份而不是姓名判断
+    const ownerUserId = userProfiles.find(u => u.name === manager)?.id;
+    addProject({ ...formData, manager, customerId, ...(ownerUserId ? { ownerUserId } : {}) });
     setIsModalOpen(false);
   };
 
@@ -469,13 +668,59 @@ const Projects = () => {
     };
 
     return (
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-8 animate-in slide-in-from-top duration-300">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col gap-6 animate-in slide-in-from-top duration-300">
+        {/*
+          顶部信息条：详情展开后内容很长，滚到下面容易忘了在看哪个项目。
+          这一条钉住关键身份信息（项目 / 客户 / 负责人 / 下一步 / 截止），滚动时始终可见。
+        */}
+        <div className="order-first sticky top-0 z-10 -mx-6 -mt-6 mb-0 px-6 py-3 bg-white/95 backdrop-blur border-b border-gray-100 rounded-t-2xl">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-black text-gray-900 truncate">{project.name}</div>
+              <div className="text-[11px] text-gray-500 truncate">
+                {linkedCustomer?.name || resolveProjectCustomerName(project)}　·　负责人 {project.manager || '待指派'}
+              </div>
+            </div>
+            {(() => {
+              const next = getNextTask(project);
+              if (!next) return <Badge tone="emerald">任务已全部完成</Badge>;
+              const canComplete = checkActionPermission('TASK_COMPLETE', project).allowed;
+              return (
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11px] text-gray-400">下一步</span>
+                  {/* 就地完成：看到下一步就能勾掉，不用滚到下面的任务看板 */}
+                  {canComplete && (
+                    <button
+                      type="button"
+                      title={`标记完成：${next.title}`}
+                      onClick={() => updateProjectTask(project.id, next.id, { status: 'Completed' })}
+                      className={`w-4 h-4 rounded-full border-2 shrink-0 transition-all hover:scale-110 ${
+                        isOverdueTask(next) ? 'border-red-300 hover:border-red-500 hover:bg-red-50' : 'border-gray-300 hover:border-emerald-500 hover:bg-emerald-50'
+                      }`}
+                    />
+                  )}
+                  <span className="text-xs font-bold text-gray-800 max-w-[220px] truncate">{next.title}</span>
+                  {isOverdueTask(next) && <Badge tone="red">已超期</Badge>}
+                </div>
+              );
+            })()}
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-mono text-gray-400">{project.deadline}</span>
+              {getStatusBadge(project.status)}
+            </div>
+          </div>
+        </div>
+
         {canAssign && (
-          <div className="flex justify-end pb-4 border-b border-gray-50">
+          <div className="order-last flex justify-end pt-2 border-t border-gray-50">
             <button
               onClick={() => {
                 setAssignProjectId(project.id);
-                setAssignManager(assignableManagers.includes(project.manager) ? project.manager : (assignableManagers[0] || ''));
+                // 优先用已存的 ownerUserId 回填，其次按姓名匹配（兼容旧数据）
+                const current = userProfiles.find(u => u.id === String((project as any).ownerUserId || ''))
+                  || userProfiles.find(u => u.name === project.manager);
+                setAssignOwnerUserId(current?.id || '');
+                setAssignManager(current?.name || '');
                 setIsAssignModalOpen(true);
               }}
               className="px-3 py-2 text-xs font-black bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50"
@@ -485,8 +730,30 @@ const Projects = () => {
           </div>
         )}
 
-        {/* AI 深度诊断面板 */}
-        <div className="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl border border-indigo-100 p-5 mb-8 relative overflow-hidden">
+        {/*
+          AI 深度诊断：管理动作，不是执行动作。
+          咨询师在一线，项目什么情况他自己清楚，不需要 AI 告诉他；老板和交付负责人
+          不在一线才需要 AI 扫一遍。所以只对管理角色显示，顺带省 token。
+          没有诊断结果时收成一行按钮，不常驻占一屏。
+        */}
+        {!isIntelFollowUpProject && canSeeAiDiagnosis && !project.aiInsight && (
+          <div className="order-7 flex items-center justify-between gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/40 px-5 py-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles className="w-4 h-4 text-indigo-500 shrink-0" />
+              <span className="text-sm font-bold text-indigo-900">AI 项目诊断</span>
+              <span className="text-xs text-indigo-500/80 truncate">按需运行，分析进度风险与卡点</span>
+            </div>
+            <button
+              onClick={() => runProjectDiagnosis(project.id)}
+              className="shrink-0 px-3 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 text-xs font-black hover:bg-indigo-50 transition-colors"
+            >
+              开始诊断
+            </button>
+          </div>
+        )}
+
+        {!isIntelFollowUpProject && canSeeAiDiagnosis && project.aiInsight && (
+        <div className="order-7 bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl border border-indigo-100 p-5 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-4 opacity-10"><Brain className="w-24 h-24 text-indigo-600" /></div>
             <div className="relative z-10">
                 <div className="flex justify-between items-start mb-4">
@@ -557,15 +824,14 @@ const Projects = () => {
                         })()}
                     </div>
                 ) : (
-                    <div className="text-center py-6">
-                        <p className="text-sm text-indigo-400 font-medium">暂无诊断记录，请点击上方按钮开始分析</p>
-                    </div>
+                    <p className="text-xs text-indigo-400 font-medium">还没有诊断记录，点右上角「立即深度诊断」开始分析。</p>
                 )}
             </div>
         </div>
+        )}
 
         {isIntelFollowUpProject && (
-          <div className="bg-amber-50/70 rounded-2xl border border-amber-100 p-5 space-y-4">
+          <div className="order-1 bg-amber-50/70 rounded-2xl border border-amber-100 p-5 space-y-4">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
                 <h3 className="text-base font-black text-amber-900">情报/跟进闭环面板</h3>
@@ -576,8 +842,8 @@ const Projects = () => {
               <div className="flex items-center gap-2">
                 {project.status !== Status.Completed && (
                   <button
-                    onClick={() => {
-                      const res = completeProject(project.id, { source: 'manual' });
+                    onClick={async () => {
+                      const res = await completeProject(project.id, { source: 'manual' });
                       if (!res.ok) {
                         alert(res.reason || '操作失败');
                         return;
@@ -664,8 +930,8 @@ const Projects = () => {
         )}
 
         {/* 核心保全：项目结算中心 & 费用信息区块 (T-002) */}
-        {projectCaps.showFinancePanel && (
-        <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4 md:p-6 space-y-6">
+        {projectCaps.showFinancePanel && canSeeMoney && (
+        <div className="order-6 bg-gray-50/50 rounded-2xl border border-gray-100 p-4 md:p-6 space-y-6">
           
           {/* T-002: 费用信息区块 (Hard Patch) */}
           {project.status === Status.Active && (
@@ -722,27 +988,30 @@ const Projects = () => {
           )}
 
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-t border-gray-100 pt-6">
-            <h3 className="font-black text-gray-900 flex items-center"> <Briefcase className="w-5 h-5 mr-2" /> 项目结算中心 </h3>
+            {/* 标题跟着实际内容走：看不到结算的人，这块其实是「回款 + 完结」，叫结算中心名不副实 */}
+            <h3 className="font-black text-gray-900 flex items-center">
+              <Briefcase className="w-5 h-5 mr-2" /> {canSeeSettlement ? '项目结算中心' : '回款与完结'}
+            </h3>
             <div className="flex gap-2 w-full md:w-auto">
               {project.status !== Status.Completed && (
-                <button onClick={() => {
-                  if (confirm('确定要完成该项目吗？系统将自动生成结果记录、更新客户状态并生成未来提醒。')) {
-                    const res = completeProject(project.id, { source: 'manual' });
-                    if (!res.ok) {
-                      alert(res.reason || '操作失败');
-                      return;
-                    }
-                    if (res.eventId) {
-                      setUndoComplete({ projectId: project.id, eventId: res.eventId, expiresAt: Date.now() + 30_000 });
-                    }
-                  }
+                <button onClick={async () => {
+                  /*
+                    有未完成任务时先弹清单逐条交代，没有就直接完结。
+                    原来是一个 confirm() 什么都不问——项目关了，未完成任务永远挂着，
+                    也没人知道为什么没做。
+                  */
+                  const pending = (project.tasks || []).filter(t => t.status === 'Pending');
+                  if (pending.length > 0) { setCompleting({ project, pending }); return; }
+                  await doCompleteProject(project);
                 }} className="w-full md:w-auto bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center hover:bg-blue-700 transition-all active:scale-95 shadow-md shadow-blue-200">
                   <CheckCircle className="w-4 h-4 mr-1.5" /> 标记完成
                 </button>
               )}
-              <button className="w-full md:w-auto bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center hover:bg-green-700 transition-all active:scale-95 shadow-md shadow-green-200">
-                <PlayCircle className="w-4 h-4 mr-1.5" /> 发起结算
-              </button>
+              {canSeeSettlement && (
+                <button className="w-full md:w-auto bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center hover:bg-green-700 transition-all active:scale-95 shadow-md shadow-green-200">
+                  <PlayCircle className="w-4 h-4 mr-1.5" /> 发起结算
+                </button>
+              )}
             </div>
           </div>
           
@@ -788,15 +1057,23 @@ const Projects = () => {
                </div>
             </div>
           )}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/*
+            没有结算权限时不渲染结算栏，回款明细直接占满整行。
+            原来是留一个虚线空框写「结算信息仅财务和管理员可见」——
+            用半个版面说一句读者做不了任何事的话，纯属浪费；看不到的东西不该占位。
+          */}
+          <div className={`grid grid-cols-1 gap-8 ${canSeeSettlement ? 'lg:grid-cols-2' : ''}`}>
+             {canSeeSettlement && (
              <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm space-y-4">
                 <div className="flex justify-between text-sm"> <span className="text-gray-400 font-bold">结算对象:</span> <span className="font-bold text-gray-900">{project.manager}</span> </div>
                 <div className="flex justify-between text-sm"> <span className="text-gray-400 font-bold">规则类型:</span> <span className="font-bold text-gray-900">按回款比例提成</span> </div>
                 <div className="flex justify-between items-center pt-2 border-t border-gray-50"> <span className="text-sm text-gray-400 font-bold">预估金额:</span> <span className="text-lg font-black text-indigo-600 font-mono">10%</span> </div>
                 <p className="text-[10px] text-gray-300 italic">* 提示：点击发起结算即可生成应付单。</p>
              </div>
+             )}
              <div className="space-y-3">
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">回款明细（从）</p>
+                {/* 原文是「回款明细（从）」，「（从）」是历史提交遗留的残字，无实义 */}
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">回款明细</p>
 
                 {receivables.length > 0 && projectAmount <= 0 && (
                   <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
@@ -853,9 +1130,13 @@ const Projects = () => {
                       </div>
                       <div className="flex items-center space-x-4">
                         <span className="font-mono font-black text-sm">¥{r.amount.toLocaleString()}</span>
+                        {/*
+                          确认到账是财务动作，之前这里完全没有权限门，任何进得来项目详情的人都能点。
+                          现在：只有有 PAYMENT_CONFIRM 的人能确认；其他人只能「报备已收款」推给财务核对。
+                        */}
                         {r.status === 'paid' ? (
                           <span className="text-[10px] font-black text-green-600 bg-green-50 px-2 py-1 rounded-full uppercase">已到账</span>
-                        ) : (
+                        ) : canConfirmPayment ? (
                           <button
                             disabled={!contractIdForReceivables}
                             onClick={() => contractIdForReceivables && toggleReceivableStatus(contractIdForReceivables, r.id)}
@@ -867,13 +1148,41 @@ const Projects = () => {
                           >
                             确认到账
                           </button>
+                        ) : r.paymentClaim ? (
+                          <Badge tone="amber">待财务核对</Badge>
+                        ) : (
+                          <button
+                            disabled={!contractIdForReceivables}
+                            onClick={() => {
+                              if (!contractIdForReceivables) return;
+                              const note = window.prompt(`报备「${r.node}」已收款，请财务核对。\n可填备注，也可留空：`, '');
+                              if (note === null) return;
+                              const res = claimReceivablePaid(contractIdForReceivables, r.id, note);
+                              alert(res.ok ? '已通知财务核对。到账确认由财务完成。' : (res.reason || '报备失败'));
+                            }}
+                            /*
+                              原来是 gray-100 灰底灰字，跟禁用态长得一样——
+                              这是销售在这块唯一能做的动作，不能让人以为点不了。
+                              用琥珀色描边区别于财务的「确认到账」（indigo 实心）：
+                              颜色不同提示这不是终态确认，只是报备给财务。
+                            */
+                            className="text-[10px] font-black px-3 py-1 rounded-full border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-600 hover:text-white hover:border-amber-600 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            报备已收款
+                          </button>
                         )}
                       </div>
                     </div>
                   ))}
                   {receivables.length === 0 && (
-                    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
-                      <p className="text-xs font-bold text-gray-400">暂无回款节点</p>
+                    /* 回款节点来自合同，不在项目里维护。只写「暂无」等于让人干瞪眼，得指路 */
+                    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+                      <p className="text-xs font-bold text-gray-500">暂无回款节点</p>
+                      <p className="text-[11px] text-gray-400 mt-1 leading-5">
+                        {contractIdForReceivables
+                          ? '回款节点在关联合同里维护，到「合同管理」打开该合同添加后，这里会自动同步。'
+                          : '该项目还没关联合同，关联后才能同步回款节点。'}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -883,7 +1192,7 @@ const Projects = () => {
         )}
 
         {projectCaps.showServicePanel && (
-        <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4 md:p-6">
+        <div className="order-3 bg-gray-50/50 rounded-2xl border border-gray-100 p-4 md:p-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-5">
             <h3 className="font-black text-gray-900 flex items-center"> <LayoutGrid className="w-5 h-5 mr-2 text-indigo-600" /> 服务清单（项目可承载多服务） </h3>
             <div className="flex items-center gap-2">
@@ -1093,7 +1402,23 @@ const Projects = () => {
         </div>
         )}
 
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+        {/* 没有不符合项时收成一行，不占版面 */}
+        {projectAuditIssues.length === 0 ? (
+        <div className="order-5 bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-gray-300 shrink-0" />
+            <span className="text-sm font-bold text-gray-500">不符合项</span>
+            <span className="text-xs text-gray-400 truncate">暂无，登记后会自动挂整改任务</span>
+          </div>
+          <button
+            onClick={() => navigate('/audit')}
+            className="text-xs font-bold text-gray-500 hover:text-gray-700 shrink-0"
+          >
+            进入审计中心 ›
+          </button>
+        </div>
+        ) : (
+        <div className="order-5 bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
               <h3 className="font-black text-gray-900 flex items-center gap-2">
@@ -1168,16 +1493,12 @@ const Projects = () => {
                 </div>
               );
             })}
-            {projectAuditIssues.length === 0 && (
-              <div className="py-8 text-center text-gray-300 border-2 border-dashed border-gray-100 rounded-3xl">
-                <p className="text-sm font-bold">当前项目暂无关联不符合项，后续登记后会自动挂整改任务。</p>
-              </div>
-            )}
           </div>
         </div>
+        )}
 
-        {/* 核心新增：交付任务看板 */}
-        <div className="space-y-6">
+        {/* 核心新增：交付任务看板 —— 详情里最重要的区块，排在最前 */}
+        <div className="order-2 space-y-6">
            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <h3 className="font-black text-gray-900 flex items-center"> <ListTodo className="w-5 h-5 mr-2 text-blue-600" /> {isFollowUpProject ? '跟进任务看板' : '交付任务流水线'} </h3>
               <div className="flex flex-wrap gap-2 w-full md:w-auto">
@@ -1229,12 +1550,20 @@ const Projects = () => {
                        {group.tasks.map(task => {
                          const isOverdue = new Date(task.deadline) < today && task.status !== 'Completed';
                          return (
-                           <div key={task.id} className={`p-4 rounded-2xl border transition-all hover:shadow-md group ${task.status === 'Completed' ? 'bg-gray-50/50 border-gray-100' : isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100 shadow-sm'}`}>
+                           <div key={task.id} className={`relative p-4 pb-4 rounded-2xl border transition-all hover:shadow-md group ${task.status === 'Skipped' ? 'bg-gray-50 border-gray-200 opacity-70' : task.status === 'Completed' ? 'bg-gray-50/50 border-gray-100' : isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100 shadow-sm'}`}>
                              <div className="flex justify-between items-start mb-3">
                                <button onClick={() => updateProjectTask(project.id, task.id, { status: task.status === 'Completed' ? 'Pending' : 'Completed' })}>
                                  {task.status === 'Completed' ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <div className={`w-5 h-5 rounded-full border-2 ${isOverdue ? 'border-red-300' : 'border-gray-200'} hover:border-indigo-400`} />}
                                </button>
-                               <button onClick={() => deleteProjectTask(project.id, task.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1"><Trash2 className="w-4 h-4"/></button>
+                               <div className="flex items-center gap-0.5">
+                           <TaskSkipButton
+                             task={task}
+                             disabled={!checkActionPermission('TASK_COMPLETE', project).allowed}
+                             onSkip={(reason, note) => skipProjectTask(project, task, reason, note)}
+                             onUndo={() => updateProjectTask(project.id, task.id, { status: 'Pending', skipReason: undefined, skipNote: undefined })}
+                           />
+                           <button onClick={() => deleteProjectTask(project.id, task.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1"><Trash2 className="w-4 h-4"/></button>
+                         </div>
                              </div>
                              <input className={`w-full bg-transparent font-bold text-sm mb-2 focus:outline-none ${task.status === 'Completed' ? 'text-gray-400 line-through' : 'text-gray-900'}`} value={task.title} onChange={e => updateProjectTask(project.id, task.id, { title: e.target.value })} />
                              <div className="flex justify-between items-center">
@@ -1293,12 +1622,20 @@ const Projects = () => {
                        {unassignedTasks.map(task => {
                          const isOverdue = new Date(task.deadline) < today && task.status !== 'Completed';
                          return (
-                           <div key={task.id} className={`p-4 rounded-2xl border transition-all hover:shadow-md group ${task.status === 'Completed' ? 'bg-gray-50/50 border-gray-100' : isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100 shadow-sm'}`}>
+                           <div key={task.id} className={`relative p-4 pb-4 rounded-2xl border transition-all hover:shadow-md group ${task.status === 'Skipped' ? 'bg-gray-50 border-gray-200 opacity-70' : task.status === 'Completed' ? 'bg-gray-50/50 border-gray-100' : isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100 shadow-sm'}`}>
                              <div className="flex justify-between items-start mb-3">
                                <button onClick={() => updateProjectTask(project.id, task.id, { status: task.status === 'Completed' ? 'Pending' : 'Completed' })}>
                                  {task.status === 'Completed' ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <div className={`w-5 h-5 rounded-full border-2 ${isOverdue ? 'border-red-300' : 'border-gray-200'} hover:border-indigo-400`} />}
                                </button>
-                               <button onClick={() => deleteProjectTask(project.id, task.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1"><Trash2 className="w-4 h-4"/></button>
+                               <div className="flex items-center gap-0.5">
+                           <TaskSkipButton
+                             task={task}
+                             disabled={!checkActionPermission('TASK_COMPLETE', project).allowed}
+                             onSkip={(reason, note) => skipProjectTask(project, task, reason, note)}
+                             onUndo={() => updateProjectTask(project.id, task.id, { status: 'Pending', skipReason: undefined, skipNote: undefined })}
+                           />
+                           <button onClick={() => deleteProjectTask(project.id, task.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1"><Trash2 className="w-4 h-4"/></button>
+                         </div>
                              </div>
                              <input className={`w-full bg-transparent font-bold text-sm mb-2 focus:outline-none ${task.status === 'Completed' ? 'text-gray-400 line-through' : 'text-gray-900'}`} value={task.title} onChange={e => updateProjectTask(project.id, task.id, { title: e.target.value })} />
                              <div className="flex justify-between items-center">
@@ -1354,12 +1691,20 @@ const Projects = () => {
                  {allTasks.map(task => {
                    const isOverdue = new Date(task.deadline) < today && task.status !== 'Completed';
                    return (
-                     <div key={task.id} className={`p-4 rounded-2xl border transition-all hover:shadow-md group ${task.status === 'Completed' ? 'bg-gray-50/50 border-gray-100' : isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100 shadow-sm'}`}>
+                     <div key={task.id} className={`relative p-4 pb-4 rounded-2xl border transition-all hover:shadow-md group ${task.status === 'Skipped' ? 'bg-gray-50 border-gray-200 opacity-70' : task.status === 'Completed' ? 'bg-gray-50/50 border-gray-100' : isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100 shadow-sm'}`}>
                        <div className="flex justify-between items-start mb-3">
                          <button onClick={() => updateProjectTask(project.id, task.id, { status: task.status === 'Completed' ? 'Pending' : 'Completed' })}>
                            {task.status === 'Completed' ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <div className={`w-5 h-5 rounded-full border-2 ${isOverdue ? 'border-red-300' : 'border-gray-200'} hover:border-indigo-400`} />}
                          </button>
-                         <button onClick={() => deleteProjectTask(project.id, task.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1"><Trash2 className="w-4 h-4"/></button>
+                         <div className="flex items-center gap-0.5">
+                           <TaskSkipButton
+                             task={task}
+                             disabled={!checkActionPermission('TASK_COMPLETE', project).allowed}
+                             onSkip={(reason, note) => skipProjectTask(project, task, reason, note)}
+                             onUndo={() => updateProjectTask(project.id, task.id, { status: 'Pending', skipReason: undefined, skipNote: undefined })}
+                           />
+                           <button onClick={() => deleteProjectTask(project.id, task.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1"><Trash2 className="w-4 h-4"/></button>
+                         </div>
                        </div>
                        <input className={`w-full bg-transparent font-bold text-sm mb-2 focus:outline-none ${task.status === 'Completed' ? 'text-gray-400 line-through' : 'text-gray-900'}`} value={task.title} onChange={e => updateProjectTask(project.id, task.id, { title: e.target.value })} />
                        <div className="flex justify-between items-center">
@@ -1415,7 +1760,7 @@ const Projects = () => {
            </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-5">
+        <div className="order-4 bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-5">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
               <h3 className="font-black text-gray-900 flex items-center gap-2">
@@ -1443,11 +1788,12 @@ const Projects = () => {
           </div>
 
           {!canWriteStructuredLog && (
-            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs font-bold text-amber-800">
-              当前项目还没有服务项/任务。请先在上方创建服务项或任务后再录入日志，避免“纯文字日报”。
+            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-500">
+              还没有服务项或任务，暂时不能记日志。先在上方创建任务，这里会自动打开。
             </div>
           )}
 
+          {canWriteStructuredLog && (
           <div className="bg-gray-50 border border-gray-100 rounded-2xl p-4 space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
@@ -1522,13 +1868,8 @@ const Projects = () => {
                 placeholder="问题记录（可选）"
               />
             </div>
-            <div className="flex flex-col md:flex-row md:items-center gap-3">
-              <input
-                className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none"
-                value={draft.nextPlan}
-                onChange={e => patchWorkLogDraft(project.id, { nextPlan: e.target.value })}
-                placeholder="明日计划（可选）"
-              />
+            {/* 「明日计划」是日报遗留：下一步该做什么应该体现在任务截止日期上，写在日志里没人看 */}
+            <div className="flex items-center justify-end">
               <button
                 onClick={submitWorkLog}
                 className="px-5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black hover:bg-indigo-700 disabled:bg-gray-300"
@@ -1538,6 +1879,7 @@ const Projects = () => {
               </button>
             </div>
           </div>
+          )}
 
           {Object.keys(weekByUser).length > 0 && (
             <div className="bg-gray-50 border border-gray-100 rounded-2xl p-4">
@@ -1557,7 +1899,9 @@ const Projects = () => {
             {projectLogs.map((log: ProjectWorkLog) => {
               const taskName = getTaskName(allTasks, log.taskId);
               const serviceName = getServiceName(project, log.serviceItemId);
-              const canDelete = log.operatorUserId === currentUser.id || activeRole === 'ADMIN' || activeRole === 'MANAGER';
+              // 删自己的日志一直允许；删别人的要 WORKLOG_DELETE_ANY。
+              // 原来写死 ADMIN/MANAGER 数组，不在权限矩阵内。
+              const canDelete = log.operatorUserId === currentUser.id || canDeleteOthersLog;
               return (
                 <div key={log.id} className="bg-white border border-gray-100 rounded-2xl p-4">
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
@@ -1600,45 +1944,104 @@ const Projects = () => {
     );
   };
 
+
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-6">
         <div>
            <h1 className="text-2xl font-bold text-gray-900">交付工作台</h1>
-           <p className="text-sm text-gray-500 mt-1">项目立项中心：不强制关联合同，任务自动驱动进度</p>
+           <p className="text-sm text-gray-500 mt-1">下方数字跟随「与我相关 / 全公司」和「交付 / 跟进」，与列表口径一致（不跟状态和搜索）。点开项目勾任务推进。</p>
         </div>
-        <button onClick={openCreateModal} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all active:scale-95 font-bold text-sm"><Plus className="w-4 h-4 mr-2" /> 新建项目</button>
+        <button onClick={openCreateModal} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-all active:scale-95 font-bold text-sm"><Plus className="w-4 h-4 mr-2" /> 新建项目</button>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6 flex flex-col gap-4">
+      {/* 概览卡片：数字随「与我相关 / 全公司」变，点击直接切到对应筛选 */}
+      <StatGrid className="mb-6">
+        <StatCard
+          icon={<Briefcase className="w-6 h-6" />}
+          value={overviewStats.active}
+          label="进行中项目"
+          tone="blue"
+          onClick={() => { setModeScope('delivery'); setFilterStatus('Active'); }}
+          title="点击查看进行中的交付项目"
+        />
+        <StatCard
+          icon={<CheckCircle className="w-6 h-6" />}
+          value={overviewStats.completed}
+          label="已完成项目"
+          tone="emerald"
+          onClick={() => { setModeScope('delivery'); setFilterStatus('Completed'); }}
+          title="点击查看已完成的交付项目"
+        />
+        <StatCard
+          icon={<AlertTriangle className="w-6 h-6" />}
+          value={overviewStats.stuck}
+          label="有任务卡住的项目"
+          tone="amber"
+          onClick={() => { setModeScope('delivery'); setFilterStatus('Active'); }}
+          title="进行中项目里存在超期任务的"
+        />
+        <StatCard
+          icon={<Clock className="w-6 h-6" />}
+          value={overviewStats.overdueTasks}
+          label="超期未完成任务"
+          emphasis="danger"
+          title="所有未完结项目下已过截止日期的任务总数"
+        />
+      </StatGrid>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6 flex flex-col gap-4">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center space-x-2 w-full md:w-auto overflow-x-auto">
              <button onClick={() => setFilterStatus('Active')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'Active' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>进行中</button>
              <button onClick={() => setFilterStatus('Completed')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'Completed' ? 'bg-green-600 text-white shadow-md shadow-green-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>已完成</button>
-             <button onClick={() => setFilterStatus('All')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'All' ? 'bg-gray-800 text-white shadow-md' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>全部项目</button>
+             <button onClick={() => setFilterStatus('All')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'All' ? 'bg-gray-800 text-white shadow-md' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>全部状态</button>
+             <div className="h-6 w-px bg-gray-200 mx-1 shrink-0" />
+             {([
+               { key: 'delivery', label: '交付项目' },
+               { key: 'followup', label: '跟进项目' },
+               { key: 'all', label: '两者都看' }
+             ] as const).map(item => (
+               <button
+                 key={item.key}
+                 onClick={() => setModeScope(item.key)}
+                 className={`px-3 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${modeScope === item.key ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
+               >
+                 {item.label}
+               </button>
+             ))}
           </div>
           
           <div className="flex items-center space-x-3 w-full md:w-auto">
-            <div className="relative flex-1 md:w-64">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-                  <input type="text" placeholder="搜索项目..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 bg-white outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-              </div>
+            <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="搜索项目…" className="flex-1 md:w-64" />
               <div className="flex w-full md:w-auto justify-center md:justify-start items-center bg-white border border-gray-200 rounded-xl p-1 shadow-sm">
               <button
                 onClick={() => setViewScope('related')}
+                title="我负责、我负责其中服务项、或有任务在我名下的项目"
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${viewScope === 'related' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
               >
                 与我相关
               </button>
               <button
                 onClick={() => setViewScope('all')}
+                title="公司全部项目（只读，用于了解他人交付进度）"
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${viewScope === 'all' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
               >
-                全部项目
+                全公司
               </button>
             </div>
           </div>
         </div>
+        {/* 条数随筛选实时算，和列表永远一致——避免"徽标说 13、列表只给 1 条" */}
+        <div className="flex items-center justify-between gap-3 pt-1 border-t border-gray-50 text-[11px] text-gray-500">
+          <span>
+            {viewScope === 'related' ? '与我相关' : '全公司'}
+            ・{modeScope === 'delivery' ? '交付项目' : modeScope === 'followup' ? '跟进项目' : '交付+跟进'}
+            ・{filterStatus === 'Active' ? '进行中' : filterStatus === 'Completed' ? '已完成' : '全部状态'}
+          </span>
+          <span className="font-bold text-gray-700">共 {filteredProjects.length} 个项目</span>
+        </div>
+
         {dashboardFocusLabel && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
@@ -1675,12 +2078,18 @@ const Projects = () => {
                 {getStatusBadge(project.status)}
               </div>
               <div className="flex justify-between items-center mt-3">
-                 <div className="flex items-center space-x-2">
-                    <div className="w-16 bg-gray-100 rounded-full h-1 overflow-hidden">
-                        <div className="bg-indigo-600 h-full transition-all" style={{width: `${project.progress}%`}}></div>
-                    </div>
-                    <span className="text-[10px] font-black font-mono text-gray-400">{project.progress}%</span>
-                 </div>
+                 {(() => {
+                   const pg = taskProgress(project);
+                   return (
+                     <div className="flex items-center space-x-2">
+                        <div className="w-16 bg-gray-100 rounded-full h-1 overflow-hidden">
+                            <div className="bg-indigo-600 h-full transition-all" style={{width: `${pg.pct}%`}}></div>
+                        </div>
+                        {/* 显示「已完成/总数」而不是百分比，和桌面表格同口径 */}
+                        <span className="text-[10px] font-black font-mono text-gray-400">{pg.done}/{pg.total}</span>
+                     </div>
+                   );
+                 })()}
                  {expandedProject === project.id ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
               </div>
               {expandedProject === project.id && (
@@ -1694,39 +2103,69 @@ const Projects = () => {
 
         {/* Desktop Table View */}
         <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="bg-gray-50/50 text-gray-600 font-bold text-sm uppercase tracking-wider border-b border-gray-100">
+          <table className="w-full min-w-[880px] text-sm text-left">
+            <thead className={tableHeadClass}>
               <tr>
                 <th className="w-10"></th>
-                <th className="px-6 py-4">项目名称</th>
-                <th className="px-6 py-4">负责人</th>
-                <th className="px-6 py-4">任务进度</th>
-                <th className="px-6 py-4">截止日期</th>
-                <th className="px-6 py-4">类别</th>
-                <th className="px-6 py-4">状态</th>
+                <th className={`${thClass} whitespace-nowrap`}>项目 / 客户</th>
+                <th className={`${thClass} whitespace-nowrap`}>下一步要做什么</th>
+                <th className={`${thClass} whitespace-nowrap`}>负责人</th>
+                <th className={`${thClass} whitespace-nowrap`}>进度</th>
+                <th className={`${thClass} whitespace-nowrap`}>状态</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
                 {filteredProjects.map(project => (
                     <React.Fragment key={project.id}>
                         <tr className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${expandedProject === project.id ? 'bg-indigo-50/30' : ''}`} onClick={() => setExpandedProject(expandedProject === project.id ? null : project.id)}>
-                            <td className="pl-4 text-gray-300"> {expandedProject === project.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} </td>
-                            <td className="px-6 py-5 font-black text-gray-900 text-base">{project.name}</td>
-                            <td className="px-6 py-5 font-bold text-gray-700">{project.manager}</td>
-                            <td className="px-6 py-5">
-                                <div className="flex items-center space-x-2">
-                                    <div className="w-24 bg-gray-100 rounded-full h-1 overflow-hidden">
-                                        <div className="bg-indigo-600 h-full transition-all" style={{width: `${project.progress}%`}}></div>
-                                    </div>
-                                    <span className="text-[10px] font-black font-mono">{project.progress}%</span>
-                                </div>
+                            <td className="pl-4 text-gray-300">
+                              {expandedProject === project.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                             </td>
-                            <td className="px-6 py-5 text-gray-500 font-mono text-xs">{project.deadline}</td>
-                            <td className="px-6 py-5">{getCategoryBadge((project as any).projectCategory)}</td>
-                            <td className="px-6 py-5">{getStatusBadge(project.status)}</td>
+                            <td className={tdClass}>
+                              <div className="font-bold text-gray-900 line-clamp-1">{project.name}</div>
+                              <div className="mt-1 text-[11px] text-gray-500 line-clamp-1">
+                                {resolveProjectCustomerName(project)}
+                              </div>
+                            </td>
+                            <td className={tdClass}>
+                              {(() => {
+                                const next = getNextTask(project);
+                                if (!next) return <span className="text-xs text-gray-400">所有任务已完成</span>;
+                                const overdue = isOverdueTask(next);
+                                return (
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-bold text-gray-800 line-clamp-1">{next.title}</div>
+                                    <div className="mt-1 flex items-center gap-2">
+                                      {overdue
+                                        ? <Badge tone="red">已超期</Badge>
+                                        : <span className="text-[11px] font-mono text-gray-400">{next.deadline || '无期限'}</span>}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </td>
+                            <td className={`${tdClass} font-bold text-gray-700 whitespace-nowrap`}>{project.manager}</td>
+                            <td className={`${tdClass} whitespace-nowrap`}>
+                              <span className="text-xs font-bold text-gray-600">
+                                {(() => {
+                                  const pg = taskProgress(project);
+                                  return <>
+                                    {pg.done}/{pg.total}
+                                    {pg.skipped > 0 && (
+                                      <span className="ml-1 text-[10px] text-gray-400">已跳过 {pg.skipped}</span>
+                                    )}
+                                  </>;
+                                })()}
+                              </span>
+                            </td>
+                            <td className={`${tdClass} whitespace-nowrap`}>{getStatusBadge(project.status)}</td>
                         </tr>
                         {expandedProject === project.id && (
-                            <tr> <td colSpan={7} className="bg-gray-50/50 p-6"> {renderProjectDetail(project)} </td> </tr>
+                            <tr>
+                              <td colSpan={6} className="bg-gray-50/50 p-6">
+                                {renderProjectDetail(project)}
+                              </td>
+                            </tr>
                         )}
                     </React.Fragment>
                 ))}
@@ -1736,7 +2175,7 @@ const Projects = () => {
       </div>
 
       {isModalOpen && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-8 animate-in fade-in zoom-in duration-300 border border-gray-100">
                   <div className="flex justify-between items-center mb-6">
                       <h2 className="text-2xl font-black text-gray-900">极速立项</h2>
@@ -1746,6 +2185,45 @@ const Projects = () => {
                       <div>
                           <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">项目名称</label>
                           <input required className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="例如：某某工厂ISO认证咨询" />
+                      </div>
+                      <div>
+                          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">
+                            归属客户 <span className="text-red-500">*</span>
+                          </label>
+                          <select
+                            required
+                            className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                            value={String(formData.customerId || '')}
+                            onChange={e => setFormData({ ...formData, customerId: e.target.value })}
+                          >
+                            <option value="">请选择客户</option>
+                            {customers.map(c => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </select>
+                          <p className="text-[11px] text-gray-400 mt-2">
+                            必选。不关联客户的话，客户档案里看不到这个项目，合作次数和累计金额也统计不到。
+                          </p>
+                      </div>
+                      <div>
+                          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">关联合同</label>
+                          <select
+                            className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                            value={String(formData.contractRef || '')}
+                            onChange={e => setFormData({ ...formData, contractRef: e.target.value })}
+                          >
+                            <option value="">暂无合同（后续签约再补）</option>
+                            {contracts
+                              .filter(c => !formData.customerId || c.customerId === formData.customerId)
+                              .map(c => (
+                                <option key={c.id} value={c.id}>
+                                  {c.contractNo ? `${c.contractNo} · ` : ''}{c.title}（¥{Number(c.amount || 0).toLocaleString()}）
+                                </option>
+                              ))}
+                          </select>
+                          <p className="text-[11px] text-gray-400 mt-2">
+                            只能从已录入的合同里选，避免手打编号对不上。选了客户后这里只显示该客户的合同。
+                          </p>
                       </div>
                       <div>
                           <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">项目类别</label>
@@ -1795,7 +2273,7 @@ const Projects = () => {
       )}
 
       {isAssignModalOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-8 animate-in fade-in zoom-in duration-300 border border-gray-100">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-black text-gray-900">指派负责人</h2>
@@ -1806,13 +2284,18 @@ const Projects = () => {
                 <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">负责人</label>
                 <select
                   className="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
-                  value={assignManager}
-                  onChange={e => setAssignManager(e.target.value)}
+                  value={assignOwnerUserId}
+                  onChange={e => {
+                    const picked = userProfiles.find(u => u.id === e.target.value);
+                    setAssignOwnerUserId(e.target.value);
+                    setAssignManager(picked?.name || '');
+                  }}
                 >
+                  <option value="">请选择负责人</option>
                   {userProfiles
                     .filter(u => u.id !== 'AI-WORKER')
                     .map(u => (
-                      <option key={u.id} value={u.name}>{u.name}</option>
+                      <option key={u.id} value={u.id}>{u.name}</option>
                     ))}
                 </select>
               </div>
@@ -1822,7 +2305,8 @@ const Projects = () => {
                   type="button"
                   onClick={() => {
                     if (!assignProjectId) return;
-                    const res = assignProjectManager(assignProjectId, assignManager);
+                    if (!assignOwnerUserId) { alert('请选择负责人'); return; }
+                    const res = assignProjectManager(assignProjectId, assignManager, assignOwnerUserId);
                     if (!res.ok) {
                       alert(res.reason || '指派失败');
                       return;
@@ -1841,7 +2325,7 @@ const Projects = () => {
 
       {/* T-002 Cost Editing Modal */}
       {isCostModalOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 animate-in fade-in zoom-in duration-300 border border-gray-100">
             <div className="flex justify-between items-center mb-6">
               <div className="flex items-center gap-2">
@@ -1908,7 +2392,7 @@ const Projects = () => {
       )}
 
       {isTemplateModalOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl p-6 md:p-8 border border-gray-100">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl md:text-2xl font-black text-gray-900">模版管理</h2>
@@ -2182,6 +2666,20 @@ const Projects = () => {
             </button>
           </div>
         </div>
+      )}
+
+      {/* 完结前的未完成任务清单：不强制做完，但每条都要交代 */}
+      {completing && (
+        <ProjectCompleteChecklist
+          project={completing.project}
+          pendingTasks={completing.pending}
+          onCancel={() => setCompleting(null)}
+          onConfirm={async (decisions) => {
+            const target = completing.project;
+            setCompleting(null);
+            await doCompleteProject(target, decisions);
+          }}
+        />
       )}
     </div>
   );

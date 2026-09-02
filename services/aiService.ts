@@ -10,22 +10,12 @@ type OpenAIMessage = {
 
 class AIService {
   private backendUrl: string;
-  private directApiBase: string;
-  private directApiKey: string;
   private defaultModel: string;
   private backendState = { consecutiveFailures: 0, disabledUntil: 0 };
 
   constructor() {
     const envBackendUrl = (import.meta as any).env?.VITE_AI_BACKEND_URL as string | undefined;
-    this.backendUrl = envBackendUrl || `${window.location.protocol}//${window.location.hostname}:3001/api/ai`;
-
-    const envDirectBase = (import.meta as any).env?.VITE_KIMI_BASE_URL as string | undefined;
-    this.directApiBase = (envDirectBase || 'https://api.moonshot.cn/v1').replace(/\/$/, '');
-
-    this.directApiKey =
-      (process.env as any).KIMI_API_KEY ||
-      (process.env as any).API_KEY ||
-      '';
+    this.backendUrl = (envBackendUrl || '/api/ai').replace(/\/$/, '');
 
     const envModel = (import.meta as any).env?.VITE_KIMI_MODEL as string | undefined;
     this.defaultModel = envModel || 'kimi-k2.5';
@@ -51,18 +41,6 @@ class AIService {
     const raw = String(input || '').trim();
     if (!raw) return fallback;
     return raw.startsWith('models/') ? raw.slice('models/'.length) : raw;
-  }
-
-  private getModelChain(inputModel: string): string[] {
-    const normalized = this.normalizeModelName(inputModel, this.defaultModel);
-    const chain = [normalized];
-    if (normalized !== this.defaultModel) chain.push(this.defaultModel);
-    return chain;
-  }
-
-  private isRetryableError(error: unknown): boolean {
-    const msg = String((error as any)?.message || error || '').toLowerCase();
-    return /429|rate limit|quota|timeout|timed out|503|overloaded|temporarily unavailable|networkerror|failed to fetch/.test(msg);
   }
 
   private normalizeBase64(rawData: string): string {
@@ -153,52 +131,8 @@ class AIService {
       .trim();
   }
 
-  private async callKimiDirect(payload: {
-    model: string;
-    messages: OpenAIMessage[];
-    jsonMode?: boolean;
-    temperature?: number;
-  }): Promise<{ text: string }> {
-    if (!this.directApiKey) {
-      throw new Error('KIMI_API_KEY 未配置（且后端不可用）');
-    }
-
-    const temp = this.resolveTemperature(payload.model, payload.temperature);
-    const body: Record<string, unknown> = {
-      model: payload.model,
-      messages: payload.messages,
-      ...(temp === undefined ? {} : { temperature: temp })
-    };
-
-    if (payload.jsonMode) {
-      body.response_format = { type: 'json_object' };
-    }
-
-    const response = await fetch(`${this.directApiBase}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.directApiKey}`
-      },
-      body: JSON.stringify(body)
-    });
-
-    const text = await response.text();
-    let data: any = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = null;
-    }
-
-    if (!response.ok) {
-      const errMsg = data?.error?.message || data?.message || text || `HTTP ${response.status}`;
-      throw new Error(errMsg);
-    }
-
-    const message = data?.choices?.[0]?.message;
-    const out = this.extractTextFromChoice(message?.content);
-    return { text: out || '' };
+  private backendUnavailableFallback = async <T>(): Promise<T> => {
+    throw new Error('AI 后端不可用，请确认服务端 /api/ai 已启动并配置模型密钥。');
   }
 
   private async routeRequest<T>(
@@ -273,24 +207,10 @@ class AIService {
     const parts = typeof prompt === 'string' ? [{ text: prompt }] : (Array.isArray(prompt) ? prompt : [prompt]);
     const history = [{ role: 'user', parts }];
 
-    const fallback = async () => {
-      for (const m of this.getModelChain(model)) {
-        try {
-          return await this.callKimiDirect({
-            model: m,
-            messages: this.toOpenAIMessages(history)
-          });
-        } catch (error) {
-          if (!this.isRetryableError(error)) throw error;
-        }
-      }
-      throw new Error('Kimi direct call failed');
-    };
-
     const result = await this.routeRequest<{ text?: string }>(
       '/generate',
       { model, prompt: history },
-      fallback
+      this.backendUnavailableFallback
     );
 
     return result.text || '';
@@ -308,23 +228,6 @@ class AIService {
     }
     const history = [{ role: 'user', parts }];
 
-    const fallback = async () => {
-      for (const m of this.getModelChain(model)) {
-        try {
-          const direct = await this.callKimiDirect({
-            model: m,
-            messages: this.toOpenAIMessages(history),
-            jsonMode: true,
-            temperature: undefined
-          });
-          return { text: direct.text };
-        } catch (error) {
-          if (!this.isRetryableError(error)) throw error;
-        }
-      }
-      throw new Error('Kimi direct json call failed');
-    };
-
     const result = await this.routeRequest<{ text?: string }>(
       '/generate',
       {
@@ -332,7 +235,7 @@ class AIService {
         prompt: history,
         config: { responseMimeType: 'application/json' }
       },
-      fallback,
+      this.backendUnavailableFallback,
       {
         timeoutMs: options?.timeoutMs,
         allowAbortFallback: Boolean(options?.allowAbortFallback)
@@ -345,22 +248,11 @@ class AIService {
   async chat(modelName: string, history: any[], tools?: any[]): Promise<{ text: string; groundingMetadata?: any }> {
     const model = this.normalizeModelName(modelName, this.defaultModel);
 
-    const fallback = async () => {
-      for (const m of this.getModelChain(model)) {
-        try {
-          const direct = await this.callKimiDirect({
-            model: m,
-            messages: this.toOpenAIMessages(history as any)
-          });
-          return { text: direct.text };
-        } catch (error) {
-          if (!this.isRetryableError(error)) throw error;
-        }
-      }
-      throw new Error('Kimi direct chat failed');
-    };
-
-    return this.routeRequest('/chat', { model, history, tools }, fallback);
+    return this.routeRequest<{ text: string; groundingMetadata?: any }>(
+      '/chat',
+      { model, history, tools },
+      this.backendUnavailableFallback
+    );
   }
 
   async generateDeepStrategicInsight(contextData: any): Promise<any> {

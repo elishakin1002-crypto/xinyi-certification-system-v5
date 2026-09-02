@@ -10,7 +10,11 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+playwright-report/
+test-results/
+acceptance-reports/
 *.local
+.runtime/
 
 # Editor directories and files
 .vscode/*
@@ -27,8 +31,21 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+# 逐个列举永远会漏 —— .env.production 之前就不在名单里。
+# 通配一次性覆盖所有变体，只放行 .env.example（那是给人抄的模板，不含真值）。
+.env.*
+!.env.example
 .env.bak
 .env.local.bak*
 .env.*.bak
 *.env.backup
 *.env.local.backup
+
+# ── 生成物，不进仓库 ──────────────────────────────────────────
+# 提交这些的坏处不是占空间，是**它们会和源头不同步**：
+# 别人 clone 下来看到一份 xlsx，不知道是哪次生成的、改了源脚本要不要重跑。
+outputs/
+release/
+.codex-work/
+# 本机专属设置（每个人的机器不一样，提交了会互相覆盖）
+.claude/settings.local.json

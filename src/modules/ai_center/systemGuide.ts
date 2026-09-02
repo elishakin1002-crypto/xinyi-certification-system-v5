@@ -1,4 +1,5 @@
 import { APP_ROUTES } from '../../routes';
+import { SYSTEM_ROLES } from '../../../constants';
 import type { PermissionCode, RoleID } from '../../../types';
 
 type GuideKey =
@@ -239,17 +240,24 @@ const GUIDE_GROUPS: Array<{ title: string; keys: GuideKey[] }> = [
   { title: 'AI中枢', keys: ['ai_center'] }
 ];
 
-const ROLE_LABELS: Record<RoleID, string> = {
-  ADMIN: '老板',
-  MANAGER: '交付负责人',
-  CONSULTANT: '咨询顾问',
-  FINANCE: '财务'
-};
+/*
+  角色显示名**从 constants.ts 的 SYSTEM_ROLES 取**，不在这里另抄一份。
+
+  原来这里是硬编码的，2026-08-24 把 MANAGER 从「交付负责人」改名为「总助」时，
+  constants.ts 改了，这份表没改——AI 助手里仍然显示旧名字。
+  同一件事两处定义必然漂移，而漂移的表现是「某个角落显示的还是旧叫法」，
+  不报错、也没人会专门去检查。
+*/
+const ROLE_LABELS: Record<string, string> = Object.fromEntries(
+  SYSTEM_ROLES.map((r) => [r.id, r.name])
+);
 
 const ROLE_FOCUS: Record<RoleID, string> = {
   ADMIN: '看全局风险、商机与回款，优先做战略决策。',
+  SYS_ADMIN: '维护系统可用性、账号与配置，业务数据以支持排查为主。',
   MANAGER: '盯项目进度、资源分配和交付质量，优先保交付。',
-  CONSULTANT: '盯线索到成交、项目执行和客户沟通，优先拿结果。',
+  SALES: '盯线索跟进、客户转化和签约，交付进度只看不改。',
+  CONSULTANT: '盯项目执行、任务闭环和客户沟通，优先保质量。',
   FINANCE: '盯应收到账、结算支付和金额准确性，优先保资金安全。'
 };
 
@@ -264,7 +272,7 @@ const OVERVIEW_PATTERNS: RegExp[] = [
   /功能大全/,
   /模块介绍/,
   /我.*(身份|角色).*(功能|模块)/,
-  /(老板|交付负责人|顾问|咨询顾问|财务).*(能用|可用).*(功能|模块)/,
+  /(老板|总助|交付负责人|销售|顾问|咨询顾问|财务).*(能用|可用).*(功能|模块)/,
   /我能用哪些.*(功能|模块)/
 ];
 

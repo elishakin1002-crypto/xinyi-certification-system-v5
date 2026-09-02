@@ -5,6 +5,7 @@ import { Wallet, Search, CheckCircle, Clock, AlertCircle, RefreshCcw, Filter, Do
 import { Receivable, Settlement } from '../types';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { aiService } from '../services/aiService';
+import { SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 
 const Finance = () => {
   const { contracts, settlements, toggleReceivableStatus, rejectReceivable, importSettlements, updateSettlementStatus, vendors } = useApp();
@@ -77,6 +78,7 @@ const Finance = () => {
   const allReceivables = contracts.flatMap(c => c.receivables.map(r => ({
     ...r,
     displayStatus: resolveReceivableStatus(r),
+    paymentClaim: r.paymentClaim,
     contractId: c.id,
     contractTitle: c.title,
     customerName: c.customerName,
@@ -242,13 +244,37 @@ const Finance = () => {
       )}
       {activeTab === 'receivables' && ( 
         <div className="space-y-6 animate-in fade-in zoom-in duration-300"> 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4"> 
-                <div className="bg-white p-4 md:p-5 rounded-xl shadow-sm border border-gray-100"> <p className="text-xs text-gray-500 uppercase font-semibold">预计总回款 (AR)</p> <h3 className="text-lg md:text-2xl font-bold text-gray-900 mt-2">¥{totalReceivable.toLocaleString()}</h3> </div> 
-                <div className="bg-green-50 p-4 md:p-5 rounded-xl shadow-sm border border-green-100"> <p className="text-xs text-green-700 uppercase font-semibold">实际已到账</p> <h3 className="text-lg md:text-2xl font-bold text-green-700 mt-2">¥{totalReceived.toLocaleString()}</h3> <p className="text-xs text-green-600 mt-1">回款率 {collectionRate.toFixed(1)}%</p> </div> 
-                <div className="bg-white p-4 md:p-5 rounded-xl shadow-sm border border-gray-100"> <p className="text-xs text-gray-500 uppercase font-semibold">待收余额</p> <h3 className="text-lg md:text-2xl font-bold text-gray-900 mt-2">¥{totalPending.toLocaleString()}</h3> </div> 
-                <div className="bg-red-50 p-4 md:p-5 rounded-xl shadow-sm border border-red-100"> <p className="text-xs text-red-700 uppercase font-semibold">逾期款项</p> <h3 className="text-lg md:text-2xl font-bold text-red-700 mt-2"> {allReceivables.filter(r => r.displayStatus === 'overdue').length} <span className="text-sm font-normal">笔</span> </h3> </div> 
-            </div> 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"> 
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-blue-200 transition-colors">
+                    <div className="p-3 bg-blue-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><Wallet className="w-6 h-6 text-blue-600" /></div>
+                    <div className="min-w-0">
+                        <div className="text-2xl font-black text-gray-900 truncate">¥{totalReceivable.toLocaleString()}</div>
+                        <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">预计总回款 (AR)</div>
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-emerald-200 transition-colors">
+                    <div className="p-3 bg-emerald-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><CheckCircle className="w-6 h-6 text-emerald-600" /></div>
+                    <div className="min-w-0">
+                        <div className="text-2xl font-black text-gray-900 truncate">¥{totalReceived.toLocaleString()}</div>
+                        <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">实际已到账 · 回款率 {collectionRate.toFixed(1)}%</div>
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-amber-200 transition-colors">
+                    <div className="p-3 bg-amber-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><Clock className="w-6 h-6 text-amber-600" /></div>
+                    <div className="min-w-0">
+                        <div className="text-2xl font-black text-gray-900 truncate">¥{totalPending.toLocaleString()}</div>
+                        <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">待收余额</div>
+                    </div>
+                </div>
+                <div className="bg-gradient-to-br from-rose-500 to-red-600 p-5 rounded-2xl shadow-lg flex items-center text-white">
+                    <div className="p-3 bg-white/20 rounded-xl mr-4"><AlertTriangle className="w-6 h-6" /></div>
+                    <div className="min-w-0">
+                        <div className="text-2xl font-black">{allReceivables.filter(r => r.displayStatus === 'overdue').length} <span className="text-base font-bold opacity-80">笔</span></div>
+                        <div className="text-xs opacity-80 font-bold uppercase tracking-tight">逾期款项</div>
+                    </div>
+                </div>
+            </div>
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden"> 
                 <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-gray-50/50 gap-3"> 
 	                    <div className="flex items-center space-x-4 w-full md:w-auto"> 
 	                        <h3 className="font-bold text-gray-900 flex items-center shrink-0"> <Wallet className="w-5 h-5 mr-2 text-blue-600" /> <span className="hidden md:inline">资金回款明细</span> <span className="md:hidden">回款明细</span> </h3> 
@@ -274,12 +300,77 @@ const Finance = () => {
                 {/* Desktop Table */}
                 <div className="hidden md:block"> 
                     <table className="w-full text-sm text-left"> 
-                        <thead className="bg-gray-50/50 text-gray-600 font-bold text-sm uppercase tracking-wider border-b border-gray-100"> 
-                            <tr> <th className="px-6 py-4">应收日期</th> <th className="px-6 py-4">客户名称</th> <th className="px-6 py-4">款项节点 (摘要)</th> <th className="px-6 py-4">关联合同</th> <th className="px-6 py-4 text-right">应收金额</th> <th className="px-6 py-4 text-center">状态</th> <th className="px-6 py-4 text-right">财务操作</th> </tr> 
+                        <thead className={tableHeadClass}> 
+                            <tr>
+                              <th className={thClass}>应收日期</th>
+                              <th className={thClass}>客户名称</th>
+                              <th className={thClass}>款项节点 (摘要)</th>
+                              <th className={thClass}>关联合同</th>
+                              <th className={`${thClass} text-right`}>应收金额</th>
+                              <th className={`${thClass} text-center`}>状态</th>
+                              <th className={`${thClass} text-right`}>财务操作</th>
+                            </tr> 
                         </thead> 
                         <tbody className="divide-y divide-gray-100"> 
-                            {filteredReceivables.map((r, idx) => ( <tr key={`${r.contractId}-${r.id}-${idx}`} className={`hover:bg-gray-50 transition-colors ${r.displayStatus === 'paid' ? 'bg-gray-50/30' : ''}`}> <td className="px-6 py-5 font-mono text-gray-600 text-sm">{r.dueDate || '待定'}</td> <td className="px-6 py-5 font-black text-gray-900 text-base">{r.customerName}</td> <td className="px-6 py-5 text-gray-700"> <div className="flex items-center"> <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs border border-gray-200 mr-2 whitespace-nowrap"> 第 {r.node.match(/\d+/) ? r.node.match(/\d+/)?.[0] : '-'} 期 </span> <span className="text-sm font-bold">{r.node}</span> </div> {r.rejectionReason && ( <div className="text-xs text-red-600 mt-1 flex items-center bg-red-50 px-2 py-0.5 rounded w-fit"> <AlertCircle className="w-3 h-3 mr-1" /> 已驳回: {r.rejectionReason} </div> )} </td> <td className="px-6 py-5 text-gray-500 text-sm">{r.contractTitle}</td> <td className="px-6 py-5 text-right font-mono font-black text-gray-900 text-base">¥{r.amount.toLocaleString()}</td> <td className="px-6 py-5 text-center"> {r.displayStatus === 'paid' ? ( <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-green-100 text-green-800"> <CheckCircle className="w-3 h-3 mr-1" /> 已核销 </span> ) : r.displayStatus === 'overdue' ? ( <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-red-100 text-red-800"> <AlertCircle className="w-3 h-3 mr-1" /> 已逾期 </span> ) : r.rejectionReason ? ( <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-red-50 text-red-600 border border-red-100"> <RefreshCcw className="w-3 h-3 mr-1" /> 被驳回 </span> ) : ( <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-yellow-100 text-yellow-800"> <Clock className="w-3 h-3 mr-1" /> 待确认 </span> )} </td> <td className="px-6 py-5 text-right"> {r.displayStatus !== 'paid' ? ( <button onClick={() => toggleReceivableStatus(r.contractId, r.id)} className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 shadow-sm transition-colors font-bold" > 确认到账 </button> ) : ( <button onClick={() => openRejectModal(r.contractId, r.id, r.amount, r.customerName)} className="text-gray-500 hover:text-red-600 text-xs flex items-center justify-end w-full font-bold" title="纠错/撤销核销状态" > <RefreshCcw className="w-3 h-3 mr-1" /> 驳回/撤销 </button> )} </td> </tr> ))} 
-	                            {filteredReceivables.length === 0 && ( <tr> <td colSpan={7} className="px-6 py-12 text-center text-gray-400"> <div className="flex flex-col items-center"> <Filter className="w-8 h-8 mb-2 opacity-50" /> {filterStatus === 'overdue' ? '暂无逾期款项，财务状况良好！' : filterMonth ? `该月份暂无相关回款记录（${filterMonth}）` : '暂无相关回款记录'} </div> </td> </tr> )} 
+                            {filteredReceivables.map((r, idx) => (
+                              <tr key={`${r.contractId}-${r.id}-${idx}`} className={`hover:bg-gray-50 transition-colors ${r.displayStatus === 'paid' ? 'bg-gray-50/30' : ''}`}>
+                                <td className={`${tdClass} font-mono text-gray-600 text-sm`}>{r.dueDate || '待定'}</td>
+                                <td className={`${tdClass} font-black text-gray-900 text-base`}>{r.customerName}</td>
+                                <td className={`${tdClass} text-gray-700`}>
+                                  <div className="flex items-center">
+                                    <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs border border-gray-200 mr-2 whitespace-nowrap"> 第 {r.node.match(/\d+/) ? r.node.match(/\d+/)?.[0] : '-'} 期 </span>
+                                    <span className="text-sm font-bold">{r.node}</span>
+                                  </div>
+                                  {r.rejectionReason && (
+                                    <div className="text-xs text-red-600 mt-1 flex items-center bg-red-50 px-2 py-0.5 rounded w-fit">
+                                      <AlertCircle className="w-3 h-3 mr-1" /> 已驳回: {r.rejectionReason}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className={`${tdClass} text-gray-500 text-sm`}>
+                                  <div className="truncate">{r.contractTitle}</div>
+                                  {/* 销售报备「已收款」——财务据此优先核对，并知道找谁问 */}
+                                  {r.paymentClaim && r.displayStatus !== 'paid' && (
+                                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-amber-700">
+                                      <AlertCircle className="w-3 h-3 shrink-0" />
+                                      <span className="truncate">
+                                        {r.paymentClaim.claimedBy} 报备已收款
+                                        {r.paymentClaim.note ? ` · ${r.paymentClaim.note}` : ''}
+                                      </span>
+                                    </div>
+                                  )}
+                                </td>
+                                <td className={`${tdClass} text-right font-mono font-black text-gray-900 text-base`}>¥{r.amount.toLocaleString()}</td>
+                                <td className={`${tdClass} text-center`}>
+                                  {r.displayStatus === 'paid' ? (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-green-100 text-green-800"><CheckCircle className="w-3 h-3 mr-1" /> 已核销</span>
+                                  ) : r.displayStatus === 'overdue' ? (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-red-100 text-red-800"><AlertCircle className="w-3 h-3 mr-1" /> 已逾期</span>
+                                  ) : r.rejectionReason ? (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-red-50 text-red-600 border border-red-100"><RefreshCcw className="w-3 h-3 mr-1" /> 被驳回</span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-yellow-100 text-yellow-800"><Clock className="w-3 h-3 mr-1" /> 待确认</span>
+                                  )}
+                                </td>
+                                <td className={`${tdClass} text-right`}>
+                                  {r.displayStatus !== 'paid' ? (
+                                    <button onClick={() => toggleReceivableStatus(r.contractId, r.id)} className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 shadow-sm transition-colors font-bold">确认到账</button>
+                                  ) : (
+                                    <button onClick={() => openRejectModal(r.contractId, r.id, r.amount, r.customerName)} className="text-gray-500 hover:text-red-600 text-xs flex items-center justify-end w-full font-bold" title="纠错/撤销核销状态"><RefreshCcw className="w-3 h-3 mr-1" /> 驳回/撤销</button>
+                                  )}
+                                </td>
+                              </tr>
+                            ))} 
+	                            {filteredReceivables.length === 0 && (
+                              <tr>
+                                <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
+                                  <div className="flex flex-col items-center">
+                                    <Filter className="w-8 h-8 mb-2 opacity-50" />
+                                    {filterStatus === 'overdue' ? '暂无逾期款项，财务状况良好！' : filterMonth ? `该月份暂无相关回款记录（${filterMonth}）` : '暂无相关回款记录'}
+                                  </div>
+                                </td>
+                              </tr>
+                            )} 
                         </tbody> 
                     </table> 
                 </div> 
@@ -316,11 +407,23 @@ const Finance = () => {
       )}
       {activeTab === 'settlements' && ( 
         <div className="space-y-6 animate-in fade-in zoom-in duration-300"> 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4"> 
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between"> <div> <p className="text-xs text-gray-500 uppercase font-semibold">已支付结算 (YTD)</p> <h3 className="text-2xl font-bold text-gray-900 mt-1">¥{totalSettled.toLocaleString()}</h3> </div> <div className="bg-green-50 p-3 rounded-lg text-green-600"> <CheckCircle className="w-6 h-6" /> </div> </div> 
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between"> <div> <p className="text-xs text-gray-500 uppercase font-semibold">待支付/草稿</p> <h3 className="text-2xl font-bold text-orange-600 mt-1">¥{pendingSettlement.toLocaleString()}</h3> </div> <div className="bg-orange-50 p-3 rounded-lg text-orange-600"> <Clock className="w-6 h-6" /> </div> </div> 
-            </div> 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"> 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-emerald-200 transition-colors">
+                    <div className="p-3 bg-emerald-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><CheckCircle className="w-6 h-6 text-emerald-600" /></div>
+                    <div className="min-w-0">
+                        <div className="text-2xl font-black text-gray-900 truncate">¥{totalSettled.toLocaleString()}</div>
+                        <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">已支付结算 (YTD)</div>
+                    </div>
+                </div>
+                <div className="bg-gradient-to-br from-amber-500 to-orange-600 p-5 rounded-2xl shadow-lg flex items-center text-white">
+                    <div className="p-3 bg-white/20 rounded-xl mr-4"><Clock className="w-6 h-6" /></div>
+                    <div className="min-w-0">
+                        <div className="text-2xl font-black truncate">¥{pendingSettlement.toLocaleString()}</div>
+                        <div className="text-xs opacity-80 font-bold uppercase tracking-tight">待支付 / 草稿</div>
+                    </div>
+                </div>
+            </div>
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden"> 
                 <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row justify-between items-center bg-gray-50/50 gap-3"> 
                     <div className="flex items-center space-x-2"> 
                         <h3 className="font-bold text-gray-900 flex items-center mr-4"> <DollarSign className="w-5 h-5 mr-2 text-indigo-600" /> 结算管理 </h3> 
@@ -352,21 +455,21 @@ const Finance = () => {
                 {/* Desktop Table */}
                 <div className="overflow-x-auto hidden md:block"> 
                     <table className="w-full text-sm text-left"> 
-                        <thead className="bg-gray-50/50 text-gray-600 font-bold text-sm uppercase tracking-wider border-b border-gray-100"> 
+                        <thead className={tableHeadClass}> 
                             <tr>
-                              <th className="px-6 py-4">结算类型</th>
-                              <th className="px-6 py-4">结算对象</th>
-                              <th className="px-6 py-4">关联项目/合同</th>
-                              <th className="px-6 py-4">费用说明</th>
-                              <th className="px-6 py-4 text-right">结算金额</th>
-                              <th className="px-6 py-4 text-center">状态</th>
-                              <th className="px-6 py-4 text-right">操作</th>
+                              <th className={thClass}>结算类型</th>
+                              <th className={thClass}>结算对象</th>
+                              <th className={thClass}>关联项目/合同</th>
+                              <th className={thClass}>费用说明</th>
+                              <th className={`${thClass} text-right`}>结算金额</th>
+                              <th className={`${thClass} text-center`}>状态</th>
+                              <th className={`${thClass} text-right`}>操作</th>
                             </tr> 
                         </thead> 
                         <tbody className="divide-y divide-gray-100"> 
                             {filteredSettlements.map((s) => (
                               <tr key={s.id} className="hover:bg-gray-50">
-                                <td className="px-6 py-5">
+                                <td className={tdClass}>
                                   {s.type === 'External' ? (
                                     <span className="inline-flex items-center text-xs font-bold text-orange-700 bg-orange-50 px-2 py-1 rounded border border-orange-100 uppercase tracking-tight">
                                       <Building className="w-3 h-3 mr-1" /> 外包采购
@@ -377,16 +480,16 @@ const Finance = () => {
                                     </span>
                                   )}
                                 </td>
-                                <td className="px-6 py-5 font-black text-gray-900 text-base">{s.beneficiary}</td>
-                                <td className="px-6 py-5 text-gray-500 text-sm">{s.contractRef}</td>
-                                <td className="px-6 py-5 text-gray-500 text-sm">{s.notes || '-'}</td>
-                                <td className="px-6 py-5 text-right font-black font-mono text-gray-900 text-base">¥{s.amount.toLocaleString()}</td>
-                                <td className="px-6 py-5 text-center">
+                                <td className={`${tdClass} font-black text-gray-900 text-base`}>{s.beneficiary}</td>
+                                <td className={`${tdClass} text-gray-500 text-sm`}>{s.contractRef}</td>
+                                <td className={`${tdClass} text-gray-500 text-sm`}>{s.notes || '-'}</td>
+                                <td className={`${tdClass} text-right font-black font-mono text-gray-900 text-base`}>¥{s.amount.toLocaleString()}</td>
+                                <td className={`${tdClass} text-center`}>
                                   {s.status === 'paid' && <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold uppercase">已支付</span>}
                                   {s.status === 'confirmed' && <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold uppercase">已确认</span>}
                                   {s.status === 'draft' && <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold uppercase">待支付</span>}
                                 </td>
-                                <td className="px-6 py-5 text-right">
+                                <td className={`${tdClass} text-right`}>
                                   <div className="inline-flex items-center gap-2">
                                     {s.status !== 'paid' && (
                                       <button
@@ -408,7 +511,11 @@ const Finance = () => {
                                 </td>
                               </tr>
                             ))} 
-                            {filteredSettlements.length === 0 && ( <tr> <td colSpan={7} className="py-12 text-center text-gray-400"> 暂无结算记录 </td> </tr> )} 
+                            {filteredSettlements.length === 0 && (
+                              <tr>
+                                <td colSpan={7} className="py-12 text-center text-gray-400">暂无结算记录</td>
+                              </tr>
+                            )} 
                         </tbody> 
                     </table> 
                 </div> 
@@ -445,7 +552,7 @@ const Finance = () => {
         </div> 
       )}
       {isRejectModalOpen && rejectData && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in duration-200 p-4">
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
               <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
                   <div className="flex justify-between items-center mb-4">
                       <h3 className="text-lg font-bold text-gray-900 flex items-center">

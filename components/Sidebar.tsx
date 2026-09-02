@@ -13,7 +13,9 @@ import {
   ChevronRight,
   Target,
   ClipboardCheck,
-  X
+  X,
+  UserCog,
+  FileClock
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { ROLE_PERMISSIONS } from '../constants';
@@ -31,8 +33,9 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
     'finance': true,
     'audit': true
   });
-  const { hasPermission, activeRole } = useApp();
+  const { hasPermission, activeRole, currentUser } = useApp();
   const inView = (permission: PermissionCode) => ROLE_PERMISSIONS[activeRole]?.includes(permission);
+  const canManageEmployees = currentUser.roles.includes('ADMIN');
 
   const toggleGroup = (group: string) => {
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
@@ -191,6 +194,18 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
 
       {/* Settings */}
       <div className="p-4 border-t border-gray-800 flex-shrink-0">
+        {canManageEmployees && (
+          <>
+            <NavLink to="/employees" className={navClass} onClick={handleLinkClick}>
+              <UserCog className="w-5 h-5 mr-3" />
+              员工账号
+            </NavLink>
+            <NavLink to="/auth-audit" className={navClass} onClick={handleLinkClick}>
+              <FileClock className="w-5 h-5 mr-3" />
+              审计日志
+            </NavLink>
+          </>
+        )}
         {hasPermission('NAV_AI_CENTER') && inView('NAV_AI_CENTER') && (
           <NavLink to="/ai-center" className={navClass} onClick={handleLinkClick}>
             <Settings className="w-5 h-5 mr-3" />

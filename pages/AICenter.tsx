@@ -117,7 +117,7 @@ const AICenter = () => {
                               <ShieldCheck className="w-4 h-4 mr-1 text-green-600" /> 
                               企业级数据保护
                           </p>
-                          <p className="text-xs text-gray-500">Moonshot Kimi API (供应商侧合规能力可选)</p>
+                          <p className="text-xs text-gray-500">全部使用国内模型服务商，数据不出境</p>
                       </div>
                       <div className="text-green-600 text-xs font-bold px-2 py-1 bg-white rounded border border-green-200">
                           已激活
@@ -127,7 +127,7 @@ const AICenter = () => {
                   <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
                       <div>
                           <p className="font-medium text-gray-900">合同分析模型</p>
-                          <p className="text-xs text-gray-500">Kimi K2.5 (Moonshot / 国内可用)</p>
+                          <p className="text-xs text-gray-500">按内容类型自动选择：文字走文本模型，扫描件走视觉模型</p>
                       </div>
                       <div className="flex items-center space-x-2">
                           <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
@@ -154,7 +154,19 @@ const AICenter = () => {
                   <Lock className="w-5 h-5 mr-2 text-indigo-600" />
                   安全与隐私策略 (Security Policy)
               </h3>
-              
+
+              {/*
+                这三个开关目前只是前端 state，后端没有读取任何一个：
+                在 server/ 与 services/ 下 grep piiMasking / zeroRetention 均无引用。
+                「显示开着但实际没生效」比没有这个功能更危险，因此明确标注为未接入。
+              */}
+              <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <p className="text-xs font-bold text-amber-800 leading-6">
+                  ⚠ 以下开关尚未接入后端，仅为规划中的能力占位。当前 AI 调用<strong>不会</strong>自动脱敏，
+                  也<strong>没有</strong>强制零留存。请勿据此向客户承诺数据处理方式。
+                </p>
+              </div>
+
               <div className="space-y-6">
                   {/* PII Masking Toggle */}
                   <div className="flex items-center justify-between group">
@@ -214,7 +226,7 @@ const AICenter = () => {
               </h3>
               <div className="pt-2">
                    <div className="flex justify-between items-center mb-2">
-                       <label className="text-sm font-medium text-gray-700">每日 API 消耗上限预警</label>
+                       <label className="text-sm font-medium text-gray-700">每日 API 消耗上限预警<span className="ml-2 text-[11px] font-bold text-amber-600">（未接入用量统计，调整无效）</span></label>
                        <span className="text-sm font-bold text-indigo-600">$5.00 / Day</span>
                    </div>
                    <input type="range" className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" defaultValue={20} />
@@ -225,7 +237,7 @@ const AICenter = () => {
                        <span>$100+</span>
                    </div>
                    <p className="text-xs text-gray-400 mt-3 bg-gray-50 p-2 rounded">
-                       * 当前使用 Kimi K2.5 模型，建议按供应商实时计费口径评估月度成本并设置预算告警阈值。
+                       * 模型按可用性自动切换（主力失败会回退），实际用量见「AI 用量」。建议按供应商实时计费口径评估月度成本。
                    </p>
               </div>
           </div>
@@ -234,98 +246,43 @@ const AICenter = () => {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-bold text-gray-900 flex items-center">
                   <Users className="w-5 h-5 mr-2 text-blue-600" />
-                  成员与岗位（方案A：本地账号）
+                  成员与岗位（只读 · 同步自「员工账号」）
                 </h3>
                 <button
-                  onClick={() => setIsCreatingUser(true)}
+                  onClick={() => navigate('/employees')}
                   className="flex items-center px-3 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-sm transition-all active:scale-95 text-xs font-bold"
                 >
-                  <Plus className="w-4 h-4 mr-1.5" />
-                  新增成员
+                  <Users className="w-4 h-4 mr-1.5" />
+                  去员工账号管理
                 </button>
               </div>
+              <div className="mb-3 text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                人员 / 角色 / 岗位标签 / 归属负责人 统一在「员工账号」页管理，此处仅展示。项目负责人、看板“我的数据”、提醒都取自这份同源花名册。
+              </div>
 
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {sortedUsers.map(u => (
-                  <div key={u.id} className="p-4 rounded-2xl border border-gray-100 bg-gray-50/30">
-                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-3">
-                          <input
-                            className="w-full max-w-xs bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                            value={u.name}
-                            onChange={(e) => updateUserProfile(u.id, { name: e.target.value })}
-                          />
-                          <span className="text-[10px] font-mono text-gray-400">{u.id}</span>
-                        </div>
-
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {roleOptions.map(r => (
-                            <button
-                              key={r.id}
-                              onClick={() => toggleRole(u, r.id)}
-                              className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
-                                u.roles.includes(r.id)
-                                  ? 'bg-indigo-600 text-white border-indigo-600'
-                                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                              }`}
-                            >
-                              {r.name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full lg:w-[520px]">
-                        <div>
-                          <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">岗位标签</div>
-                          <input
-                            className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                            value={(u.positionTags || []).join('，')}
-                            onChange={(e) => updateUserProfile(u.id, { positionTags: parseTags(e.target.value) })}
-                            placeholder="例如：台账指导兼职，食品包装认证指导"
-                          />
-                        </div>
-                        <div>
-                          <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">归属负责人</div>
-                          <select
-                            className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                            value={u.reportsToUserId || ''}
-                            onChange={(e) => updateUserProfile(u.id, { reportsToUserId: e.target.value || undefined })}
-                          >
-                            <option value="">无</option>
-                            {reportsToOptions.filter(x => x.id !== u.id).map(x => (
-                              <option key={x.id} value={x.id}>{x.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 justify-end">
-                        <button
-                          onClick={() => updateUserProfile(u.id, {})}
-                          className="px-3 py-2 rounded-xl bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-xs font-bold flex items-center"
-                          title="写入并自动校验 activeRole"
-                        >
-                          <Save className="w-4 h-4 mr-1.5" />
-                          保存
-                        </button>
-                        <button
-                          onClick={() => deleteUserProfile(u.id)}
-                          className="px-3 py-2 rounded-xl bg-red-50 border border-red-100 text-red-600 hover:bg-red-100 text-xs font-bold flex items-center"
-                          title="删除成员"
-                        >
-                          <Trash2 className="w-4 h-4 mr-1.5" />
-                          删除
-                        </button>
-                      </div>
+                  <div key={u.id} className="p-3 rounded-2xl border border-gray-100 bg-gray-50/30 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-sm font-bold text-gray-900 truncate">{u.name}</span>
+                      <span className="text-[10px] font-mono text-gray-400">{u.id}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(u.roles || []).map(r => (
+                        <span key={r} className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                          {roleOptions.find(x => x.id === r)?.name || r}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="text-xs text-gray-500 md:w-[320px] md:text-right truncate">
+                      {(u.positionTags || []).join('，') || '—'}
                     </div>
                   </div>
                 ))}
               </div>
 
               {isCreatingUser && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
                   <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl p-8 animate-in fade-in zoom-in duration-300 border border-gray-100">
                     <div className="flex justify-between items-center mb-6">
                       <h2 className="text-xl font-black text-gray-900">新增成员</h2>

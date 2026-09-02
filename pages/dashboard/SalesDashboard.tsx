@@ -1,81 +1,41 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Flame, ListChecks, Target } from 'lucide-react';
 import { RoleDashboardMetrics } from '../../services/dashboardMetrics';
-import { openDashboardRoute } from '../../src/modules/dashboardNavigation';
+import PersonaDashboard from './PersonaDashboard';
 
 type Props = {
   metrics: RoleDashboardMetrics;
 };
 
-const SalesDashboard: React.FC<Props> = ({ metrics }) => {
-  const navigate = useNavigate();
-
-  const renderCards = (cards: RoleDashboardMetrics['topCards'], colsClass: string) => {
-    if (!cards || cards.length === 0) {
-      return <div className="text-sm text-gray-500">暂无数据</div>;
-    }
-    return (
-      <div className={`grid ${colsClass} gap-4`}>
-        {cards.map(card => (
-          <button
-            key={card.id}
-            type="button"
-            onClick={() => openDashboardRoute(navigate, card.route)}
-            className="text-left bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-indigo-200 transition"
-          >
-            <div className="text-sm text-gray-500">{card.title}</div>
-            <div className="mt-1 text-2xl font-bold text-gray-900">{card.value || '暂无数据'}</div>
-            {card.hint ? <div className="mt-1 text-xs text-gray-400">{card.hint}</div> : null}
-          </button>
-        ))}
-      </div>
-    );
-  };
-
-  return (
-    <div className="p-6 space-y-6 animate-in fade-in duration-300">
-      <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-gray-900">销售机会面板</h2>
-        <p className="text-sm text-gray-500 mt-1">按 owner=me 聚焦机会、转化与今日行动。</p>
-      </div>
-
-      <section className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">成交指标</h3>
-        {renderCards(metrics.topCards, 'grid-cols-1 md:grid-cols-2 xl:grid-cols-4')}
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">机会箱</h3>
-        {renderCards(metrics.middleCards, 'grid-cols-1 md:grid-cols-2 xl:grid-cols-5')}
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">今日行动清单</h3>
-        {renderCards(metrics.bottomCards, 'grid-cols-1 md:grid-cols-3')}
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">优先处理列表</h3>
-        <div className="bg-white border border-gray-100 rounded-xl shadow-sm divide-y divide-gray-100">
-          {metrics.listItems.length === 0 ? (
-            <div className="px-4 py-6 text-sm text-gray-500">暂无数据</div>
-          ) : (
-            metrics.listItems.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => navigate(item.route)}
-                className="w-full text-left px-4 py-3 hover:bg-gray-50 transition"
-              >
-                <div className="text-sm font-medium text-gray-900">{item.title}</div>
-                {item.subtitle ? <div className="text-xs text-gray-500 mt-1">{item.subtitle}</div> : null}
-              </button>
-            ))
-          )}
-        </div>
-      </section>
-    </div>
-  );
-};
+const SalesDashboard: React.FC<Props> = ({ metrics }) => (
+  <PersonaDashboard
+    metrics={metrics}
+    headline={{ title: '我的成交指标', subtitle: '只统计归属于我的线索、跟进与签约，先看结果再看机会。' }}
+    emphasisId="sales-sign-amt"
+    sections={[
+      {
+        key: 'opportunities',
+        title: '机会箱',
+        subtitle: '按紧迫程度排列：该催的、该唤醒的、该复购的。',
+        icon: <Target className="w-5 h-5 text-indigo-600" />,
+        cards: metrics.middleCards,
+        cols: 'grid-cols-1 md:grid-cols-2 xl:grid-cols-5'
+      },
+      {
+        key: 'today',
+        title: '今日行动清单',
+        subtitle: '今天必须推进的三件事，点击进入对应列表。',
+        icon: <ListChecks className="w-5 h-5 text-emerald-600" />,
+        cards: metrics.bottomCards,
+        cols: 'grid-cols-1 md:grid-cols-3'
+      }
+    ]}
+    list={{
+      title: '优先处理列表',
+      subtitle: '系统按跟进时效和成交意向排出的处理顺序。',
+      icon: <Flame className="w-5 h-5 text-orange-500" />
+    }}
+  />
+);
 
 export default SalesDashboard;

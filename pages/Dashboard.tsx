@@ -22,10 +22,12 @@ import { useApp } from '../context/AppContext';
 import { AggregatedReminder, Reminder, DashboardPersona, Status } from '../types';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
+import { AiProposalQueue } from '../components/AiProposalQueue';
 import BossDashboard from './dashboard/BossDashboard';
 import SalesDashboard from './dashboard/SalesDashboard';
 import ConsultantDashboard from './dashboard/ConsultantDashboard';
 import FinanceDashboard from './dashboard/FinanceDashboard';
+import RiskPanel, { RiskAlertItem } from './dashboard/RiskPanel';
 import { openDashboardRoute } from '../src/modules/dashboardNavigation';
 
 type ReminderView = 'aggregated' | 'detail';
@@ -546,15 +548,75 @@ const Dashboard = () => {
     return map;
   }, [receivables]);
 
+  const signedByMonth = React.useMemo(() => {
+    const map: Record<string, number> = {};
+    contracts.forEach(contract => {
+      const key = String(contract.signDate || '').slice(0, 7);
+      if (!key) return;
+      map[key] = (map[key] || 0) + Number(contract.amount || 0);
+    });
+    return map;
+  }, [contracts]);
+
+  const overdueByMonth = React.useMemo(() => {
+    const map: Record<string, number> = {};
+    receivables
+      .filter(item => item.status !== 'paid' && String(item.dueDate || '') < today)
+      .forEach(item => {
+        const key = String(item.dueDate || '').slice(0, 7);
+        if (!key) return;
+        map[key] = (map[key] || 0) + Number(item.amount || 0);
+      });
+    return map;
+  }, [receivables, today]);
+
   const trendData = React.useMemo(
     () =>
       monthKeys.map(key => ({
         key,
         name: `${Number(key.split('-')[1] || 0)}月`,
-        revenue: paidByMonth[key] || 0
+        revenue: paidByMonth[key] || 0,
+        signed: signedByMonth[key] || 0,
+        overdue: overdueByMonth[key] || 0
       })),
-    [monthKeys, paidByMonth]
+    [monthKeys, paidByMonth, signedByMonth, overdueByMonth]
   );
+
+  // 趋势解读：把曲线翻译成一句结论，避免"只有图没有判断"
+  const trendInsights = React.useMemo(() => {
+    const latest = trendData[trendData.length - 1];
+    const prev = trendData[trendData.length - 2];
+    const money = (n: number) => `¥${Math.round(n).toLocaleString()}`;
+    const totalSigned = trendData.reduce((sum, item) => sum + item.signed, 0);
+    const totalRevenue = trendData.reduce((sum, item) => sum + item.revenue, 0);
+    const totalOverdue = trendData.reduce((sum, item) => sum + item.overdue, 0);
+    const collectRate = totalSigned > 0 ? Math.round((totalRevenue / totalSigned) * 100) : 0;
+    const delta = latest && prev ? latest.revenue - prev.revenue : 0;
+
+    return [
+      {
+        id: 'momentum',
+        tone: delta >= 0 ? 'emerald' : 'amber',
+        title: '本月回款环比',
+        value: delta >= 0 ? `↑ ${money(Math.abs(delta))}` : `↓ ${money(Math.abs(delta))}`,
+        detail: delta >= 0 ? '回款势头好于上月，保持当前催收节奏。' : '回款低于上月，优先跟进到期未收的合同。'
+      },
+      {
+        id: 'collect',
+        tone: collectRate >= 70 ? 'emerald' : 'amber',
+        title: '近 7 个月回款率',
+        value: `${collectRate}%`,
+        detail: `累计新签 ${money(totalSigned)}，已收 ${money(totalRevenue)}。${collectRate >= 70 ? '资金回笼健康。' : '签得多收得慢，注意现金流。'}`
+      },
+      {
+        id: 'overdue',
+        tone: totalOverdue > 0 ? 'amber' : 'emerald',
+        title: '逾期未收合计',
+        value: money(totalOverdue),
+        detail: totalOverdue > 0 ? '这部分已过约定收款日，建议本周内逐笔确认。' : '没有逾期款项，回款纪律良好。'
+      }
+    ];
+  }, [trendData]);
 
   const getCardValue = React.useCallback(
     (role: DashboardPersona, cardId: string, fallback: string) => {
@@ -759,6 +821,33 @@ const Dashboard = () => {
     [navigate]
   );
 
+  // 风险明细：优先用聚合口径，没有则回退到原始预警提醒，统一成 RiskPanel 的形状
+  const riskAlertItems = React.useMemo<RiskAlertItem[]>(() => {
+    if (alertAggregatedReminders.length > 0) {
+      return alertAggregatedReminders.slice(0, 12).map(alert => ({
+        id: alert.id,
+        severity: alert.severity === 'high' ? 'high' : alert.severity === 'medium' ? 'medium' : 'low',
+        severityLabel: alert.severity === 'high' ? '严重' : alert.severity === 'medium' ? '高' : '中低',
+        date: alert.latestDate || '',
+        title: alert.mainScene,
+        meta: (alert.customerName ? `客户【${alert.customerName}】` : '')
+          + (alert.projectName ? ` · 项目【${alert.projectName}】` : ''),
+        linkType: alert.linkType,
+        linkId: alert.linkId
+      } as RiskAlertItem & { linkType?: Reminder['linkType']; linkId?: string }));
+    }
+    return scopedAlertReminders.slice(0, 12).map(reminder => ({
+      id: reminder.id,
+      severity: 'high' as const,
+      severityLabel: '预警',
+      date: reminder.date || '',
+      title: reminder.title,
+      meta: reminder.content || '',
+      linkType: reminder.linkType,
+      linkId: reminder.linkId
+    } as RiskAlertItem & { linkType?: Reminder['linkType']; linkId?: string }));
+  }, [alertAggregatedReminders, scopedAlertReminders]);
+
   const toggleAiBlock = (key: AIBriefKey) => {
     setAiOpenState(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -882,8 +971,16 @@ const Dashboard = () => {
     {
       id: 'hub-ai',
       title: 'AI 运行与治理',
-      value: 'Kimi K2.5',
-      subtitle: `成员 ${userProfiles.length} 人 · 训练资料 ${learnedDocsCount} 份`,
+      /*
+        原来这里写死 'Kimi K2.5'，是**错的**：
+        实测路由是「文本走 DeepSeek、图片走 Kimi、失败回退 Gemini」，
+        写死一个名字会让人以为文本分析是 Kimi 做的。
+
+        而且模型会换——写死的字符串不会跟着变，只会慢慢变成谎话。
+        改成放真实数字：训练资料份数是这张卡真正该关心的东西。
+      */
+      value: `${learnedDocsCount} 份资料`,
+      subtitle: `成员 ${userProfiles.length} 人 · AI 可读的公司资料`,
       route: '/ai-center?panel=model-status',
       tone: 'blue',
       icon: <Database className="w-5 h-5" />,
@@ -916,12 +1013,12 @@ const Dashboard = () => {
     <div className="p-6 space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h2 className="text-xl font-black text-gray-900">工作台</h2>
-          <p className="text-xs text-gray-500 mt-1">当前：{roleHint}（由顶部“当前视角”统一控制，可用 ?persona= 仅做调试覆盖）</p>
+          <h1 className="text-2xl font-bold text-gray-900">工作台</h1>
+          <p className="text-sm text-gray-500 mt-1">{roleHint}：先看结果与风险，再处理今天的待办。</p>
         </div>
       </div>
 
-      {/* A. 顶部 KPI / Boss 三段式 */}
+      {/* A. 顶部 KPI（按视角切换） */}
       {persona === 'boss' ? (
         <BossDashboard
           overviewCards={bossOverviewCards.map(card => ({
@@ -931,7 +1028,6 @@ const Dashboard = () => {
             route: card.route,
             hint: card.subtitle
           }))}
-          riskCards={bossRiskCards}
           teamCards={bossTeamCards}
         />
       ) : persona === 'sales' ? (
@@ -942,86 +1038,105 @@ const Dashboard = () => {
         <FinanceDashboard metrics={dashboardMetrics.finance} />
       )}
 
-      <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+      {/* D. 经营趋势（新签 / 回款 / 逾期 三维度） */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
           <div>
-            <h3 className="text-lg font-black text-gray-900">专项联动中心</h3>
-            <p className="text-xs text-gray-500 mt-1">不只做跳转，直接在工作台预览知识、战役和 AI 治理焦点。</p>
+            <h2 className="text-lg font-black text-gray-900 flex items-center">
+              <TrendingUp className="w-5 h-5 mr-2 text-indigo-600" /> 经营趋势
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">近 7 个月的签单、回款与逾期对照，点击任意月份可下钻到回款明细。</p>
           </div>
-          <span className="text-[11px] font-bold text-gray-400">可直接进入焦点视图或打开最近项</span>
+          <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
+            <span className="px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100">新签合同</span>
+            <span className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">已回款</span>
+            <span className="px-2 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-100">逾期未收</span>
+            <button
+              className="px-2 py-1 rounded-full border border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+              onClick={() => navigate('/finance', { state: { filterStatus: 'paid' } })}
+              title="查看回款明细"
+            >
+              查看回款
+            </button>
+            <button
+              className="px-2 py-1 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50"
+              onClick={() => setTrendCollapsed(prev => !prev)}
+            >
+              {trendCollapsed ? '展开' : '折叠'}
+            </button>
+          </div>
         </div>
-        <div className="mt-4 grid grid-cols-1 xl:grid-cols-3 gap-4">
-          {hubCards.map(card => {
-            const toneClass = card.tone === 'indigo'
-              ? { border: 'border-indigo-100', icon: 'bg-indigo-50 text-indigo-600', value: 'text-indigo-700', button: 'border-indigo-200 text-indigo-700 hover:bg-indigo-50', item: 'hover:border-indigo-200 hover:bg-indigo-50/40' }
-              : card.tone === 'emerald'
-                ? { border: 'border-emerald-100', icon: 'bg-emerald-50 text-emerald-600', value: 'text-emerald-700', button: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50', item: 'hover:border-emerald-200 hover:bg-emerald-50/40' }
-                : { border: 'border-blue-100', icon: 'bg-blue-50 text-blue-600', value: 'text-blue-700', button: 'border-blue-200 text-blue-700 hover:bg-blue-50', item: 'hover:border-blue-200 hover:bg-blue-50/40' };
-            return (
-              <div
-                key={card.id}
-                className={`rounded-2xl border bg-gradient-to-br from-white to-gray-50 p-5 shadow-sm ${toneClass.border}`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className={`inline-flex items-center justify-center w-10 h-10 rounded-xl ${toneClass.icon}`}>
-                      {card.icon}
-                    </div>
-                    <div className={`mt-4 text-2xl font-black ${toneClass.value}`}>{card.value}</div>
-                    <div className="mt-1 text-sm font-black text-gray-900">{card.title}</div>
-                    <div className="mt-2 text-xs leading-5 text-gray-500">{card.subtitle}</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onCardClick(card.route)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-600 transition hover:bg-gray-50"
-                  >
-                    进入
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
 
-                <div className="mt-4 space-y-2">
-                  {card.previews.length > 0 ? card.previews.map(item => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => onCardClick(item.route)}
-                      className={`flex w-full items-center justify-between gap-3 rounded-xl border border-gray-100 bg-white px-3 py-2 text-left transition ${toneClass.item}`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-xs font-bold text-gray-800">{item.label}</div>
-                        <div className="mt-1 truncate text-[11px] text-gray-500">{item.meta}</div>
-                      </div>
-                      <ArrowRight className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                    </button>
-                  )) : (
-                    <div className="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-4 text-xs text-gray-400">
-                      {card.emptyText}
-                    </div>
-                  )}
-                </div>
+        {!trendCollapsed ? (
+          <>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={trendData}
+                  onClick={(event: any) => {
+                    const key = event?.activePayload?.[0]?.payload?.key;
+                    if (!key) return;
+                    navigate('/finance', { state: { filterStatus: 'paid', filterMonth: key } });
+                  }}
+                >
+                  <defs>
+                    <linearGradient id="colorSigned" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2563EB" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="#2563EB" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#4F46E5" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="#4F46E5" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorOverdue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="#F59E0B" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
+                  <Tooltip formatter={(value: any) => `¥${Number(value || 0).toLocaleString()}`} />
+                  <Area type="monotone" name="新签合同" dataKey="signed" stroke="#2563EB" strokeWidth={3} fillOpacity={1} fill="url(#colorSigned)" />
+                  <Area type="monotone" name="已回款" dataKey="revenue" stroke="#4F46E5" strokeWidth={3} fillOpacity={1} fill="url(#colorRev)" />
+                  <Area type="monotone" name="逾期未收" dataKey="overdue" stroke="#F59E0B" strokeWidth={3} fillOpacity={1} fill="url(#colorOverdue)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
 
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {card.actions.map(action => (
-                    <button
-                      key={action.id}
-                      type="button"
-                      onClick={() => onCardClick(action.route)}
-                      className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition ${toneClass.button}`}
-                    >
-                      {action.label}
-                    </button>
-                  ))}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+              {trendInsights.map(item => (
+                <div
+                  key={item.id}
+                  className={`rounded-2xl border p-4 ${item.tone === 'emerald' ? 'border-emerald-100 bg-emerald-50/70' : 'border-amber-100 bg-amber-50/70'}`}
+                >
+                  <div className="text-[11px] font-black uppercase tracking-wide text-gray-500">{item.title}</div>
+                  <div className="mt-2 text-base font-black text-gray-900">{item.value}</div>
+                  <div className="mt-2 text-xs leading-6 text-gray-600">{item.detail}</div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-6 text-sm text-gray-500">
+            图表已折叠。老板/财务默认展开，销售/咨询师默认折叠。
+          </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
+      {/* E. 风险与异常（统计 + 明细合并） */}
+      <RiskPanel
+        statCards={persona === 'boss' ? bossRiskCards : []}
+        alerts={riskAlertItems}
+        onStatClick={route => openDashboardRoute(navigate, route)}
+        onAlertClick={alert => {
+          const linked = alert as RiskAlertItem & { linkType?: Reminder['linkType']; linkId?: string };
+          jumpByLink(linked.linkType, linked.linkId);
+        }}
+      />
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div className="xl:col-span-2 space-y-6">
           {/* B. AI MORNING BRIEF */}
           <div className="bg-gradient-to-br from-indigo-50 to-white p-6 rounded-2xl shadow-sm border border-indigo-100 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-5">
@@ -1030,9 +1145,22 @@ const Dashboard = () => {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-indigo-900 flex items-center">
                 <Zap className="w-5 h-5 mr-2 text-yellow-500 animate-pulse" />
-                AI 智能全域简报 (MORNING BRIEF)
+                今日全域简报
               </h3>
-              <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded shadow-sm font-bold">Kimi K2.5 驱动</span>
+              {/*
+                这里原来写「AI 智能全域简报」+「Kimi K2.5 驱动」徽章，是**不成立的**：
+                下面三块内容全部由 visibleReminders / marketSignals 过滤后套句式生成，
+                这个文件里没有任何一处调用模型（全文搜 Kimi 只有这两处显示用的字符串）。
+
+                老板看着「AI 驱动」的徽章，会以为有模型分析过他的经营数据并给出了判断，
+                实际只是按 type 分了个类。系统可以暂时没有 AI，但不能声称有。
+                对照 pages/Strategy.tsx：那里是真调用（aiService.generateDeepStrategicInsight），
+                并且在没跑之前明确标注「示例内容」——那才是正确的做法。
+
+                要把这块做成真的 AI 简报，见待办：接 aiService 生成当日经营判断，
+                并按「AI 替你做，人只做确认」的原则给出可执行动作。
+              */}
+              <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-bold">系统汇总</span>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1048,8 +1176,8 @@ const Dashboard = () => {
                   {aiOpenState.opportunity ? (
                     <p className="text-xs text-gray-500 mt-1 leading-relaxed cursor-pointer" onClick={() => navigate('/customers')}>
                       {opportunities.length > 0
-                        ? `AI 检测到 ${opportunities.length} 个潜在增购增长点。重点关注：【${opportunities[0].title.split('：')[1] || '待跟进项目'}】等。`
-                        : '当前暂无新增商机匹配，建议执行全域巡检以挖掘老客户二次开发潜力。'}
+                        ? `${opportunities.length} 条商机提醒待跟进。最近一条：【${opportunities[0].title.split('：')[1] || '待跟进项目'}】。`
+                        : '当前没有商机提醒。'}
                     </p>
                   ) : (
                     <p className="text-xs text-gray-400 mt-1 truncate">已折叠，点击展开查看详情</p>
@@ -1069,8 +1197,8 @@ const Dashboard = () => {
                   {aiOpenState.risk ? (
                     <p className="text-xs text-gray-500 mt-1 leading-relaxed cursor-pointer" onClick={() => navigate('/projects')}>
                       {risks.length > 0
-                        ? `警告：系统内存在 ${risks.length} 项重大风险预警。建议优先处理【${risks[0].title}】等关键卡点。`
-                        : '交付链路处于稳定区间，当前未发现新增重大风险。'}
+                        ? `${risks.length} 条风险预警未处理。最近一条：【${risks[0].title}】。`
+                        : '当前没有未处理的风险预警。'}
                     </p>
                   ) : (
                     <p className="text-xs text-gray-400 mt-1 truncate">已折叠，点击展开查看详情</p>
@@ -1101,60 +1229,6 @@ const Dashboard = () => {
             </div>
           </div>
 
-          {/* D. 月度回款趋势 */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-gray-900 flex items-center">
-                <TrendingUp className="w-5 h-5 mr-2 text-blue-500" />
-                月度回款趋势（已核销）
-              </h3>
-              <div className="flex items-center gap-3">
-                <button
-                  className="text-xs font-black text-gray-500 hover:text-gray-700"
-                  onClick={() => setTrendCollapsed(prev => !prev)}
-                >
-                  {trendCollapsed ? '展开图表' : '折叠图表'}
-                </button>
-                <button
-                  className="text-xs font-black text-indigo-600 hover:text-indigo-700"
-                  onClick={() => navigate('/finance', { state: { filterStatus: 'paid' } })}
-                  title="查看回款明细"
-                >
-                  查看回款 <ArrowRight className="w-3.5 h-3.5 inline-block ml-1" />
-                </button>
-              </div>
-            </div>
-            {!trendCollapsed ? (
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={trendData}
-                    onClick={(event: any) => {
-                      const key = event?.activePayload?.[0]?.payload?.key;
-                      if (!key) return;
-                      navigate('/finance', { state: { filterStatus: 'paid', filterMonth: key } });
-                    }}
-                  >
-                    <defs>
-                      <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#4F46E5" stopOpacity={0.1} />
-                        <stop offset="95%" stopColor="#4F46E5" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9ca3af' }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9ca3af' }} />
-                    <Tooltip />
-                    <Area type="monotone" dataKey="revenue" stroke="#4F46E5" strokeWidth={3} fillOpacity={1} fill="url(#colorRev)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-6 text-sm text-gray-500">
-                图表已折叠。老板/财务默认展开，销售/咨询师默认折叠。
-              </div>
-            )}
-          </div>
         </div>
 
         <div className="space-y-6">
@@ -1506,70 +1580,59 @@ const Dashboard = () => {
               </button>
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* E. 异常/风险流（Monitor） */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="p-4 border-b border-gray-100 bg-gray-50/40 flex items-center justify-between">
-              <h3 className="text-base font-bold text-gray-900">异常/风险流</h3>
-              <span className="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] rounded-md font-bold">
-                {alertAggregatedReminders.length || scopedAlertReminders.length}
-              </span>
-            </div>
-            <div className="max-h-[260px] overflow-y-auto custom-scrollbar p-3 space-y-2">
-              {alertAggregatedReminders.length > 0 ? (
-                alertAggregatedReminders.slice(0, 8).map(alert => (
-                  <button
-                    key={alert.id}
-                    type="button"
-                    onClick={() => jumpByLink(alert.linkType, alert.linkId)}
-                    className="w-full text-left p-3 rounded-xl border border-gray-100 hover:bg-gray-50 transition"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span
-                        className={`text-[10px] font-black ${
-                          alert.severity === 'high' ? 'text-red-500' : alert.severity === 'medium' ? 'text-amber-500' : 'text-indigo-500'
-                        }`}
-                      >
-                        {alert.severity === 'high' ? '严重' : alert.severity === 'medium' ? '高' : '中低'}
-                      </span>
-                      <span className="text-[10px] text-gray-400">{alert.latestDate || '-'}</span>
-                    </div>
-                    <p className="text-sm font-bold text-gray-900 mt-1 line-clamp-1">{alert.mainScene}</p>
-                    <p className="text-[11px] text-gray-500 mt-1 line-clamp-1">
-                      {(alert.customerName ? `客户【${alert.customerName}】` : '') +
-                        (alert.projectName ? ` · 项目【${alert.projectName}】` : '')}
-                    </p>
-                  </button>
-                ))
-              ) : scopedAlertReminders.length > 0 ? (
-                scopedAlertReminders.slice(0, 8).map(reminder => (
-                  <button
-                    key={reminder.id}
-                    type="button"
-                    onClick={() => jumpByLink(reminder.linkType, reminder.linkId)}
-                    className="w-full text-left p-3 rounded-xl border border-gray-100 hover:bg-gray-50 transition"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-black text-red-500">预警</span>
-                      <span className="text-[10px] text-gray-400">{reminder.date || '-'}</span>
-                    </div>
-                    <p className="text-sm font-bold text-gray-900 mt-1 line-clamp-1">{reminder.title}</p>
-                    <p className="text-[11px] text-gray-500 mt-1 line-clamp-1">{reminder.content}</p>
-                  </button>
-                ))
-              ) : (
-                <div className="py-8 text-center text-sm text-gray-400">暂无异常提醒</div>
-              )}
-            </div>
-            <div className="p-3 border-t border-gray-100 bg-gray-50/40">
-              <button
-                className="w-full py-2 text-xs font-bold text-indigo-600 bg-white border border-indigo-100 rounded-xl hover:bg-indigo-50 transition"
-                onClick={() => navigate('/dashboard')}
-              >
-                查看全部提醒
-              </button>
-            </div>
+      {/*
+        AI 待确认队列：放在工作台而不是独立菜单页。
+        AI 提案的价值在于被及时处理，放在每天必看的地方才有用；
+        独立页面大概率会变成没人点的入口。
+      */}
+      <AiProposalQueue />
+
+      {/* F. 专项联动入口（导航性质，压缩为一行） */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-black text-gray-900">专项联动入口</h2>
+            <p className="text-xs text-gray-500 mt-1">知识、战役与 AI 治理的快捷入口，含最近一条动态。</p>
           </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {hubCards.map(card => {
+            const toneClass = card.tone === 'indigo'
+              ? { icon: 'bg-indigo-50 text-indigo-600', value: 'text-indigo-700', hover: 'hover:border-indigo-200 hover:bg-indigo-50/40' }
+              : card.tone === 'emerald'
+                ? { icon: 'bg-emerald-50 text-emerald-600', value: 'text-emerald-700', hover: 'hover:border-emerald-200 hover:bg-emerald-50/40' }
+                : { icon: 'bg-blue-50 text-blue-600', value: 'text-blue-700', hover: 'hover:border-blue-200 hover:bg-blue-50/40' };
+            const latest = card.previews[0];
+            return (
+              <div key={card.id} className={`rounded-2xl border border-gray-100 bg-gray-50 p-4 transition-colors ${toneClass.hover}`}>
+                <button
+                  type="button"
+                  onClick={() => onCardClick(card.route)}
+                  className="w-full flex items-center gap-3 text-left"
+                >
+                  <div className={`inline-flex items-center justify-center w-10 h-10 rounded-xl shrink-0 ${toneClass.icon}`}>
+                    {card.icon}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-black text-gray-900 truncate">{card.title}</div>
+                    <div className={`text-lg font-black ${toneClass.value}`}>{card.value}</div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-gray-400 shrink-0" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCardClick(latest ? latest.route : card.route)}
+                  className="mt-3 w-full rounded-xl border border-gray-100 bg-white px-3 py-2 text-left transition hover:border-gray-200"
+                >
+                  <div className="truncate text-xs font-bold text-gray-800">{latest ? latest.label : card.emptyText}</div>
+                  {latest && <div className="mt-0.5 truncate text-[11px] text-gray-500">{latest.meta}</div>}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

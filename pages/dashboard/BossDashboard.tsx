@@ -1,12 +1,11 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Briefcase, Coins, Percent, ShieldAlert, Users } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Briefcase, Coins, Percent, TrendingUp, Users } from 'lucide-react';
 import { DashboardCard } from '../../services/dashboardMetrics';
 import { openDashboardRoute } from '../../src/modules/dashboardNavigation';
 
 type Props = {
   overviewCards: DashboardCard[];
-  riskCards: DashboardCard[];
   teamCards: DashboardCard[];
 };
 
@@ -18,110 +17,112 @@ const cardSubtitleById: Record<string, string> = {
   'boss-overdue-amt': '统计口径：已逾期未回款金额'
 };
 
+const isOverdueCard = (cardId: string) => cardId.includes('overdue');
+
 const getOverviewTone = (cardId: string) => {
-  if (cardId.includes('overdue')) return { value: 'text-red-600', bg: 'bg-red-50', icon: 'text-red-600' };
-  if (cardId.includes('conv')) return { value: 'text-indigo-600', bg: 'bg-indigo-50', icon: 'text-indigo-600' };
-  if (cardId.includes('revenue-count')) return { value: 'text-green-600', bg: 'bg-green-50', icon: 'text-green-600' };
-  return { value: 'text-blue-600', bg: 'bg-blue-50', icon: 'text-blue-600' };
+  if (cardId.includes('conv')) return { icon: 'bg-indigo-50 text-indigo-600', hover: 'hover:border-indigo-200' };
+  if (cardId.includes('revenue-count')) return { icon: 'bg-emerald-50 text-emerald-600', hover: 'hover:border-emerald-200' };
+  return { icon: 'bg-blue-50 text-blue-600', hover: 'hover:border-blue-200' };
 };
 
 const getOverviewIcon = (cardId: string) => {
-  if (cardId.includes('overdue')) return <AlertTriangle className="w-5 h-5" />;
-  if (cardId.includes('conv')) return <Percent className="w-5 h-5" />;
-  if (cardId.includes('revenue-count')) return <Briefcase className="w-5 h-5" />;
-  return <Coins className="w-5 h-5" />;
+  if (isOverdueCard(cardId)) return <AlertTriangle className="w-6 h-6" />;
+  if (cardId.includes('conv')) return <Percent className="w-6 h-6" />;
+  if (cardId.includes('revenue-count')) return <Briefcase className="w-6 h-6" />;
+  return <Coins className="w-6 h-6" />;
 };
 
-const getRiskIcon = (cardId: string) => {
-  if (cardId.includes('high-risk')) return <ShieldAlert className="w-5 h-5 text-red-600" />;
-  if (cardId.includes('overdue')) return <AlertTriangle className="w-5 h-5 text-amber-600" />;
-  return <AlertTriangle className="w-5 h-5 text-orange-600" />;
-};
-
-const getTeamIcon = () => <Users className="w-5 h-5 text-blue-600" />;
-
-const BossDashboard: React.FC<Props> = ({ overviewCards, riskCards, teamCards }) => {
+const BossDashboard: React.FC<Props> = ({ overviewCards, teamCards }) => {
   const navigate = useNavigate();
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-5 shadow-sm">
-        <div className="mb-4">
-          <h3 className="text-lg font-black text-gray-900">📊 本月经营概览</h3>
-          <p className="text-xs text-gray-500 mt-1">先看结果：收入、转化与逾期回款风险。</p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {overviewCards.map(card => {
-            const tone = getOverviewTone(card.id);
+      {/* 顶部经营指标 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        {overviewCards.map(card => {
+          if (isOverdueCard(card.id)) {
             return (
               <button
                 key={card.id}
                 type="button"
                 onClick={() => openDashboardRoute(navigate, card.route)}
-                className="text-left bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-indigo-200 transition"
-                title={card.title}
+                title={cardSubtitleById[card.id] || card.hint || card.title}
+                className="text-left bg-gradient-to-br from-rose-500 to-red-600 p-5 rounded-2xl shadow-lg flex items-center text-white transition-transform active:scale-[0.98]"
               >
-                <div className={`inline-flex items-center justify-center w-9 h-9 rounded-lg ${tone.bg} ${tone.icon}`}>
-                  {getOverviewIcon(card.id)}
+                <div className="p-3 bg-white/20 rounded-xl mr-4"><AlertTriangle className="w-6 h-6" /></div>
+                <div className="min-w-0">
+                  <div className="text-2xl font-black truncate">{card.value || '暂无数据'}</div>
+                  <div className="text-xs opacity-80 font-bold uppercase tracking-tight">{card.title}</div>
                 </div>
-                <div className={`mt-3 text-3xl font-black ${tone.value}`}>{card.value || '暂无数据'}</div>
-                <div className="mt-1 text-sm font-bold text-gray-800">{card.title}</div>
-                <div className="mt-1 text-xs text-gray-500 line-clamp-2">{cardSubtitleById[card.id] || card.hint || '统计口径见指标说明'}</div>
               </button>
             );
-          })}
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-red-100 bg-red-50/30 p-5 shadow-sm">
-        <div className="mb-4">
-          <h3 className="text-lg font-black text-gray-900">⚠ 风险与异常</h3>
-          <p className="text-xs text-gray-500 mt-1">默认按严重度排序，点击卡片可进入处理列表。</p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {riskCards.map(card => (
+          }
+          const tone = getOverviewTone(card.id);
+          return (
             <button
               key={card.id}
               type="button"
-              onClick={() => navigate(card.route)}
-              className="text-left bg-white border border-red-100 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-red-200 transition"
-              title={card.title}
+              onClick={() => openDashboardRoute(navigate, card.route)}
+              title={cardSubtitleById[card.id] || card.hint || card.title}
+              className={`text-left bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group transition-colors ${tone.hover}`}
             >
-              <div className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-red-50">{getRiskIcon(card.id)}</div>
-              <div className="mt-3 text-2xl font-black text-red-600">{card.value || '暂无数据'}</div>
-              <div className="mt-1 text-sm font-bold text-gray-800">{card.title}</div>
-              <div className="mt-1 text-xs text-gray-500">{card.hint || '点击查看详情与处置对象'}</div>
+              <div className={`p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform ${tone.icon}`}>
+                {getOverviewIcon(card.id)}
+              </div>
+              <div className="min-w-0">
+                <div className="text-2xl font-black text-gray-900 truncate">{card.value || '暂无数据'}</div>
+                <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">{card.title}</div>
+              </div>
             </button>
-          ))}
-        </div>
-      </section>
+          );
+        })}
+      </div>
 
-      <section className="rounded-2xl border border-blue-100 bg-blue-50/30 p-5 shadow-sm">
-        <div className="mb-4">
-          <h3 className="text-lg font-black text-gray-900">👥 团队产能与执行</h3>
-          <p className="text-xs text-gray-500 mt-1">关注产能、延误与日志覆盖，确保团队运转稳定。</p>
+      {/* 团队产能与执行 */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-lg font-black text-gray-900 flex items-center">
+              <Users className="w-5 h-5 mr-2 text-blue-600" /> 团队产能与执行
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">关注产能、延误与日志覆盖，确保团队运转稳定。</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/projects')}
+            className="inline-flex items-center gap-1 rounded-full border border-blue-200 px-3 py-1 text-[11px] font-bold text-blue-700 transition hover:bg-blue-50"
+          >
+            <TrendingUp className="w-3.5 h-3.5" /> 查看全部项目 <ArrowRight className="w-3.5 h-3.5" />
+          </button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {teamCards.map(card => (
             <button
               key={card.id}
               type="button"
-              onClick={() => navigate(card.route)}
-              className="text-left bg-white border border-blue-100 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-blue-200 transition"
-              title={card.title}
+              /*
+                必须走 openDashboardRoute，不能直接 navigate(card.route)。
+
+                卡片路由里的查询参数（?view=team / ?filter=delay / ?tab=logs）
+                要由 buildDashboardRouteTarget 翻译成 location.state.dashboardFocus，
+                目标页面读的是 state，**不读查询串**。直接 navigate 等于跳过翻译，
+                页面收不到筛选条件，打开就是全量列表。
+
+                2026-08-22 查工作台真实性时发现这三张团队卡就是这么写的：
+                点下去有反应、页面也切了，但筛选静默失效——
+                这种「看起来正常」的失效最难被发现。
+              */
+              onClick={() => openDashboardRoute(navigate, card.route)}
+              title={card.hint || card.title}
+              className="text-left rounded-2xl border border-gray-100 bg-gray-50 p-4 transition-all hover:border-blue-200 hover:bg-blue-50/60"
             >
-              <div className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-blue-50">{getTeamIcon()}</div>
-              <div className="mt-3 text-2xl font-black text-blue-700">{card.value || '暂无数据'}</div>
-              <div className="mt-1 text-sm font-bold text-gray-800">{card.title}</div>
-              <div className="mt-2 flex items-center gap-2 text-xs text-gray-400">
-                <span>趋势占位</span>
-                <span className="font-black">↑</span>
-                <span className="font-black">↓</span>
-              </div>
+              <div className="text-[11px] font-black uppercase tracking-wide text-gray-500">{card.title}</div>
+              <div className="mt-2 text-xl font-black text-blue-700">{card.value || '—'}</div>
+              {card.hint && <div className="mt-2 text-xs leading-6 text-gray-600 line-clamp-2">{card.hint}</div>}
             </button>
           ))}
         </div>
-      </section>
+      </div>
     </div>
   );
 };

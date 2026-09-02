@@ -2,11 +2,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Send, Sparkles, Loader2, User, Bot, Mic, Zap, Trash2, Paperclip, FileText, FileSpreadsheet, Image as ImageIcon, FileCheck, FileCode, CheckCircle2, ArrowRight, BellRing, Globe, Database } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { rankDocs } from '../src/modules/knowledge/retrieval';
 import { aiService } from '../services/aiService'; 
 import { dataService } from '../services/dataService';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { buildSystemGuideReply } from '../src/modules/ai_center';
+import { gateAiActions, AI_ACTION_PERMISSION, AI_ACTION_LABEL } from '../src/modules/ai_center/actionPermissions';
+import { isEmptyPromise, EMPTY_PROMISE_NOTICE } from '../src/modules/ai_center/emptyPromise';
+import { checkActionIntent, buildIntentPrompt } from '../src/modules/ai_center/intentGuard';
+import { buildIdentityContext } from '../src/modules/ai_center/identityContext';
+import { aiProposalService } from '../services/aiProposalService';
+import { HIGH_RISK_ACTIONS, buildProposalFor } from '../src/modules/ai_center/highRisk';
 import {
   buildGlobalSearchGroups,
   buildGlobalSearchReplyMarkdown,
@@ -31,7 +38,7 @@ interface Message {
   timestamp: Date;
   attachments?: { name: string; type: string; }[];
   isExecuted?: boolean; // 标记是否已执行系统操作
-  actionType?: 'contract' | 'reminder' | 'customer'; // 标记执行的动作类型
+  actionType?: string; // 标记执行的动作类型
   sources?: { uri: string; title: string }[]; // New: For Web Search Grounding
   ragDocs?: string[]; // New: List of Knowledge Docs referenced
   requestMeta?: {
@@ -63,6 +70,7 @@ const DEFAULT_WELCOME_MSG: Message = {
 };
 
 const MAX_RAG_DOCS = 4;
+// 检索逻辑单独成模块，便于测试——见 tests/knowledge-retrieval.test.js
 const MAX_RAG_SNIPPET = 700;
 const MAX_HISTORY_MESSAGES = 8;
 const MAX_HISTORY_CHARS = 900;
@@ -93,6 +101,13 @@ const AIChatWidget = () => {
     addContract,
     addReminder,
     addCustomer,
+    addLead,
+    addLeadFollowUp,
+    addCustomerFollowUp,
+    addProject,
+    completeProject,
+    toggleReceivableStatus,
+    convertSignalToFollowUpProject,
     leads,
     customers,
     contracts,
@@ -211,7 +226,7 @@ const AIChatWidget = () => {
   // --------------------------------------------------------------------------
   // 核心功能：解析 AI 文本中的 JSON 块并执行系统操作
   // --------------------------------------------------------------------------
-  const executeSystemActions = async (text: string): Promise<'contract' | 'reminder' | 'customer' | null> => {
+  const executeSystemActions = async (text: string, userMessage: string): Promise<string | null> => {
     try {
       // 匹配被特定的标记包裹的 JSON 块
       const actionRegex = /<execute_action>([\s\S]*?)<\/execute_action>/;
@@ -219,7 +234,102 @@ const AIChatWidget = () => {
       
       if (match && match[1]) {
         const actionData = JSON.parse(match[1].trim());
-        
+
+        /*
+          ── 动作权限总闸（2026-08-31 补）──────────────────────────
+          AI 对话框是一条**绕过界面的通道**：界面上顾问看不到「确认回款」按钮，
+          但他可以对 AI 说「确认某某合同的钱到账了」。
+          在这之前 11 个动作里只有 2 个做了校验，confirm_receivable 这种
+          **不可撤销的财务动作**是裸奔的。
+
+          放在这里、放在任何一个动作执行之前：先整批判定，
+          有一个不许就整批不做。不能「能做的先做」——
+          那会留下「合同建了但回款没确认」这种半成品，
+          用户以为办完了，实际账目是错的。
+        */
+        /*
+          ── 意图核对（2026-08-31 补）────────────────────────────
+          老板打了一句「在吗」，AI 回「收到，现在执行系统自我诊断并自动修复」，
+          然后真的跑了一遍全系统自检。
+
+          模型不是笨，是**从上下文惯性推断**——前面几轮都在做自检，它顺着接下去。
+          而这里原本照单全收：AI 说要执行就执行，**从没核对过用户是不是真要这个**。
+
+          只核对高风险的那几个（自检、确认回款、完成项目）。
+          低风险动作推错了删掉重录就行，逐个都要求逐字对上，AI 就没法用了。
+          放在权限闸之前：连意图都不成立的动作，不必再去谈权限。
+        */
+        const intent = checkActionIntent(actionData, userMessage);
+        if (!intent.ok) {
+          setMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            role: 'system',
+            text: buildIntentPrompt(intent.missing, AI_ACTION_LABEL),
+            timestamp: new Date(),
+          }]);
+          /*
+            返回哨兵值而不是 null：调用方要据此**丢掉模型那段话**。
+
+            模型是按「动作会执行」写的那段话（「已触发系统自检并自动修复…」），
+            动作被挡下来之后那句话就是**假的**。
+            照样显示出来等于系统在骗人——比不拦还糟。
+          */
+          return '__intent_blocked__';
+        }
+
+        /*
+          ── 高风险动作走「待确认队列」（2026-09-01）──────────────
+          确认回款、完成项目、录合同这三个**不直接执行**，改成提案。
+
+          区别不在动作本身有多危险，在**这个动作是谁决定的**：
+          人自己点按钮是他的判断；AI 从「那个包装厂的钱到了」推断出
+          要确认哪一笔，中间隔着一层猜测——而确认到账不可撤销。
+
+          注意这**不给人加步骤**：人在页面上点按钮的路径完全没变，
+          只有「AI 推断出来的」才需要人回头确认一下。
+        */
+        const risky = Object.keys(actionData).filter((k) => HIGH_RISK_ACTIONS.includes(k));
+        if (risky.length > 0) {
+          const proposals = [];
+          for (const key of risky) {
+            const p = buildProposalFor(key, actionData[key], currentUser?.name || '');
+            if (!p) continue;
+            try {
+              await aiProposalService.create(p);
+              proposals.push(p.title);
+            } catch (e) {
+              setMessages(prev => [...prev, {
+                id: Date.now().toString(), role: 'system',
+                text: `⚠️ 提案没能进队列：${e instanceof Error ? e.message : '未知错误'}。**没有执行任何操作。**`,
+                timestamp: new Date(),
+              }]);
+              return null;
+            }
+          }
+          if (proposals.length > 0) {
+            setMessages(prev => [...prev, {
+              id: Date.now().toString(), role: 'system',
+              text: `📋 这几件事**风险高、而且是我从你的话里推断出来的**，所以先放进「待我确认」等你点一下：\n\n` +
+                proposals.map(t => `· ${t}`).join('\n') +
+                `\n\n去工作台的「待我确认」看一眼，确认无误再批准。**现在还没有执行。**`,
+              timestamp: new Date(),
+            }]);
+            return '__proposed__';
+          }
+        }
+
+        const gate = gateAiActions(actionData, checkActionPermission);
+        if (!gate.allowed) {
+          const lines = gate.denied.map(d => `· **${d.label}** —— ${d.reason}`).join('\n');
+          setMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            role: 'system',
+            text: `❌ 这些操作你的角色做不了，已全部取消：\n\n${lines}\n\n需要的话找总经理开权限。`,
+            timestamp: new Date(),
+          }]);
+          return null;
+        }
+
         // 0. 优先执行客户创建 (Customer Creation)
         let createdCustomerId = null;
         if (actionData.customer) {
@@ -301,7 +411,71 @@ const AIChatWidget = () => {
             console.log("AI Action Executed: Project Reminder Created", actionData.reminder);
             return 'reminder';
         }
-        
+
+        // --- 扩展动作：线索/跟进/项目/完成/回款/情报转化（均经 useApp → 后端 PG）---
+        const today = new Date().toISOString().split('T')[0];
+        const sys = (t: string) => setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', text: t, timestamp: new Date() }]);
+
+        if (actionData.lead) {
+          const l = actionData.lead;
+          await addLead({ name: l.name, company: l.company, mobile: l.mobile, industry: l.industry, intent: l.intent || 'Medium', source: l.source || 'AI录入' } as any);
+          sys(`✅ 已录入线索：${l.name || ''} / ${l.company || ''}`);
+          return 'lead';
+        }
+        if (actionData.lead_follow_up) {
+          const f = actionData.lead_follow_up;
+          await addLeadFollowUp(f.leadId, { date: f.date || today, type: f.type || 'call', content: f.content || '', operator: currentUser?.name || 'AI' } as any);
+          sys('✅ 已为线索添加跟进记录');
+          return 'lead_follow_up';
+        }
+        if (actionData.customer_follow_up) {
+          const f = actionData.customer_follow_up;
+          await addCustomerFollowUp(f.customerId, { date: f.date || today, type: f.type || 'call', content: f.content || '', operator: currentUser?.name || 'AI' } as any);
+          sys('✅ 已为客户添加跟进记录');
+          return 'customer_follow_up';
+        }
+        if (actionData.project) {
+          const p = actionData.project;
+          addProject({ name: p.name, customerId: p.customerId, contractRef: p.contractRef, manager: p.manager || currentUser?.name, projectAmount: p.projectAmount, costStatus: p.costStatus, tasks: p.tasks || [] } as any);
+          sys(`✅ 已创建交付项目：${p.name || ''}`);
+          return 'project';
+        }
+        if (actionData.complete_project) {
+          const r: any = await completeProject(actionData.complete_project.projectId);
+          sys(r && r.ok === false ? `❌ 无法完成：${r.reason}` : '✅ 项目已完成（自动触发评级/客户分级/提醒/PDCA）');
+          return 'complete_project';
+        }
+        if (actionData.confirm_receivable) {
+          const c = actionData.confirm_receivable;
+          toggleReceivableStatus(c.contractId, c.receivableId);
+          sys('✅ 已确认回款（自动更新项目付款状态/客户价值）');
+          return 'confirm_receivable';
+        }
+        if (actionData.convert_signal) {
+          const r: any = await convertSignalToFollowUpProject(actionData.convert_signal.signalId);
+          sys(r && r.ok === false ? `❌ 无法转化：${r.reason}` : '✅ 情报已转为跟进项目');
+          return 'convert_signal';
+        }
+        if (actionData.diagnose) {
+          if (activeRole !== 'ADMIN') { sys('❌ 系统自我诊断/自愈仅限管理员（老板视角）使用。'); return 'denied'; }
+          try {
+            const rep = await fetch('/api/admin/diagnose', { credentials: 'include' }).then((r) => r.json());
+            if (!rep.ok) { sys(`诊断失败：${rep.message || '未知错误'}`); return 'diagnose'; }
+            const icon: any = { ok: '✅', warn: '⚠️', fail: '❌' };
+            const lines = rep.data.checks.map((c: any) => `${icon[c.status] || '•'} **${c.name}** — ${c.detail}${c.hint ? ` _(${c.hint})_` : ''}`).join('\n');
+            let out = `### 🩺 系统自我诊断\n${lines}\n\n**汇总**：正常 ${rep.data.summary.ok} / 警告 ${rep.data.summary.warn} / 故障 ${rep.data.summary.fail}`;
+            if (actionData.diagnose.autoFix) {
+              const heal = await fetch('/api/admin/self-heal', { method: 'POST', credentials: 'include' }).then((r) => r.json());
+              const items = (heal.data?.fixed || []).map((f: string) => `- ✓ ${f}`).join('\n');
+              out += `\n\n### 🔧 自动修复\n${heal.message || ''}${items ? '\n' + items : ''}`;
+              const needManual = rep.data.checks.filter((c: any) => c.status !== 'ok' && !c.fixable);
+              if (needManual.length > 0) out += `\n\n**仍需人工处理**（自愈无法覆盖）：\n${needManual.map((c: any) => `- ${c.name}：${c.hint || c.detail}`).join('\n')}`;
+            }
+            sys(out);
+          } catch (e: any) { sys(`诊断异常：${e?.message || e}`); }
+          return 'diagnose';
+        }
+
         if (createdCustomerId) return 'customer';
       }
     } catch (e) {
@@ -504,25 +678,18 @@ const AIChatWidget = () => {
 
       if (!currentFile && allowedDocs.length > 0 && hasKnowledgeIntent(currentText)) {
         const q = String(currentText || '').trim();
-        const scoredDocs = allowedDocs
-          .map((doc) => {
-            const title = String(doc.title || '');
-            const summary = String(doc.summary || '');
-            const content = String(doc.content || '');
-            let score = 0;
-            if (q) {
-              if (title.includes(q)) score += 8;
-              if (summary.includes(q)) score += 6;
-              if (content.includes(q)) score += 4;
-              if (/资料|文档|制度|标准|流程|模板|知识/.test(q)) score += 2;
-            } else {
-              score += 1;
-            }
-            if (doc.summary) score += 1;
-            return { doc, score };
-          })
-          .sort((a, b) => b.score - a.score)
-          .slice(0, MAX_RAG_DOCS);
+        /*
+          用 rankDocs 检索，不再拿整句话做子串匹配。
+
+          原来的写法是 `title.includes(q)`，q 是用户输入的**整句问话**——
+          标题里当然不会出现一整句话，所以所有文档恒定 0 分，
+          排序退化成「按数组顺序取前 4 篇」，检索出来的东西和问题无关。
+          实测问「包装厂的复盘」匹配不到《客户复盘｜东莞市万豪包装有限公司》。
+
+          这类失效不报错：AI 照样答，只是没用上公司自己的知识，
+          看上去像「AI 不懂我们业务」，实际是检索压根没生效。
+        */
+        const scoredDocs = rankDocs(q, allowedDocs, { limit: MAX_RAG_DOCS });
 
         if (scoredDocs.length > 0) {
           ragContext = '\n\n### 内部知识库（已授权）';
@@ -534,15 +701,54 @@ const AIChatWidget = () => {
         }
       }
 
+      /*
+        告诉模型这个人不能做哪些动作。
+
+        **这不是安全措施**（真正的拦截在 gateAiActions 和服务端），
+        是为了不让 AI 承诺它做不到的事：不说的话，顾问问「帮我确认回款」，
+        AI 会热情地照做、然后被拦下——用户看到的是「系统坏了」。
+        提前说清楚，AI 会直接回「这件事要找总经理」，那才是有用的回答。
+      */
+      /*
+        身份段。原来这里只拼了一句「不能做什么」，AI 仍然不知道**在跟谁说话**——
+        老板问「我是谁」，它答「我这边看不到你的身份信息」。
+
+        后果不只是答不出那一句：谁问都是同一套话，
+        顾问问客户流失原因时可能被顺口告知成交价。
+        身份进来之后，AI 才谈得上按角色把握分寸。
+      */
+      const identityContext = buildIdentityContext(
+        currentUser ? { name: currentUser.name, roles: currentUser.roles as any, activeRole: activeRole as any } : null,
+        (action) => checkActionPermission(action).allowed,
+      );
+
       let systemPrompt = `你是信义系统AI助手，擅长CRM、合同、财务、认证管理。${dateContext}
+${identityContext}
 ${ragContext}
 
 规则：
 1) 优先基于内部知识库回答，引用格式用 [1]。
 2) 用户问“最新政策/法规/新闻”时，优先联网检索后再答。
-3) 只有用户明确要求“同步入库”时，才在结尾输出 <execute_action>{...}</execute_action>。
-4) 不得编造事实；不确定时要明确说明并给出下一步。
-5) 回复简洁可执行，使用 Markdown。`;
+3) 当用户明确要求执行系统操作时，在回复结尾输出一个隐藏动作块 <execute_action>{...}</execute_action>（普通说明照常写在前面，动作块用户看不到）。支持的动作键（按需选一个或多个，缺失字段可省略）：
+   - lead: {name, company, mobile?, industry?, intent?}  录入线索
+   - customer: {name, contactPerson?, mobile?, industry?}  新建客户
+   - contract: {title, customerName, amount, serviceLine?, receivables?}  录入合同(可带回款计划)
+   - project: {name, customerId?, contractRef?, manager?, projectAmount?, costStatus?, tasks?}  建交付项目
+   - lead_follow_up: {leadId, content, type?}  线索加跟进
+   - customer_follow_up: {customerId, content, type?}  客户加跟进
+   - complete_project: {projectId}  完成项目(触发评级/客户分级/提醒/PDCA级联)
+   - confirm_receivable: {contractId, receivableId}  确认回款(触发项目付款状态/客户价值级联)
+   - convert_signal: {signalId}  把情报信号转为跟进项目
+   - reminder: {title, content, date?, type?, linkType:'project', linkId}  建提醒
+   - diagnose: {autoFix?:true}  系统自我诊断。当用户说「自我诊断/系统体检/自检/自我修复/检查系统」时输出此动作；说到「修复/自愈」时带 autoFix:true（会自动修复情报同步、补默认配置等低级问题，密钥失效/Docker等需人工的会列出）。
+   金额单位一律为元。执行写操作前，先用一句话向用户复述将要写入的关键字段，再输出动作块。诊断类只读，可直接执行。
+4) **打招呼、闲聊、问「在吗」这类，就正常简短回一句**（比如「在，有什么要处理的？」），
+   **不要输出任何动作块**。用户只是在确认你还在，不是要你干活。
+5) **你没有「稍后」。** 操作只在这一次回复里发生：要么现在就输出动作块，要么直接说做不了。
+   **禁止**说「请稍候」「正在执行」「马上为您处理」这类话——说了却没有动作块，
+   用户会一直等一件永远不会发生的事，那比直接说做不了糟糕得多。
+6) 不得编造事实；不确定时要明确说明并给出下一步。
+7) 回复简洁可执行，使用 Markdown。`;
 
       // V5.0: Override system prompt if in "Sales Director" mode
       if (activeContext) {
@@ -648,8 +854,18 @@ ${ragContext}
       const displayableText = fullResponseText.replace(/<execute_action>[\s\S]*?<\/execute_action>/, "").trim();
       
       // 执行系统操作
-      const executedActionType = await executeSystemActions(fullResponseText);
+      const executedActionType = await executeSystemActions(fullResponseText, currentText);
       
+      /*
+        动作被意图核对挡下时，**模型那段话不能显示**——
+        它是按「动作会执行」写的，现在动作没执行，那句话就是假的。
+        上面的追问已经把情况说清楚了，这里直接跳过。
+      */
+      if (executedActionType === '__intent_blocked__' || executedActionType === '__proposed__') {
+        setIsLoading(false);
+        return;
+      }
+
       setMessages(prev => [...prev, { 
         id: (Date.now() + 1).toString(), 
         role: 'model', 
@@ -661,6 +877,25 @@ ${ragContext}
         ragDocs: referencedDocs.length > 0 && displayableText.length > 20 ? referencedDocs.slice(0, 3) : undefined,
         requestMeta
       }]);
+
+      /*
+        兜底：模型说了「请稍候」但没输出动作块。
+
+        对话框只在同一轮执行动作，没有「稍后」这回事。
+        模型按聊天习惯说「现在为您重新执行，请稍候」然后什么都不做，
+        界面就停在那句话上——用户等两分钟以为系统卡死了。
+
+        **这比真的报错更糟，因为它看起来像在工作。**
+        提示词里已经禁止这么说，这里是模型没听话时的兜底。
+      */
+      if (isEmptyPromise(fullResponseText)) {
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 2).toString(),
+          role: 'system',
+          text: EMPTY_PROMISE_NOTICE,
+          timestamp: new Date(),
+        }]);
+      }
 
     } catch (error: any) {
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', text: `⚠️ **处理异常**：${error.message}`, timestamp: new Date() }]);
@@ -679,7 +914,7 @@ ${ragContext}
                     <Zap className="w-5 h-5 text-yellow-300 animate-pulse" />
                 </div>
                 <div>
-                    <span className="font-black tracking-tight block leading-none text-sm uppercase">信义全能大脑 V5.0</span>
+                    <span className="font-black tracking-tight block leading-none text-sm uppercase">信义智能助手</span>
                     <span className="text-[9px] opacity-70 font-black uppercase tracking-[0.2em] mt-1 block">Ultimate System OS</span>
                 </div>
             </div> 
@@ -715,6 +950,20 @@ ${ragContext}
                                     </div>
                                 ))}
                             </div>
+                        )}
+                        {/*
+                          系统提示要**标出来**。
+
+                          黄色框是代码发的（权限不足、意图不明、操作被拦），
+                          白色带头像的才是 AI 说的话。原来两者只有颜色差别，
+                          用户分不清「这句是谁说的」——
+                          而这两者的可信度完全不同：系统提示描述的是确定发生的事实，
+                          AI 说的话可能是猜的。
+                        */}
+                        {msg.role === 'system' && (
+                          <div className="mb-2 text-[10px] font-bold tracking-wider text-yellow-700/70 uppercase">
+                            系统提示 · 不是 AI 的回答
+                          </div>
                         )}
                         <div className={msg.role === 'model' ? 'markdown-body' : 'whitespace-pre-wrap'}>
                             {msg.role === 'user' || msg.role === 'system' ? msg.text : <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>}

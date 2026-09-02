@@ -1,0 +1,32 @@
+# 本地开发用 Postgres。生产改用云 PG，只换 DATABASE_URL 即可。
+# 启动： docker compose -f db/docker-compose.dev-db.yml up -d
+# 建表： npm run migrate        ← 起容器之后必须跑这一步
+# 连接串：postgres://xinyi:xinyi_dev_pwd@localhost:5432/xinyi
+#
+# 注意：原来这里挂载 ./init 到 docker-entrypoint-initdb.d，让容器首次启动时自动建表。
+# 已去掉，改为统一走 npm run migrate（迁移文件在 db/migrations/）。原因：
+#   ① 那套自动执行只在数据目录为空时生效，加字段之类的增量改动完全没有承载机制；
+#   ② 腾讯云托管 PG 没有 docker entrypoint，本地能自动、线上不能，两条路必然分叉；
+#   ③ 两套机制并存会重复执行同一个迁移。建表只保留一条路。
+services:
+  xinyi-db:
+    image: postgres:16-alpine
+    container_name: xinyi-dev-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: xinyi
+      POSTGRES_PASSWORD: xinyi_dev_pwd
+      POSTGRES_DB: xinyi
+    ports:
+      - "5432:5432"
+    volumes:
+      - xinyi_pgdata:/var/lib/postgresql/data
+      # 不再挂载建表脚本，容器起来后跑 npm run migrate
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xinyi -d xinyi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  xinyi_pgdata:

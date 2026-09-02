@@ -1,0 +1,36 @@
+[Unit]
+Description=信义认证系统 V5.0 后端
+# 数据库没起来就启动的话，应用会连不上库然后反复重启，
+# 日志里全是连接失败，真正的问题反而看不见。
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/xinyi
+ExecStart=/usr/bin/node server/app.js
+Environment=NODE_ENV=production
+
+# 崩了自动拉起。RestartSec 给 5 秒是为了留出数据库恢复的时间，
+# 设成 0 会在库还没好的时候疯狂重启，把日志刷爆。
+Restart=always
+RestartSec=5
+
+# 连续快速崩溃就停下来，别无限重启掩盖问题
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xinyi
+
+# 基础加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

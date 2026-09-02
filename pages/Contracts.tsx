@@ -9,14 +9,17 @@ import { Receivable, Lead, Status, Contract, ContractAttachment, KnowledgeDoc } 
 import { extractTextFromDocx, extractTextFromPdf, renderPdfPagesAsImages } from '../services/documentParsers';
 import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
+import { Badge, SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 
 const Contracts = () => {
-  const { contracts, customers, addContract, bindContractToCustomer, deleteContract, archiveContract, projects, addProject, addKnowledgeDoc, checkActionPermission, activeRole, currentUser, addContractAttachment, removeContractAttachment } = useApp();
+  const { contracts, customers, addContract, bindContractToCustomer, claimReceivablePaid, deleteContract, archiveContract, projects, addProject, addKnowledgeDoc, checkActionPermission, activeRole, currentUser, userProfiles, addContractAttachment, removeContractAttachment } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
 
   const [expandedContract, setExpandedContract] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // 立项弹窗：负责人默认当前登录人（多数情况自己录自己做），交期默认 90 天后
+  const [projectDraft, setProjectDraft] = useState<{ contract: Contract; ownerUserId: string; manager: string; deadline: string } | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'risk' | 'archived'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -274,7 +277,7 @@ const Contracts = () => {
     e.stopPropagation();
     e.preventDefault();
     if (!['ADMIN', 'MANAGER'].includes(activeRole)) {
-      alert('权限拒绝：仅管理员/交付负责人可撤销或删除合同。');
+      alert('权限拒绝：仅管理员／总助可撤销或删除合同。');
       return;
     }
     setTimeout(() => {
@@ -287,7 +290,7 @@ const Contracts = () => {
     e.stopPropagation();
     e.preventDefault();
     if (!['ADMIN', 'MANAGER'].includes(activeRole)) {
-      alert('权限拒绝：仅管理员/交付负责人可归档合同。');
+      alert('权限拒绝：仅管理员／总助可归档合同。');
       return;
     }
     setTimeout(() => {
@@ -297,6 +300,12 @@ const Contracts = () => {
     }, 50);
   };
   const getLinkedProject = (contract: Contract) => projects.find(p => p.contractRef === contract.id || p.contractRef === contract.contractNo);
+  const defaultDeadline = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 90);
+    return d.toISOString().split('T')[0];
+  };
+
   const handleCreateProject = (e: React.MouseEvent, contract: Contract) => {
     e.stopPropagation();
     const perm = checkActionPermission('PROJECT_CREATE');
@@ -304,7 +313,21 @@ const Contracts = () => {
       alert(`权限拒绝：${perm.reason || '无权限'}`);
       return;
     }
-    if (!window.confirm(`确认要为合同 "${contract.title}" 立项吗？\n\n系统将自动创建交付项目，您可以在“项目管理”中指派负责人。`)) return;
+    // 不再用 confirm 直接建：负责人和交期是立项必须由人定的两件事，
+    // 写死「待指派」和固定日期会产出无主且一出生就超期的项目。
+    setProjectDraft({
+      contract,
+      ownerUserId: currentUser.id,
+      manager: currentUser.name,
+      deadline: defaultDeadline()
+    });
+  };
+
+  const confirmCreateProject = () => {
+    if (!projectDraft) return;
+    const { contract, ownerUserId, manager, deadline } = projectDraft;
+    if (!manager.trim()) { alert('请选择项目负责人'); return; }
+    if (!deadline) { alert('请填写交付截止日期'); return; }
     const initialServiceItems = Array.isArray(contract.serviceItems)
       ? contract.serviceItems.map(item => ({
           name: item.standardName || item.name,
@@ -323,17 +346,19 @@ const Contracts = () => {
       name: `${contract.customerName} - ${contract.serviceLine}项目`,
       contractRef: contract.id,
       customerId: contract.customerId,
-      manager: '待指派',
+      manager,
+      ownerUserId,
       progress: 0,
       status: Status.Active,
       paymentStatus: 'unpaid',
-      deadline: '2025-12-31',
+      deadline,
       projectType: 'Self-Operated',
       settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' },
       initialServiceItems,
       disableDefaultTemplateTasks: initialServiceItems.length > 0
     });
-    alert("项目创建成功！");
+    setProjectDraft(null);
+    alert('项目已创建，可在「项目管理」中继续推进。');
   };
   const handleGoToProject = (e: React.MouseEvent) => { e.stopPropagation(); navigate('/projects'); }
   const resolvePreviewTarget = (file: ContractAttachment): { kind: 'pdf' | 'image'; url: string } | null => {
@@ -398,7 +423,9 @@ const Contracts = () => {
               updatedAt: new Date().toISOString().split('T')[0],
               content: `该文档来自合同附件归档 (${file.name})，系统已自动建立索引。\n\n(此处为系统生成的占位符，真实环境将调用 OCR 服务提取全文)`,
               sourceUrl: file.url,
-              aiVisible: true
+              // 这里的 content 目前只是「系统生成的占位符」，进 RAG 纯属污染。
+              // 等真接了 OCR 提取全文，再由人决定是否开放（P0-13）
+              aiVisible: false
           };
           addKnowledgeDoc(newDoc);
           setTimeout(() => alert(`✅ 已成功将 "${file.name}" 推送到知识中心！\n\n您可以在“知识中心”查看。`), 10);
@@ -907,6 +934,36 @@ const Contracts = () => {
     return haystack.includes(normalizedContractQuery);
   });
   const createContractPerm = checkActionPermission('CONTRACT_CREATE', { owner: currentUser.name });
+  /**
+   * 合同金额可见性。咨询师刻意不给该权限——避免与客户议价、同事之间比价。
+   * 之前这一页完全没有金额权限门，咨询师能看到所有合同金额。
+   */
+  const canSeeContractAmount = checkActionPermission('CONTRACT_VIEW_AMOUNT', {}).allowed;
+  /** 能确认到账的人（财务/老板）不需要"报备"入口，他们直接在财务页确认 */
+  const canConfirmPayment = checkActionPermission('PAYMENT_CONFIRM', {}).allowed;
+  const maskAmount = (amount: number) => canSeeContractAmount ? `¥${Number(amount || 0).toLocaleString()}` : '¥ ***';
+
+  // 顶部概览：执行中、合同总额、风险预警、已回款
+  const contractStats = (() => {
+    const live = contracts.filter(c => c.archiveStatus !== ARCHIVE_STATUS.ARCHIVED);
+    const risk = live.filter(c =>
+      c.riskLevel === 'High'
+      || c.status === Status.Risk
+      || (c.receivables || []).some(r => r.status === RECEIVABLE_STATUS.OVERDUE)
+    ).length;
+    const totalAmount = live.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+    const paidAmount = live.reduce(
+      (sum, c) => sum + (c.receivables || []).filter(r => r.status === 'paid').reduce((s, r) => s + Number(r.amount || 0), 0),
+      0
+    );
+    return {
+      active: live.filter(c => c.status === Status.Active).length,
+      risk,
+      totalAmount,
+      paidAmount,
+      paidRate: totalAmount > 0 ? ((paidAmount / totalAmount) * 100).toFixed(1) : '0.0'
+    };
+  })();
 
   return (
     <div className="p-6">
@@ -914,24 +971,46 @@ const Contracts = () => {
            <div><h1 className="text-2xl font-bold text-gray-900">合同管理</h1><p className="text-sm text-gray-500 mt-1">管理合同详情、回款节点与执行状态</p></div>
            <button
              onClick={openContractModal}
-             className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-700 flex items-center shadow-sm whitespace-nowrap transition-all active:scale-95"
+             className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 flex items-center shadow-sm whitespace-nowrap transition-all active:scale-95"
            >
              <Plus className="w-4 h-4 mr-2" /> 录入合同
            </button>
       </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-blue-200 transition-colors">
+          <div className="p-3 bg-blue-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><FileText className="w-6 h-6 text-blue-600" /></div>
+          <div className="min-w-0">
+            <div className="text-2xl font-black text-gray-900">{contractStats.active}</div>
+            <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">执行中合同</div>
+          </div>
+        </div>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-emerald-200 transition-colors">
+          <div className="p-3 bg-emerald-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><Wallet className="w-6 h-6 text-emerald-600" /></div>
+          <div className="min-w-0">
+            <div className="text-2xl font-black text-gray-900 truncate">{maskAmount(contractStats.totalAmount)}</div>
+            <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">合同总额</div>
+          </div>
+        </div>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-amber-200 transition-colors">
+          <div className="p-3 bg-amber-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><ShieldAlert className="w-6 h-6 text-amber-600" /></div>
+          <div className="min-w-0">
+            <div className="text-2xl font-black text-gray-900">{contractStats.risk}</div>
+            <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">风险预警合同</div>
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-5 rounded-2xl shadow-lg flex items-center text-white">
+          <div className="p-3 bg-white/20 rounded-xl mr-4"><CheckCircle className="w-6 h-6" /></div>
+          <div className="min-w-0">
+            <div className="text-2xl font-black truncate">{maskAmount(contractStats.paidAmount)}</div>
+            <div className="text-xs opacity-80 font-bold uppercase tracking-tight">{canSeeContractAmount ? `已回款 · 回款率 ${contractStats.paidRate}%` : '已回款（金额不可见）'}</div>
+          </div>
+        </div>
+      </div>
       <div className="flex space-x-2 mb-6 border-b border-gray-200 pb-1 overflow-x-auto no-scrollbar"> {[ { id: 'all', label: '全部活跃', icon: AlignLeft }, { id: 'active', label: '执行中', icon: Zap }, { id: 'risk', label: '风险预警', icon: ShieldAlert }, { id: 'archived', label: '已归档', icon: Archive }, ].map(tab => ( <button key={tab.id} onClick={() => setFilterStatus(tab.id as any)} className={`flex items-center px-4 py-2 text-sm font-bold border-b-2 transition-colors whitespace-nowrap uppercase tracking-wide ${ filterStatus === tab.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' }`} > <tab.icon className="w-4 h-4 mr-2" /> {tab.label} </button> ))} </div>
       <div className="mb-4 space-y-2">
         <div className="flex flex-col gap-2 md:flex-row md:items-center">
-          <div className="relative w-full md:w-80">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="搜索合同标题/编号/客户..."
-              className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 bg-white outline-none"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
+          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="搜索合同标题 / 编号 / 客户…" className="w-full md:w-80" />
           {(customerScope.customerId || customerScope.customerName) && (
             <div className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
               <span>客户视图：{customerScope.customerName || customers.find(c => c.id === customerScope.customerId)?.name || customerScope.customerId}</span>
@@ -971,14 +1050,14 @@ const Contracts = () => {
       
       <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <table className="w-full text-sm text-left">
-            <thead className="bg-gray-50/50 text-gray-600 font-bold text-sm uppercase tracking-wider border-b border-gray-100">
+            <thead className={tableHeadClass}>
                 <tr>
                     <th className="w-10"></th>
-                    <th className="px-6 py-4">合同编号/标题</th>
-                    <th className="px-6 py-4">客户</th>
-                    <th className="px-6 py-4">回款进度</th>
-                    <th className="px-6 py-4">风险/状态</th>
-                    <th className="px-6 py-4 text-center">操作</th>
+                    <th className={thClass}>合同编号/标题</th>
+                    <th className={thClass}>客户</th>
+                    <th className={thClass}>回款进度</th>
+                    <th className={thClass}>风险/状态</th>
+                    <th className={`${thClass} text-center`}>操作</th>
                 </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -988,27 +1067,27 @@ const Contracts = () => {
                     return ( <React.Fragment key={contract.id}> 
                         <tr id={`contract-row-${contract.id}`} className={`hover:bg-gray-50/80 cursor-pointer transition-colors group ${expandedContract === contract.id ? 'bg-indigo-50/50' : ''}`} onClick={() => toggleExpand(contract.id)}> 
                             <td className="pl-4 text-gray-300"> {expandedContract === contract.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} </td> 
-                            <td className="px-6 py-5"> 
+                            <td className={tdClass}> 
                                 <div className="flex items-center font-black text-gray-900 text-base"> <FileText className="w-4 h-4 mr-2 text-gray-400" /> {contract.title} </div> 
                                 <div className="text-sm text-gray-500 mt-1 pl-6 font-mono">{contract.contractNo || '-'}</div> 
                             </td> 
-                            <td className="px-6 py-5">
+                            <td className={tdClass}>
                                 <div className="font-bold text-gray-700 text-sm">{contract.customerName}</div>
                                 <div className="text-sm text-gray-500 mt-0.5">{contract.contactPerson}</div>
                             </td> 
-                            <td className="px-6 py-5 w-48"> 
+                            <td className={`${tdClass} w-48`}> 
                                 <div className="flex items-center justify-between text-sm mb-1"> 
-                                    <span className="text-gray-900 font-mono font-black text-base">¥{contract.amount.toLocaleString()}</span> 
+                                    <span className="text-gray-900 font-mono font-black text-base" title={canSeeContractAmount ? undefined : '合同金额对当前身份不可见'}>{maskAmount(contract.amount)}</span> 
                                     <span className="font-bold text-gray-500 font-mono">{progress.toFixed(0)}%</span> 
                                 </div> 
                                 <div className="w-full bg-gray-200 rounded-full h-1.5"> <div className={`h-1.5 rounded-full ${progress === 100 ? 'bg-green-500' : 'bg-blue-600'}`} style={{width: `${progress}%`}}></div> </div> 
                             </td> 
-                            <td className="px-6 py-5"> 
+                            <td className={tdClass}> 
                                 <div className="flex space-x-2"> 
                                     {contract.archiveStatus === ARCHIVE_STATUS.ARCHIVED ? ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-gray-100 text-gray-600 border border-gray-200"> <Archive className="w-3 h-3 mr-1" /> 已归档 </span> ) : ( <> {contract.riskLevel === 'High' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-red-100 text-red-700 border border-red-200"> <ShieldAlert className="w-3 h-3 mr-1" /> 高风险 </span> )} {contract.riskLevel === 'Medium' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-orange-100 text-orange-700 border border-orange-200"> <AlertTriangle className="w-3 h-3 mr-1" /> 中风险 </span> )} {contract.riskLevel === 'Low' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-green-100 text-green-700 border border-green-200"> <ShieldCheck className="w-3 h-3 mr-1" /> 正常 </span> )} </> )} 
                                 </div> 
                             </td> 
-                            <td className="px-6 py-5 text-center w-24" onClick={(e) => e.stopPropagation()}> 
+                            <td className={`${tdClass} text-center w-24`} onClick={(e) => e.stopPropagation()}>
                                 <div className="flex flex-col items-center justify-center space-y-2">
                                 {contract.archiveStatus !== ARCHIVE_STATUS.ARCHIVED && ( 
                                     <> 
@@ -1028,10 +1107,11 @@ const Contracts = () => {
                                         </button> 
                                     </> 
                                 )} 
-                                {/* Bottom: Delete */}
-                                <button type="button" onClick={(e) => handleDelete(e, contract.id, contract.title)} className="w-full p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors flex items-center justify-center" title="删除合同" > 
-                                    <Trash2 className="w-4 h-4" /> 
-                                </button> 
+                                {/*
+                                  删除合同入口已移除：后端刻意不提供删除接口（见 contracts-api-contract），
+                                  前端删除只改内存，刷新后合同又出现，会让人以为系统坏了。
+                                  需要下线合同请用「归档」。软删除方案待业务方确认删除规则后再做。
+                                */}
                                 </div>
                             </td> 
                         </tr> 
@@ -1080,7 +1160,37 @@ const Contracts = () => {
                                       </div>
                                     </div> 
                                     {/* Receivables */} 
-                                    <div className="flex-1 p-6 bg-gray-50/30"> <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center"> <Wallet className="w-4 h-4 mr-2" /> 回款计划 </h4> <div className="space-y-2"> {contract.receivables.map(r => ( <div key={r.id} className="flex justify-between text-sm border-b border-gray-100 pb-2 items-center"> <div className="flex items-center"> {r.status === 'paid' ? <CheckCircle className="w-3 h-3 text-green-500 mr-2" /> : <Clock className="w-3 h-3 text-yellow-500 mr-2" />} <span className="text-gray-900 font-bold text-sm">{r.node}</span> </div> <div className="text-right"> <div className="font-mono font-bold text-gray-900">¥{r.amount.toLocaleString()}</div> <div className="text-xs text-gray-400">{r.dueDate || '待定'}</div> </div> </div> ))} </div> </div> 
+                                    <div className="flex-1 p-6 bg-gray-50/30"> <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center"> <Wallet className="w-4 h-4 mr-2" /> 回款计划 </h4> <div className="space-y-2"> {contract.receivables.map(r => ( <div key={r.id} className="flex justify-between text-sm border-b border-gray-100 pb-2 items-center gap-3">
+                                    <div className="flex items-center min-w-0">
+                                      {r.status === 'paid' ? <CheckCircle className="w-3 h-3 text-green-500 mr-2 shrink-0" /> : <Clock className="w-3 h-3 text-yellow-500 mr-2 shrink-0" />}
+                                      <span className="text-gray-900 font-bold text-sm truncate">{r.node}</span>
+                                      {r.paymentClaim && r.status !== 'paid' && (
+                                        <span className="ml-2 shrink-0"><Badge tone="amber">待财务核对</Badge></span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-3 shrink-0">
+                                      {/* 销售报备已收款：不改状态，只推待办给财务。确认到账始终只有财务能做。 */}
+                                      {r.status !== 'paid' && !r.paymentClaim && !canConfirmPayment && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            const note = window.prompt(`报备「${r.node}」已收款，请财务核对。\n可填备注（转账方式、到账日期等），也可留空：`, '');
+                                            if (note === null) return;
+                                            const res = claimReceivablePaid(contract.id, r.id, note);
+                                            alert(res.ok ? '已通知财务核对。到账确认由财务完成。' : (res.reason || '报备失败'));
+                                          }}
+                                          className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 whitespace-nowrap"
+                                        >
+                                          已收款，请核对
+                                        </button>
+                                      )}
+                                      <div className="text-right">
+                                        <div className="font-mono font-bold text-gray-900">{maskAmount(r.amount)}</div>
+                                        <div className="text-xs text-gray-400">{r.dueDate || '待定'}</div>
+                                      </div>
+                                    </div>
+                                  </div> ))} </div> </div> 
                                     {/* Archives */} 
                                     <div className="flex-1 p-6 bg-blue-50/10"> 
                                         <div className="flex justify-between items-center mb-4"> 
@@ -1104,26 +1214,11 @@ const Contracts = () => {
                                                         >
                                                             <BookOpen className="w-4 h-4" />
                                                         </button>
-                                                        <button
-                                                          onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            if (!canEditContractAttachments(contract)) {
-                                                              alert('权限拒绝：您无法删除该合同电子档案。');
-                                                              return;
-                                                            }
-                                                            if (!window.confirm(`确认要从该合同移除附件 "${file.name}" 吗？`)) return;
-                                                            const res = removeContractAttachment(contract.id, file.id);
-                                                            if (!res.ok) alert(res.reason || '移除失败');
-                                                          }}
-                                                          className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600 transition-colors"
-                                                          title="移除"
-                                                        >
-                                                          <Trash2 className="w-4 h-4" />
-                                                        </button>
+                                                        {/* 移除附件入口已下线：后端无删除接口，前端删了刷新又回来 */}
                                                     </div> 
                                                 </div> 
                                             )) : ( 
-                                                <div className="text-center py-6 text-gray-400 text-xs border-2 border-dashed border-gray-100 rounded-lg font-medium"> 暂无归档文件 </div> 
+                                                <EmptyState compact title="暂无归档文件" hint="上传合同原件后可随时预览和下载。" /> 
                                             )} 
                                         </div> 
                                     </div> 
@@ -1151,7 +1246,7 @@ const Contracts = () => {
                           </span>
                       </div>
                       <div className="flex justify-between items-center text-xs mb-2">
-                          <span className="font-mono font-black text-gray-900">¥{contract.amount.toLocaleString()}</span>
+                          <span className="font-mono font-black text-gray-900">{maskAmount(contract.amount)}</span>
                           <span className="text-gray-400 font-mono">{contract.signDate}</span>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-1.5 mb-3">
@@ -1179,7 +1274,7 @@ const Contracts = () => {
                                                   <button onClick={(e) => handlePushToKnowledge(e, file)} className="text-gray-400 hover:text-indigo-600"><BookOpen className="w-3 h-3" /></button>
                                               </div>
                                           </div>
-                                      )) : <div className="text-center py-2 text-xs text-gray-300">暂无附件</div>}
+                                      )) : <EmptyState compact title="暂无附件" />}
                                   </div>
                               </div>
                               {/* ... */}
@@ -1190,8 +1285,61 @@ const Contracts = () => {
           })}
       </div>
       
+      {projectDraft && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setProjectDraft(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100">
+              <h2 className="text-lg font-black text-gray-900">为合同立项</h2>
+              <p className="text-xs text-gray-500 mt-1 line-clamp-1">{projectDraft.contract.title}</p>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">项目负责人</label>
+                <select
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm outline-none focus:border-indigo-400"
+                  value={projectDraft.ownerUserId}
+                  onChange={e => {
+                    const picked = userProfiles.find(u => u.id === e.target.value);
+                    setProjectDraft(prev => prev ? { ...prev, ownerUserId: e.target.value, manager: picked?.name || '' } : prev);
+                  }}
+                >
+                  {userProfiles.filter(u => u.id !== 'AI-WORKER').map(u => (
+                    <option key={u.id} value={u.id}>{u.name}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-gray-400 mt-1.5">默认是你自己。如果这单由别人交付，改成对应的人。</p>
+              </div>
+              <div>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">交付截止日期</label>
+                <input
+                  type="date"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm outline-none focus:border-indigo-400"
+                  value={projectDraft.deadline}
+                  onChange={e => setProjectDraft(prev => prev ? { ...prev, deadline: e.target.value } : prev)}
+                />
+                <p className="text-[11px] text-gray-400 mt-1.5">默认 90 天后，按实际交期改。</p>
+              </div>
+              {(projectDraft.contract.serviceItems || []).length > 0 && (
+                <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                  <div className="text-[11px] font-black text-gray-400 uppercase mb-2">将带入的服务项</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(projectDraft.contract.serviceItems || []).map((item, i) => (
+                      <Badge key={i} tone="indigo">{item.standardName || item.name}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="p-5 border-t border-gray-100 bg-gray-50/60 flex justify-end gap-3">
+              <button onClick={() => setProjectDraft(null)} className="px-4 py-2 text-sm font-bold text-gray-500 hover:text-gray-700">取消</button>
+              <button onClick={confirmCreateProject} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 shadow-sm">确认立项</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
             {/* Modal Body */}
             <div className="bg-white rounded-3xl shadow-xl w-full max-w-3xl animate-in fade-in zoom-in duration-200 max-h-[90vh] border border-gray-100 overflow-hidden flex flex-col">
                 <div className="overflow-y-auto p-8 w-full h-full">
@@ -1369,7 +1517,7 @@ const Contracts = () => {
       <input ref={attachmentInputRef} type="file" className="hidden" onChange={handleAttachmentPick} />
 
       {previewFile && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl border border-gray-100 overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <div className="min-w-0">

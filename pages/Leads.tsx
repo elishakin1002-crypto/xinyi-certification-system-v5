@@ -17,12 +17,33 @@ import {
   Tag,
   BrainCircuit,
   Play,
-  Briefcase
+  Briefcase,
+  Users,
+  AlertTriangle,
+  CheckCircle
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { StatusBadge } from '../src/ui/statusBadge';
+import { SearchInput, EmptyState, StatCard, StatGrid, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 import { IngestionUploader } from '../components/IngestionUploader';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
+
+/**
+ * 把模型返回的日期规整成 YYYY-MM-DD。
+ * **认不出就返回空字符串，绝不猜。**
+ * 这个字段决定何时提醒续单，猜错比空着危害大——
+ * 空着人会去补，猜错没人知道该怀疑它。
+ */
+const normalizeCertDate = (raw: string): string => {
+  const v = String(raw || '').trim();
+  if (!v) return '';
+  const m = v.match(/(\d{4})\s*[-/年.]\s*(\d{1,2})\s*[-/月.]\s*(\d{1,2})/);
+  if (!m) return '';
+  const [, y, mo, d] = m;
+  const iso = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  return Number.isNaN(Date.parse(iso)) ? '' : iso;
+};
 const Leads = () => {
   const { leads, addLead, updateLead, addLeadFollowUp, createFollowUpProjectFromLead, importExcel, currentUser } = useApp();
   const navigate = useNavigate();
@@ -65,8 +86,14 @@ const Leads = () => {
     return date.getTime();
   }, []);
 
-  const isMyLead = (lead: Lead) =>
-    (lead.followUpRecords || []).some(record => String(record.operator || '') === currentUser.name) || String(lead.name || '') === currentUser.name;
+  // 归属以 ownerUserId 为准。旧数据没有 ID 时才回退到「我跟进过」。
+  // 注意：原实现里有 `lead.name === currentUser.name`——lead.name 是客户方联系人，
+  // 拿它跟员工姓名比对是错的，已移除。
+  const isMyLead = (lead: Lead) => {
+    const ownerId = String(lead.ownerUserId || '').trim();
+    if (ownerId) return ownerId === currentUser.id;
+    return (lead.followUpRecords || []).some(record => String(record.operator || '') === currentUser.name);
+  };
 
   const getLeadTimestamp = (lead: Lead) => {
     const idTs = Number(String(lead.id || '').split('-')[1]);
@@ -116,6 +143,23 @@ const Leads = () => {
           lead.company.toLowerCase().includes(searchTerm.toLowerCase());
       return matchesStatus && matchesSearch && matchesDashboardFocus(lead);
   }), [leads, statusFilter, searchTerm, dashboardFocus, currentUser.name, currentMonthKey, weekStart]);
+
+  // 顶部概览：总量、跟进中、证书临期、已转化
+  const leadStats = useMemo(() => {
+    const now = new Date();
+    const total = leads.length;
+    const converted = leads.filter(l => l.status === Status.Converted).length;
+    const active = leads.filter(l => l.status !== Status.Converted && l.status !== Status.Lost).length;
+    const expiringSoon = leads.filter(l => {
+      if (l.status === Status.Converted || l.status === Status.Lost) return false;
+      const expiry = new Date(String(l.targetCertExpiryDate || ''));
+      if (Number.isNaN(expiry.getTime())) return false;
+      const diffDays = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 3600 * 24));
+      return diffDays >= 0 && diffDays <= 90;
+    }).length;
+    const conversionRate = total > 0 ? ((converted / total) * 100).toFixed(1) : '0.0';
+    return { total, converted, active, expiringSoon, conversionRate };
+  }, [leads]);
 
   // Calculate leads waiting for analysis (Score 0 usually means raw import)
   const pendingAnalysisCount = leads.filter(l => l.score === 0 || l.industry === '待 AI 分析').length;
@@ -168,16 +212,7 @@ const Leads = () => {
       setIsEditing(false);
   }
 
-  const getStatusBadge = (status: Status) => {
-      switch(status) {
-          case Status.New: return <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">新增</span>;
-          case Status.Pending: return <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">跟进中</span>;
-          case Status.Converted: return <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">已转化</span>;
-          case Status.Risk: return <span className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">高风险</span>;
-          case Status.Lost: return <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">已丢失</span>;
-          default: return <span className="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs font-bold uppercase tracking-tight">{status}</span>;
-      }
-  };
+  const getStatusBadge = (status: Status) => <StatusBadge status={status} domain="lead" />;
 
   const getFollowUpTypeLabel = (type: string) => {
       const map: Record<string, string> = {
@@ -284,42 +319,19 @@ const Leads = () => {
       alert("已完成重点线索标记。\n\n系统会在满足到期阈值时自动生成跟进项目，你也可以进入线索详情点击“生成跟进项目”。");
   };
 
-  const [isProcessingCert, setIsProcessingCert] = useState(false);
 
-  const handleCertUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !editingLeadData) return;
+  /*
+    证书识别走 <IngestionUploader source="certificate">（见下方编辑弹窗），
+    它调 services/ingestion/certificate.ts，是真的把图片发给模型识别。
 
-    setIsProcessingCert(true);
-    // 模拟文件读取
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-        const base64 = event.target?.result as string;
-        
-        // 模拟 AI 识别延迟
-        setTimeout(() => {
-            // 这里是一个模拟的识别结果，实际项目中应调用 aiService.analyzeCertificateImage(base64)
-            // 根据用户反馈，之前可能识别为空，这里我们强制注入一些模拟数据
-            // 并根据文件名或随机逻辑来模拟不同证书的识别
-            
-            const mockCertType = file.name.toLowerCase().includes('14001') ? 'ISO 14001 环境管理体系' : 'ISO 9001 质量管理体系';
-            const mockExpiry = new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().split('T')[0]; // 1年后到期
-            
-            setEditingLeadData(prev => ({
-                ...prev!,
-                targetCertifications: prev?.targetCertifications && prev.targetCertifications !== '待挖掘...' 
-                    ? `${prev.targetCertifications}, ${mockCertType}` 
-                    : mockCertType,
-                targetCertExpiryDate: mockExpiry,
-                // 这里可以扩展更多识别出的字段，比如发证机构等，暂时存入备注或特定字段
-            }));
-            
-            setIsProcessingCert(false);
-            alert(`✅ AI 识别成功！\n\n已自动提取证书信息：\n- 类型：${mockCertType}\n- 到期日：${mockExpiry}`);
-        }, 1500);
-    };
-    reader.readAsDataURL(file);
-  };
+    这里原本还有一个 handleCertUpload，**从未被任何输入框引用**（死代码），
+    内容是伪造的：setTimeout 装作在识别、靠文件名猜证书类型、
+    到期日写成「今天 + 365 天」，然后弹「✅ AI 识别成功」。
+    用户碰不到它，但留在代码里迟早有人接上去用。
+
+    2026-08-22 直接删除，而不是修好留着——同一件事两套实现必然漂移，
+    今天查出的好几个 bug（线索联系人、任务响应形状、事务校验）都是这么来的。
+  */
 
   const handleSaveEdit = () => {
     if (editingLeadData) {
@@ -360,7 +372,7 @@ const Leads = () => {
             <button 
                 onClick={handleBatchMining}
                 disabled={isMining}
-                className={`flex items-center px-4 py-2 bg-amber-600 text-white rounded-xl shadow-md hover:bg-amber-700 transition-all active:scale-95 text-sm font-bold ${isMining ? 'opacity-80 cursor-not-allowed' : ''}`}
+                className={`flex items-center px-4 py-2 bg-amber-600 text-white rounded-lg shadow-md hover:bg-amber-700 transition-all active:scale-95 text-sm font-bold ${isMining ? 'opacity-80 cursor-not-allowed' : ''}`}
             >
                 {isMining ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2 text-yellow-300" />}
                 {isMining ? `处理中 ${miningProgress}%` : `筛出重点线索（90天内到期）`}
@@ -376,14 +388,45 @@ const Leads = () => {
                     disabled={isImporting || isMining}
                 />
                 <button 
-                    className={`flex items-center px-4 py-2 bg-white text-gray-700 border border-gray-200 rounded-xl hover:bg-gray-50 shadow-sm transition-all active:scale-95 text-sm font-bold ${isImporting ? 'opacity-70' : ''}`}
+                    className={`flex items-center px-4 py-2 bg-white text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 shadow-sm transition-all active:scale-95 text-sm font-bold ${isImporting ? 'opacity-70' : ''}`}
                 >
                     {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <FileSpreadsheet className="w-4 h-4 mr-2 text-green-600" />}
                     {isImporting ? '解析中...' : '导入 Excel 表格'}
                 </button>
             </div>
 
-            <button onClick={() => setIsModalOpen(true)} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-sm transition-all active:scale-95 text-sm font-bold"><Plus className="w-4 h-4 mr-2" /> 新增线索</button>
+            <button onClick={() => setIsModalOpen(true)} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-all active:scale-95 text-sm font-bold"><Plus className="w-4 h-4 mr-2" /> 新增线索</button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-blue-200 transition-colors">
+          <div className="p-3 bg-blue-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><Users className="w-6 h-6 text-blue-600" /></div>
+          <div className="min-w-0">
+            <div className="text-2xl font-black text-gray-900">{leadStats.total}</div>
+            <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">线索总数</div>
+          </div>
+        </div>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-emerald-200 transition-colors">
+          <div className="p-3 bg-emerald-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><Sparkles className="w-6 h-6 text-emerald-600" /></div>
+          <div className="min-w-0">
+            <div className="text-2xl font-black text-gray-900">{leadStats.active}</div>
+            <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">跟进中</div>
+          </div>
+        </div>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-amber-200 transition-colors">
+          <div className="p-3 bg-amber-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><AlertTriangle className="w-6 h-6 text-amber-600" /></div>
+          <div className="min-w-0">
+            <div className="text-2xl font-black text-gray-900">{leadStats.expiringSoon}</div>
+            <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">证书 90 天内到期</div>
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-5 rounded-2xl shadow-lg flex items-center text-white">
+          <div className="p-3 bg-white/20 rounded-xl mr-4"><CheckCircle className="w-6 h-6" /></div>
+          <div className="min-w-0">
+            <div className="text-2xl font-black">{leadStats.converted}</div>
+            <div className="text-xs opacity-80 font-bold uppercase tracking-tight">已转化 · 转化率 {leadStats.conversionRate}%</div>
+          </div>
         </div>
       </div>
 
@@ -398,10 +441,7 @@ const Leads = () => {
                       </button>
                   ))}
               </div>
-              <div className="relative w-full md:w-64">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input type="text" placeholder="搜索线索..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 bg-white" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-              </div>
+              <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="搜索线索…" className="w-full md:w-64" />
             </div>
             {dashboardFocusLabel && (
               <div className="flex flex-wrap items-center gap-2">
@@ -474,21 +514,21 @@ const Leads = () => {
          {/* Desktop Table View */}
          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm text-left">
-                <thead className="bg-gray-50/50 text-gray-600 font-bold text-sm uppercase tracking-wider border-b border-gray-100">
+                <thead className={tableHeadClass}>
                     <tr>
-                        <th className="px-6 py-4">客户名称 / 行业</th>
-                        <th className="px-6 py-4">联系人</th>
-                        <th className="px-6 py-4">AI 评分</th>
-                        <th className="px-6 py-4">商机挖掘 (Target)</th>
-                        <th className="px-6 py-4">最后跟进</th>
-                        <th className="px-6 py-4">状态</th>
-                        <th className="px-6 py-4 text-right">操作</th>
+                        <th className={thClass}>客户名称 / 行业</th>
+                        <th className={thClass}>联系人</th>
+                        <th className={thClass}>AI 评分</th>
+                        <th className={thClass}>商机挖掘 (Target)</th>
+                        <th className={thClass}>最后跟进</th>
+                        <th className={thClass}>状态</th>
+                        <th className={` text-right`}>操作</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                     {filteredLeads.map(lead => (
                         <tr key={lead.id} className="hover:bg-gray-50/80 cursor-pointer transition-colors group" onClick={() => openDetail(lead)}>
-                            <td className="px-6 py-5">
+                            <td className={tdClass}>
                                 <div className="font-black text-gray-900 text-base">{lead.company}</div>
                                 {lead.industry === 'AI 扫描中...' || lead.industry === '待 AI 分析' ? (
                                     <div className="text-xs text-indigo-500 mt-1 font-bold animate-pulse flex items-center">
@@ -498,18 +538,20 @@ const Leads = () => {
                                     <div className="text-xs text-gray-500 mt-1 bg-gray-100 px-2 py-0.5 rounded w-fit">{lead.industry || '未分类'}</div>
                                 )}
                             </td>
-                            <td className="px-6 py-5">
+                            <td className={tdClass}>
                                 <div className="font-bold text-gray-700 text-sm">{lead.name}</div>
-                                <div className="text-xs text-gray-400 mt-0.5">{lead.position || '-'}</div>
+                                {/* 优先显示电话：451/458 条有电话，而职位几乎全空，
+                                    原来这一列 451 行都在显示"-"，销售最需要的信息反而藏着 */}
+                                <div className="text-xs text-gray-400 mt-0.5 font-mono">{lead.mobile || lead.position || '-'}</div>
                             </td>
-                            <td className="px-6 py-5">
+                            <td className={tdClass}>
                                 {lead.score === 0 ? (
                                     <span className="text-xs text-gray-400 italic">待评分</span>
                                 ) : (
                                     <div className="font-mono font-black text-indigo-600 text-base">{lead.score}分</div>
                                 )}
                             </td>
-                            <td className="px-6 py-5">
+                            <td className={tdClass}>
                                  {lead.targetCertifications === '待挖掘...' ? (
                                      <div className="text-xs text-gray-300">等待 AI 分析...</div>
                                  ) : (
@@ -520,9 +562,9 @@ const Leads = () => {
                                      </div>
                                  )}
                             </td>
-                            <td className="px-6 py-5 text-gray-600 text-sm font-mono">{lead.lastContact}</td>
-                            <td className="px-6 py-5">{getStatusBadge(lead.status)}</td>
-                            <td className="px-6 py-5 text-right">
+                            <td className={`${tdClass} text-gray-600 text-sm font-mono`}>{lead.lastContact}</td>
+                            <td className={tdClass}>{getStatusBadge(lead.status)}</td>
+                            <td className={` text-right`}>
                                 <button className="text-blue-600 hover:text-blue-800 p-2 hover:bg-blue-50 rounded-lg transition-colors">
                                     <ChevronRight className="w-4 h-4" />
                                 </button>
@@ -536,7 +578,7 @@ const Leads = () => {
 
       {/* DETAIL MODAL */}
       {selectedLead && editingLeadData && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 md:p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
              <div className="bg-white rounded-3xl shadow-xl w-full max-w-5xl max-h-[95vh] overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200 border border-gray-100">
                 {/* Modal Header */}
                 <div className="bg-white border-b border-gray-100 p-4 md:p-6 flex flex-col md:flex-row justify-between items-start md:items-center shrink-0 gap-4">
@@ -849,7 +891,7 @@ const Leads = () => {
                                             </div>
                                         ))
                                     ) : (
-                                        <div className="text-center text-gray-300 text-xs py-8">暂无跟进，快去联系客户吧！</div>
+                                        <EmptyState compact title="暂无跟进记录" hint="打个电话或加个微信，记录会自动出现在这里。" />
                                     )}
                                 </div>
 
@@ -909,7 +951,7 @@ const Leads = () => {
 
       {/* CREATE MODAL */}
       {isModalOpen && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-8 animate-in fade-in zoom-in duration-300 border border-gray-100">
                   <div className="flex justify-between items-center mb-6">
                       <h2 className="text-2xl font-black text-gray-900">新增线索</h2>

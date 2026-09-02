@@ -29,6 +29,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { aiService } from '../services/aiService';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { APP_ROUTES } from '../src/routes';
+import { SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 
 type AuditExampleTemplate = {
   id: string;
@@ -304,6 +305,7 @@ const Audit = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingIssue, setEditingIssue] = useState<AuditIssue | null>(null);
   const [isExtracting, setIsExtracting] = useState<string | null>(null);
+  const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewEvidence, setPreviewEvidence] = useState<null | { name: string; url: string; kind: 'image' | 'pdf' }>(null);
@@ -908,27 +910,37 @@ const Audit = () => {
     }
   };
 
-  const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = error => reject(error);
-  });
-
+  /**
+   * 证据文件走服务端上传，只保留返回的 URL。
+   * 不要再转 base64 存进数据字段：一张手机照片 base64 后 4-7MB，几十张就会撑爆数据库并拖垮列表加载。
+   */
   const handleEvidencePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+    setIsUploadingEvidence(true);
     try {
-      const uploaded = await Promise.all(files.map(async (file) => ({
-        id: `AE-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-        name: file.name,
-        size: formatSize(file.size),
-        type: file.type || file.name.split('.').pop() || 'file',
-        uploadDate: new Date().toISOString().split('T')[0],
+      const body = new FormData();
+      files.forEach(file => body.append('files', file));
+      const response = await fetch('/api/uploads/audit-evidence', {
+        method: 'POST',
+        body,
+        credentials: 'include'
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.code !== 0) {
+        throw new Error(payload?.message || `上传失败（${response.status}）`);
+      }
+      const uploaded: AuditEvidence[] = (payload.data?.files || []).map((file: any, index: number) => ({
+        id: `AE-${Date.now()}-${index}-${Math.random().toString(16).slice(2, 6)}`,
+        name: String(file.name || '未命名文件'),
+        size: String(file.size || ''),
+        type: String(file.type || 'file'),
+        uploadDate: String(file.uploadDate || new Date().toISOString().split('T')[0]),
         uploadedBy: currentUser.name,
         note: '',
-        url: await fileToDataUrl(file)
-      } as AuditEvidence)));
+        url: String(file.url || '')
+      }));
+      if (uploaded.length === 0) throw new Error('服务端未返回文件信息');
       setFormData(prev => ({
         ...prev,
         status: prev.status === 'Open' ? 'Rectifying' : prev.status,
@@ -936,8 +948,9 @@ const Audit = () => {
       }));
     } catch (error) {
       console.error(error);
-      alert('证据上传失败，请重试。');
+      alert(`证据上传失败：${error instanceof Error ? error.message : '请稍后重试'}`);
     } finally {
+      setIsUploadingEvidence(false);
       e.target.value = '';
     }
   };
@@ -1396,7 +1409,7 @@ const Audit = () => {
           </div>
           <div className="relative w-full md:w-72">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="搜索客户 / 项目 / 顾问 / 问题类型..." className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm" />
+            <SearchInput value={searchQuery} onChange={setSearchQuery} placeholder="搜索客户 / 项目 / 顾问 / 问题类型…" className="w-full" />
           </div>
         </div>
 
@@ -1404,20 +1417,20 @@ const Audit = () => {
           <table className="w-full text-sm text-left">
             <thead className="bg-gray-50 text-gray-600 font-bold text-sm uppercase tracking-widest border-b border-gray-100">
               <tr>
-                <th className="px-6 py-4">严重度</th>
-                <th className="px-6 py-4">客户 / 业务对象</th>
-                <th className="px-6 py-4">审计发现点</th>
-                <th className="px-6 py-4">证据 / 验证</th>
-                <th className="px-6 py-4">经验提炼状态</th>
-                <th className="px-6 py-4">状态</th>
-                <th className="px-6 py-4 text-right">操作</th>
+                <th className={thClass}>严重度</th>
+                <th className={thClass}>客户 / 业务对象</th>
+                <th className={thClass}>审计发现点</th>
+                <th className={thClass}>证据 / 验证</th>
+                <th className={thClass}>经验提炼状态</th>
+                <th className={thClass}>状态</th>
+                <th className={`${thClass} text-right`}>操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredIssues.map(({ issue, relation, topic, evidenceCount, verified, overdue }) => (
                 <tr key={issue.id} className="hover:bg-gray-50/80 transition-colors group align-top">
-                  <td className="px-6 py-5">{getSeverityBadge(issue.severity)}</td>
-                  <td className="px-6 py-5">
+                  <td className={tdClass}>{getSeverityBadge(issue.severity)}</td>
+                  <td className={tdClass}>
                     <div className="font-black text-gray-900 text-base">{relation.customerName || '未绑定客户'}</div>
                     <div className="mt-1 space-y-0.5">
                       {relation.project?.name && <div className="text-xs text-gray-500">项目：{relation.project.name}</div>}
@@ -1425,7 +1438,7 @@ const Audit = () => {
                       <div className="text-xs text-indigo-500">类型：{topic}</div>
                     </div>
                   </td>
-                  <td className="px-6 py-5 min-w-[260px]">
+                  <td className={`${tdClass} min-w-[260px]`}>
                     <p className="text-gray-700 text-sm leading-6">{issue.findings}</p>
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
                       <span className="px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600">顾问：{issue.auditor}</span>
@@ -1433,7 +1446,7 @@ const Audit = () => {
                       {issue.rectificationTaskId && <span className="px-2 py-1 rounded-full border border-indigo-100 bg-indigo-50 text-indigo-700">已挂整改任务</span>}
                     </div>
                   </td>
-                  <td className="px-6 py-5">
+                  <td className={tdClass}>
                     <div className="space-y-2 min-w-[180px]">
                       <div className="flex items-center text-xs font-bold text-gray-600">
                         <Paperclip className="w-3 h-3 mr-1" /> 已上传 {evidenceCount} 份证据
@@ -1453,7 +1466,7 @@ const Audit = () => {
                       )}
                     </div>
                   </td>
-                  <td className="px-6 py-5">
+                  <td className={tdClass}>
                     {issue.knowledgeDocId ? (
                       <button
                         type="button"
@@ -1475,8 +1488,8 @@ const Audit = () => {
                       <span className="text-xs text-gray-300 italic">待关闭后提炼</span>
                     )}
                   </td>
-                  <td className="px-6 py-5">{getStatusBadge(issue.status)}</td>
-                  <td className="px-6 py-5 text-right">
+                  <td className={tdClass}>{getStatusBadge(issue.status)}</td>
+                  <td className={`${tdClass} text-right`}>
                     <button onClick={() => handleOpenModal(issue)} className="p-2 hover:bg-blue-50 rounded-lg text-blue-600 transition-colors">
                       <ArrowUpRight className="w-4 h-4" />
                     </button>
@@ -1494,7 +1507,7 @@ const Audit = () => {
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl p-8 animate-in fade-in zoom-in duration-300 max-h-[92vh] overflow-y-auto border border-gray-100">
             <div className="flex justify-between items-center mb-8">
               <h2 className="text-2xl font-black text-gray-900 flex items-center">
@@ -1577,6 +1590,21 @@ const Audit = () => {
                 <div>
                   <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">整改死线</label>
                   <input type="date" className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" value={String(formData.deadline || '')} onChange={e => setFormData({ ...formData, deadline: e.target.value })} />
+                </div>
+                <div>
+                  {/*
+                    发现日期原本写死为"今天"，导致无法补录历史不符合项，
+                    趋势图也就永远只有当月一个点。开放此字段后可录入真实历史，曲线才有意义。
+                  */}
+                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">发现日期</label>
+                  <input
+                    type="date"
+                    max={new Date().toISOString().split('T')[0]}
+                    className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                    value={String(formData.createDate || '')}
+                    onChange={e => setFormData({ ...formData, createDate: e.target.value })}
+                  />
+                  <p className="text-[11px] text-gray-400 mt-1.5">补录历史问题时改成当时的实际发现日期，趋势图按这个日期分月统计。</p>
                 </div>
                 <div>
                   <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">责任顾问</label>
@@ -1700,9 +1728,16 @@ const Audit = () => {
                     <p className="text-xs text-gray-500 mt-1">支持图片/PDF 上传；关闭前至少保留 1 份直接证据。</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <input ref={evidenceInputRef} type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.svg" className="hidden" onChange={handleEvidencePick} />
-                    <button type="button" onClick={() => evidenceInputRef.current?.click()} className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-black hover:bg-indigo-700 flex items-center">
-                      <Upload className="w-3 h-3 mr-2" /> 上传证据
+                    <input ref={evidenceInputRef} type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.svg" className="hidden" onChange={handleEvidencePick} disabled={isUploadingEvidence} />
+                    <button
+                      type="button"
+                      onClick={() => evidenceInputRef.current?.click()}
+                      disabled={isUploadingEvidence}
+                      className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-black hover:bg-indigo-700 flex items-center disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {isUploadingEvidence
+                        ? <><Loader2 className="w-3 h-3 mr-2 animate-spin" /> 上传中…</>
+                        : <><Upload className="w-3 h-3 mr-2" /> 上传证据</>}
                     </button>
                     <button type="button" onClick={() => setFormData(prev => ({ ...prev, evidences: buildExampleEvidenceList(AUDIT_EXAMPLE_TEMPLATES[0]) }))} className="px-3 py-2 rounded-xl bg-white border border-gray-200 text-xs font-black text-gray-700 hover:bg-gray-50">
                       填充示例证据

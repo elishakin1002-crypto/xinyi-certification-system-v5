@@ -3,18 +3,722 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
-const { initStateStore, upsertStateBatch, getStateBatch, getStateHealth } = require('./stateStore');
-const { sendSuccess, sendFail, ERROR_CODES } = require('./utils/apiResponse');
-const { MARKET_SIGNAL_STATUS } = require('../src/constants/status.js');
+const crypto = require('crypto');
 
 dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 dotenv.config();
 
+const { initStateStore, upsertStateBatch, getStateBatch, getStateHealth } = require('./stateStore');
+const {
+  initAuthStore,
+  getAuthHealth,
+  authenticateUser,
+  getSessionUser,
+  revokeSession,
+  listUsers,
+  createUser,
+  updateUser,
+  resetUserPassword,
+  changeOwnPassword,
+  appendAuthAuditLog,
+  listAuthAuditLogs
+} = require('./authStore');
+const { sendSuccess, sendFail, ERROR_CODES } = require('./utils/apiResponse');
+const { businessEventRepo } = require('./repos/businessEventRepo');
+const { requireAction } = require('./authz/middleware');
+const { claimPatch, recordOwnershipChange, resourceOf } = require('./authz/ownership');
+const { MARKET_SIGNAL_STATUS } = require('../src/constants/status.js');
+const batch1Router = require('./routes/batch1');
+const batch2Router = require('./routes/batch2');
+const batch3Router = require('./routes/batch3');
+const batch4Router = require('./routes/batch4');
+const knowledgeRouter = require('./routes/knowledge');
+const remindersRouter = require('./routes/reminders');
+const uploadsRouter = require('./routes/uploads');
+const dashboardRouter = require('./routes/dashboard');
+const aiProposalsRouter = require('./routes/aiProposals');
+
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+const parseBoolean = (raw, fallback = false) => {
+  const text = String(raw ?? '').trim().toLowerCase();
+  if (!text) return fallback;
+  if (['1', 'true', 'yes', 'on'].includes(text)) return true;
+  if (['0', 'false', 'no', 'off'].includes(text)) return false;
+  return fallback;
+};
+
+const splitCsv = (raw) => String(raw || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
+
+const CORS_ALLOWED_ORIGINS = splitCsv(process.env.CORS_ALLOWED_ORIGINS);
+const API_AUTH_TOKEN = String(process.env.XINYI_API_AUTH_TOKEN || process.env.API_AUTH_TOKEN || '').trim();
+const API_AUTH_REQUIRED = parseBoolean(process.env.XINYI_API_AUTH_REQUIRED, Boolean(API_AUTH_TOKEN));
+const SESSION_API_AUTH_REQUIRED = parseBoolean(process.env.XINYI_SESSION_AUTH_REQUIRED, false);
+const API_JSON_LIMIT = String(process.env.API_JSON_LIMIT || '25mb').trim();
+const REQUIRE_POSTGRES = parseBoolean(process.env.XINYI_REQUIRE_POSTGRES ?? process.env.REQUIRE_POSTGRES, false);
+const REQUIRE_AUTH_POSTGRES = parseBoolean(process.env.XINYI_AUTH_REQUIRE_POSTGRES, false);
+const SESSION_COOKIE_NAME = String(process.env.XINYI_SESSION_COOKIE_NAME || 'xinyi_session').trim();
+const SESSION_COOKIE_SECURE = parseBoolean(process.env.XINYI_SESSION_COOKIE_SECURE, process.env.NODE_ENV === 'production');
+const SESSION_ROLE_ENFORCEMENT = parseBoolean(process.env.XINYI_SESSION_ROLE_ENFORCEMENT, true);
+const PUBLIC_LEAD_ENABLED = parseBoolean(process.env.XINYI_PUBLIC_LEAD_ENABLED, false);
+const PUBLIC_LEAD_TOKEN = String(process.env.XINYI_PUBLIC_LEAD_TOKEN || '').trim();
+
+const isProtectedApiPath = (pathname) => (
+  (pathname.startsWith('/api/ai') && pathname !== '/api/ai/health') ||
+  pathname.startsWith('/api/state') ||
+  // 业务事件流必须鉴权：它记录「谁做的、为什么」，
+  // 不解析身份的话 actor 一直是空的，这些记录就少了一半价值。
+  pathname.startsWith('/api/business-events') ||
+  pathname.startsWith('/api/intel') ||
+  pathname.startsWith('/api/leads') ||
+  pathname.startsWith('/api/customers') ||
+  pathname.startsWith('/api/contracts') ||
+  pathname.startsWith('/api/settlements') ||
+  pathname.startsWith('/api/signals') ||
+  pathname.startsWith('/api/audit-issues') ||
+  pathname.startsWith('/api/strategic-tasks') ||
+  pathname.startsWith('/api/knowledge') ||
+  pathname.startsWith('/api/reminders') ||
+  pathname.startsWith('/api/files') ||
+  pathname.startsWith('/api/uploads') ||
+  pathname.startsWith('/api/notify') ||
+  pathname.startsWith('/api/admin') ||
+  pathname.startsWith('/api/dashboard') ||
+  pathname.startsWith('/api/projects')
+);
+
+const readCookie = (cookieHeader, key) => {
+  const pairs = String(cookieHeader || '').split(';');
+  for (const pair of pairs) {
+    const idx = pair.indexOf('=');
+    if (idx < 0) continue;
+    const name = pair.slice(0, idx).trim();
+    if (name !== key) continue;
+    return decodeURIComponent(pair.slice(idx + 1).trim());
+  }
+  return '';
+};
+
+const getRequestAuthToken = (req) => {
+  const bearer = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i)?.[1] || '';
+  return String(
+    req.headers['x-xinyi-api-token'] ||
+    req.headers['x-api-token'] ||
+    bearer ||
+    readCookie(req.headers.cookie, 'xinyi_api_token') ||
+    ''
+  ).trim();
+};
+
+const safeTokenEqual = (a, b) => {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+};
+
+const normalizeRoles = (user) => {
+  const roles = Array.isArray(user?.roles) ? user.roles : [];
+  return roles.map((role) => String(role || '').trim().toUpperCase()).filter(Boolean);
+};
+
+const AUTH_MANAGEMENT_ACTIONS = Object.freeze([
+  'EMPLOYEE_VIEW',
+  'EMPLOYEE_CREATE',
+  'EMPLOYEE_UPDATE',
+  'EMPLOYEE_UPDATE_ROLE',
+  'EMPLOYEE_DISABLE',
+  'EMPLOYEE_RESET_PASSWORD',
+  'AUTH_AUDIT_VIEW'
+]);
+
+const AUTH_ACTIONS_BY_ROLE = Object.freeze({
+  ADMIN: new Set(AUTH_MANAGEMENT_ACTIONS),
+  SYS_ADMIN: new Set(AUTH_MANAGEMENT_ACTIONS),
+  MANAGER: new Set(),
+  SALES: new Set(),
+  CONSULTANT: new Set(),
+  FINANCE: new Set()
+});
+
+const hasAuthManagementAction = (user, action) => (
+  normalizeRoles(user).some((role) => AUTH_ACTIONS_BY_ROLE[role]?.has(action))
+);
+
+/**
+ * AI 代理执行（on-behalf-of）。
+ *
+ * 背景：MCP 过去用单一服务账号 ai-agent（MANAGER 角色）替所有人干活，导致
+ * ① AI 帮销售和帮财务用同一身份，权限分不开；② 出错查不出是谁下的指令。
+ *
+ * 现在：服务账号带 x-xinyi-on-behalf-of: <userId> 调用，后端把有效身份换成该员工，
+ * 鉴权一律按员工本人的角色判定；req.aiActor 保留真正的执行者用于留痕。
+ * 非服务账号带这个头一律拒绝，避免普通员工互相冒用。
+ */
+const AI_SERVICE_ACCOUNTS = new Set(
+  splitCsv(process.env.XINYI_AI_SERVICE_ACCOUNTS || 'ai-agent@xinyi-iso.local,ai-agent')
+    .map((item) => item.toLowerCase())
+);
+
+const isAiServiceAccount = (user) => {
+  if (!user) return false;
+  return [user.email, user.username, user.name]
+    .map((v) => String(v || '').trim().toLowerCase())
+    .some((v) => v && AI_SERVICE_ACCOUNTS.has(v));
+};
+
+const getOnBehalfOfUserId = (req) => String(req.headers['x-xinyi-on-behalf-of'] || '').trim();
+
+const applyAiDelegation = async (req, res) => {
+  const targetUserId = getOnBehalfOfUserId(req);
+  if (!targetUserId) return true;
+
+  if (!isAiServiceAccount(req.authUser)) {
+    sendFail(res, ERROR_CODES.NO_PERMISSION, '只有 AI 服务账号可以代表他人执行', {}, 403);
+    return false;
+  }
+
+  const users = await listUsers();
+  const target = (users || []).find((u) => String(u.id) === targetUserId);
+  if (!target) {
+    sendFail(res, ERROR_CODES.NOT_FOUND, '被代表的员工不存在', { onBehalfOf: targetUserId }, 404);
+    return false;
+  }
+  if (String(target.status || '').toLowerCase() === 'disabled') {
+    sendFail(res, ERROR_CODES.NO_PERMISSION, '被代表的员工账号已停用', { onBehalfOf: targetUserId }, 403);
+    return false;
+  }
+
+  req.aiActor = req.authUser;
+  req.authUser = target;
+  req.actingOnBehalfOf = targetUserId;
+  return true;
+};
+
+// 会话被滑动续期后，Cookie 的 Expires 也要跟着往后顺延，否则浏览器会先于服务端把它丢掉。
+const refreshSessionCookie = (res, sessionId, result) => {
+  if (!result?.renewed || !sessionId || res.headersSent) return;
+  res.setHeader('Set-Cookie', buildSessionCookie(sessionId, result.expiresAt));
+};
+
+const loadSessionForRequest = async (req, res, loginMessage = 'Login required') => {
+  const sessionId = getRequestSessionId(req);
+  if (!sessionId) {
+    sendFail(res, ERROR_CODES.NOT_LOGIN, loginMessage, {}, 401);
+    return null;
+  }
+  const result = await getSessionUser(sessionId);
+  if (!result) {
+    sendFail(res, ERROR_CODES.NOT_LOGIN, 'Session expired or invalid', {}, 401);
+    return null;
+  }
+  refreshSessionCookie(res, sessionId, result);
+  req.authVia = 'session';
+  req.authUser = result.user;
+  req.authExpiresAt = result.expiresAt;
+  if (!(await applyAiDelegation(req, res))) return null;
+  return { ...result, user: req.authUser };
+};
+
+const sendAuthActionDenied = (res, user, action) => sendFail(
+  res,
+  ERROR_CODES.NO_PERMISSION,
+  `当前身份无权限执行 ${action}`,
+  { requiredAction: action, currentRoles: normalizeRoles(user) },
+  403
+);
+
+const requireSessionRoles = (allowedRoles = [], actionLabel = '') => (req, res, next) => {
+  if (!SESSION_API_AUTH_REQUIRED || !SESSION_ROLE_ENFORCEMENT) return next();
+  if (req.authVia === 'api-token') return next();
+  if (!req.authUser) return sendFail(res, ERROR_CODES.NOT_LOGIN, 'Login required', {}, 401);
+
+  const expected = allowedRoles.map((role) => String(role || '').trim().toUpperCase()).filter(Boolean);
+  if (expected.length === 0) return next();
+
+  const roles = normalizeRoles(req.authUser);
+  if (roles.some((role) => expected.includes(role))) return next();
+
+  return sendFail(
+    res,
+    ERROR_CODES.NO_PERMISSION,
+    actionLabel ? `当前身份无权限执行 ${actionLabel}` : 'No permission',
+    { action: actionLabel || '', requiredRoles: expected, currentRoles: roles },
+    403
+  );
+};
+
+const requireAuthSession = async (req, res, next) => {
+  try {
+    const result = await loadSessionForRequest(req, res, 'Login required');
+    if (!result) return;
+    return next();
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'session check failed', {}, 500);
+  }
+};
+
+const requireAuthActionSession = (action) => async (req, res, next) => {
+  try {
+    const result = await loadSessionForRequest(req, res, 'Login required');
+    if (!result) return;
+    if (!hasAuthManagementAction(result.user, action)) {
+      return sendAuthActionDenied(res, result.user, action);
+    }
+    return next();
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'auth action session check failed', {}, 500);
+  }
+};
+
+app.use((req, res, next) => {
+  const origin = String(req.headers.origin || '').trim();
+  if (origin && CORS_ALLOWED_ORIGINS.length > 0 && !CORS_ALLOWED_ORIGINS.includes(origin)) {
+    return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Origin not allowed', {}, 403);
+  }
+  return next();
+});
+
+app.use(cors({
+  origin: CORS_ALLOWED_ORIGINS.length > 0 ? CORS_ALLOWED_ORIGINS : true,
+  credentials: true
+}));
+
+app.use(express.json({ limit: API_JSON_LIMIT }));
+
+app.use(async (req, res, next) => {
+  if (!isProtectedApiPath(req.path)) return next();
+
+  const token = getRequestAuthToken(req);
+  const hasToken = Boolean(token);
+
+  if (API_AUTH_REQUIRED) {
+    if (!API_AUTH_TOKEN) {
+      return sendFail(res, ERROR_CODES.SERVER_ERROR, 'API auth token is required but not configured', {}, 500);
+    }
+    if (hasToken) {
+      if (!safeTokenEqual(token, API_AUTH_TOKEN)) {
+        return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Invalid API token', {}, 403);
+      }
+      req.authVia = 'api-token';
+      return next();
+    }
+    if (!SESSION_API_AUTH_REQUIRED) {
+      return sendFail(res, ERROR_CODES.NOT_LOGIN, 'API token required', {}, 401);
+    }
+  }
+
+  if (!SESSION_API_AUTH_REQUIRED) {
+    /*
+      不强制鉴权时也要「尽力解析」身份，不能直接放行。
+      原来直接 return next()，req.authUser 一直是空的，
+      结果业务事件流里「谁跳过的任务」「谁驳回的提案」全记不下来——
+      而那正是这些记录一半的价值所在。
+      解析失败不拦请求，保持不强制的语义。
+    */
+    try {
+      const sessionId = getRequestSessionId(req);
+      if (sessionId) {
+        const result = await getSessionUser(sessionId);
+        if (result) {
+          req.authVia = 'session';
+          req.authUser = result.user;
+          req.authExpiresAt = result.expiresAt;
+          await applyAiDelegation(req, res);
+        }
+      }
+    } catch { /* 尽力而为，解析不出来就当匿名 */ }
+    return next();
+  }
+
+  try {
+    const sessionId = getRequestSessionId(req);
+    if (!sessionId) return sendFail(res, ERROR_CODES.NOT_LOGIN, 'Login required', {}, 401);
+    const result = await getSessionUser(sessionId);
+    if (!result) return sendFail(res, ERROR_CODES.NOT_LOGIN, 'Session expired or invalid', {}, 401);
+    refreshSessionCookie(res, sessionId, result);
+    req.authVia = 'session';
+    req.authUser = result.user;
+    req.authExpiresAt = result.expiresAt;
+    return next();
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'session check failed', {}, 500);
+  }
+});
+
+// 批次1/2/3 路由（线索/客户/项目/合同/结算走 PG 新表；XINYI_DB_URL 未配置时自动落回下方旧逻辑）
+app.use(batch1Router);
+app.use(batch2Router);
+app.use(batch3Router);
+app.use(batch4Router);
+app.use(knowledgeRouter);
+app.use(remindersRouter);
+app.use(uploadsRouter);
+app.use(dashboardRouter);
+app.use(aiProposalsRouter);
+
+const buildSessionCookie = (sessionId, expiresAt) => {
+  const parts = [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(sessionId)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax'
+  ];
+  if (SESSION_COOKIE_SECURE) parts.push('Secure');
+  if (expiresAt) parts.push(`Expires=${new Date(expiresAt).toUTCString()}`);
+  return parts.join('; ');
+};
+
+const clearSessionCookie = () => [
+  `${SESSION_COOKIE_NAME}=`,
+  'Path=/',
+  'HttpOnly',
+  'SameSite=Lax',
+  'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+  ...(SESSION_COOKIE_SECURE ? ['Secure'] : [])
+].join('; ');
+
+const getRequestSessionId = (req) => {
+  const bearer = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i)?.[1] || '';
+  return String(
+    readCookie(req.headers.cookie, SESSION_COOKIE_NAME) ||
+    req.headers['x-xinyi-session'] ||
+    bearer ||
+    ''
+  ).trim();
+};
+
+const requireAdminSession = async (req, res, next) => {
+  try {
+    const sessionId = getRequestSessionId(req);
+    if (!sessionId) return sendFail(res, ERROR_CODES.NOT_LOGIN, 'Admin login required', {}, 401);
+    const result = await getSessionUser(sessionId);
+    if (!result) return sendFail(res, ERROR_CODES.NOT_LOGIN, 'Session expired or invalid', {}, 401);
+    refreshSessionCookie(res, sessionId, result);
+    const roles = normalizeRoles(result.user);
+    if (!roles.includes('ADMIN')) {
+      return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Admin role required', { requiredRoles: ['ADMIN'], currentRoles: roles }, 403);
+    }
+    req.authVia = 'session';
+    req.authUser = result.user;
+    req.authExpiresAt = result.expiresAt;
+    return next();
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'admin session check failed', {}, 500);
+  }
+};
+
+const changedFieldNames = (payload = {}) => (
+  Object.keys(payload || {}).filter((key) => !['password', 'passwordHash', 'password_hash'].includes(key))
+);
+
+const resolveUserUpdateAction = (payload = {}) => {
+  if (Object.prototype.hasOwnProperty.call(payload, 'status')) {
+    const status = String(payload.status || '').trim().toLowerCase();
+    if (status === 'disabled') return 'USER_DISABLE';
+    if (status === 'active') return 'USER_ENABLE';
+  }
+  return 'USER_UPDATE';
+};
+
+const resolveEmployeeUpdatePermissionActions = (payload = {}) => {
+  const actions = new Set();
+  const hasField = (name) => Object.prototype.hasOwnProperty.call(payload || {}, name);
+  /*
+    改权限委派 = 改角色，走同一道闸（EMPLOYEE_UPDATE_ROLE）。
+
+    单项委派看起来比换角色「轻」，实际可能更重：
+    给一个 PAYMENT_CONFIRM 就等于把确认到账的权力给出去了。
+    按「轻」对待的话，一个只有 EMPLOYEE_UPDATE 权限的人就能提权别人。
+  */
+  const roleFields = ['roles', 'activeRole', 'active_role',
+    'extraActions', 'extra_actions', 'deniedActions', 'denied_actions'];
+  const generalFields = [
+    'name',
+    'email',
+    'username',
+    'positionTags',
+    'position_tags',
+    'reportsToUserId',
+    'reports_to_user_id',
+    'mustChangePassword',
+    'must_change_password',
+    'accountExpiresAt',
+    'account_expires_at'
+  ];
+
+  if (roleFields.some(hasField)) actions.add('EMPLOYEE_UPDATE_ROLE');
+  if (hasField('status')) actions.add('EMPLOYEE_DISABLE');
+  if (generalFields.some(hasField)) actions.add('EMPLOYEE_UPDATE');
+  if (actions.size === 0) actions.add('EMPLOYEE_UPDATE');
+  return Array.from(actions);
+};
+
+const getRequestedRoles = (payload = {}) => (
+  Array.isArray(payload?.roles)
+    ? payload.roles.map((role) => String(role || '').trim().toUpperCase()).filter(Boolean)
+    : []
+);
+
+const findAuthUserById = async (userId) => {
+  const id = String(userId || '').trim();
+  if (!id) return null;
+  const users = await listUsers();
+  return users.find((user) => String(user?.id || '') === id) || null;
+};
+
+const rejectIfNonAdminManagingAdmin = (res, { actorUser, targetUser, operation }) => {
+  const actorIsAdmin = normalizeRoles(actorUser).includes('ADMIN');
+  if (actorIsAdmin || !normalizeRoles(targetUser).includes('ADMIN')) return false;
+  sendFail(
+    res,
+    ERROR_CODES.NO_PERMISSION,
+    `Only ADMIN can ${operation} ADMIN accounts`,
+    { requiredRole: 'ADMIN' },
+    403
+  );
+  return true;
+};
+
+/**
+ * 写审计日志。req 传入时会额外记录「是不是 AI 代做的、代表谁做的」，
+ * 这样出问题能查到完整责任链：谁下的指令 → AI 用谁的身份 → 改了什么。
+ */
+const recordAuthAuditLog = async ({ actorUser, action, targetUser, metadata, req }) => {
+  try {
+    const enriched = req?.aiActor
+      ? {
+          ...(metadata || {}),
+          viaAiAgent: String(req.aiActor.name || req.aiActor.email || req.aiActor.id || 'ai-agent'),
+          onBehalfOf: String(req.actingOnBehalfOf || '')
+        }
+      : metadata;
+    await appendAuthAuditLog({ actorUser, action, targetUser, metadata: enriched });
+
+    /*
+      同时写一份进 Action Ledger。
+      appendAuthAuditLog 落在 authStore，而 authStore 用的是未配置的 DATABASE_URL，
+      所以它其实一直写在 JSON 文件里、SQL 查不到（auth_audit_logs 表压根没建过）。
+      不动 authStore（改它会牵扯登录链路），改成双写：
+      账本这份是可查询、可关联、且不可篡改的那份。
+      权限变更尤其要进账本——「谁给谁开了什么权限」是责任链的起点。
+    */
+    await businessEventRepo.record({
+      eventType: `auth.${String(action || 'unknown').toLowerCase()}`,
+      subjectType: 'employee',
+      subjectId: String(targetUser?.id || targetUser?.email || ''),
+      actorUserId: String(actorUser?.id || ''),
+      actorName: String(actorUser?.name || ''),
+      viaAiAgent: Boolean(req?.aiActor),
+      onBehalfOf: req?.aiActor ? String(req.actingOnBehalfOf || '') : null,
+      summary: `${action}｜目标：${targetUser?.name || targetUser?.email || targetUser?.id || '-'}`,
+      result: 'success',
+      detail: { action, target: { id: targetUser?.id, name: targetUser?.name }, metadata: enriched || {} },
+    });
+  } catch (error) {
+    console.error('[AuthAudit] write failed', error?.message || error);
+  }
+};
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const account = String(req.body?.account || req.body?.email || req.body?.username || '').trim();
+    const password = String(req.body?.password || '');
+    if (!account || !password) {
+      return sendFail(res, ERROR_CODES.PARAM_ERROR, 'account and password are required', {}, 400);
+    }
+    const result = await authenticateUser({ account, password });
+    if (!result) {
+      return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Invalid account or password', {}, 403);
+    }
+    res.setHeader('Set-Cookie', buildSessionCookie(result.sessionId, result.expiresAt));
+    return sendSuccess(res, { user: result.user, expiresAt: result.expiresAt }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'login failed', {}, 500);
+  }
+});
+
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const sessionId = getRequestSessionId(req);
+    if (!sessionId) return sendFail(res, ERROR_CODES.NOT_LOGIN, 'Not logged in', {}, 401);
+    const result = await getSessionUser(sessionId);
+    if (!result) return sendFail(res, ERROR_CODES.NOT_LOGIN, 'Session expired or invalid', {}, 401);
+    refreshSessionCookie(res, sessionId, result);
+    return sendSuccess(res, { user: result.user, expiresAt: result.expiresAt }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'session check failed', {}, 500);
+  }
+});
+
+app.post('/api/auth/change-password', async (req, res) => {
+  try {
+    const sessionId = getRequestSessionId(req);
+    if (!sessionId) return sendFail(res, ERROR_CODES.NOT_LOGIN, 'Not logged in', {}, 401);
+    const session = await getSessionUser(sessionId);
+    if (!session) return sendFail(res, ERROR_CODES.NOT_LOGIN, 'Session expired or invalid', {}, 401);
+    const currentPassword = String(req.body?.currentPassword || '');
+    const nextPassword = String(req.body?.newPassword || req.body?.nextPassword || '');
+    const user = await changeOwnPassword({
+      userId: session.user.id,
+      currentPassword,
+      nextPassword,
+      keepSessionId: sessionId
+    });
+    if (!user) return sendFail(res, ERROR_CODES.NOT_FOUND, 'user not found', {}, 404);
+    await recordAuthAuditLog({
+      actorUser: user,
+      action: 'PASSWORD_CHANGE',
+      targetUser: user,
+      metadata: { selfService: true, mustChangePassword: false }
+    });
+    return sendSuccess(res, { user, expiresAt: session.expiresAt }, 'success');
+  } catch (error) {
+    const message = error?.message || 'change password failed';
+    const status = /incorrect/i.test(message) ? 403 : 400;
+    return sendFail(res, status === 403 ? ERROR_CODES.NO_PERMISSION : ERROR_CODES.PARAM_ERROR, message, {}, status);
+  }
+});
+
+app.get('/api/auth/health', async (req, res) => {
+  try {
+    const health = await getAuthHealth();
+    const { mode, ready, reason, users } = health || {};
+    return sendSuccess(res, { mode, ready, reason, users }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'auth health failed', {}, 500);
+  }
+});
+
+app.get('/api/auth/users', requireAuthActionSession('EMPLOYEE_VIEW'), async (req, res) => {
+  try {
+    const users = await listUsers();
+    return sendSuccess(res, { users }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'list users failed', {}, 500);
+  }
+});
+
+app.get('/api/auth/audit-logs', requireAuthActionSession('AUTH_AUDIT_VIEW'), async (req, res) => {
+  try {
+    const logs = await listAuthAuditLogs({ limit: req.query?.limit });
+    return sendSuccess(res, { logs }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'list auth audit logs failed', {}, 500);
+  }
+});
+
+app.post('/api/auth/users', requireAuthActionSession('EMPLOYEE_CREATE'), async (req, res) => {
+  try {
+    const actorIsAdmin = normalizeRoles(req.authUser).includes('ADMIN');
+    const requestedRoles = getRequestedRoles(req.body || {});
+    if (!actorIsAdmin && requestedRoles.includes('ADMIN')) {
+      return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Only ADMIN can grant ADMIN role', { requiredRole: 'ADMIN' }, 403);
+    }
+    const user = await createUser(req.body || {});
+    await recordAuthAuditLog({
+      actorUser: req.authUser,
+      action: 'USER_CREATE',
+      targetUser: user,
+      metadata: {
+        roles: user.roles,
+        status: user.status,
+        mustChangePassword: user.mustChangePassword,
+        positionTags: user.positionTags || []
+      }
+    });
+    return sendSuccess(res, { user }, 'success', ERROR_CODES.SUCCESS, 201);
+  } catch (error) {
+    const message = error?.message || 'create user failed';
+    const conflict = /already exists/i.test(message);
+    return sendFail(res, conflict ? ERROR_CODES.DATA_CONFLICT : ERROR_CODES.PARAM_ERROR, message, {}, conflict ? 409 : 400);
+  }
+});
+
+app.patch('/api/auth/users/:id', requireAuthSession, async (req, res) => {
+  try {
+    const requiredActions = resolveEmployeeUpdatePermissionActions(req.body || {});
+    const deniedAction = requiredActions.find((action) => !hasAuthManagementAction(req.authUser, action));
+    if (deniedAction) return sendAuthActionDenied(res, req.authUser, deniedAction);
+
+    const actorIsAdmin = normalizeRoles(req.authUser).includes('ADMIN');
+    const targetUser = await findAuthUserById(req.params.id);
+    if (!targetUser) return sendFail(res, ERROR_CODES.NOT_FOUND, 'user not found', {}, 404);
+    if (rejectIfNonAdminManagingAdmin(res, { actorUser: req.authUser, targetUser, operation: 'update' })) return;
+    const requestedRoles = getRequestedRoles(req.body || {});
+    if (!actorIsAdmin && requestedRoles.includes('ADMIN')) {
+      return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Only ADMIN can grant ADMIN role', { requiredRole: 'ADMIN' }, 403);
+    }
+
+    const isSelf = String(req.params.id || '') === String(req.authUser?.id || '');
+    if (isSelf && Object.prototype.hasOwnProperty.call(req.body || {}, 'status')) {
+      const nextStatus = String(req.body.status || '').trim().toLowerCase();
+      if (nextStatus === 'disabled') {
+        return sendFail(res, ERROR_CODES.PARAM_ERROR, 'current user cannot disable own account', {}, 400);
+      }
+    }
+    if (actorIsAdmin && isSelf && Object.prototype.hasOwnProperty.call(req.body || {}, 'roles')) {
+      const nextRoles = Array.isArray(req.body.roles)
+        ? req.body.roles.map((role) => String(role || '').trim().toUpperCase())
+        : [];
+      if (!nextRoles.includes('ADMIN')) {
+        return sendFail(res, ERROR_CODES.PARAM_ERROR, 'current admin must keep ADMIN role', {}, 400);
+      }
+    }
+    const user = await updateUser(req.params.id, req.body || {});
+    if (!user) return sendFail(res, ERROR_CODES.NOT_FOUND, 'user not found', {}, 404);
+    await recordAuthAuditLog({
+      actorUser: req.authUser,
+      action: resolveUserUpdateAction(req.body || {}),
+      targetUser: user,
+      metadata: {
+        changedFields: changedFieldNames(req.body || {}),
+        status: user.status,
+        roles: user.roles,
+        mustChangePassword: user.mustChangePassword
+      }
+    });
+    return sendSuccess(res, { user }, 'success');
+  } catch (error) {
+    const message = error?.message || 'update user failed';
+    const conflict = /already exists/i.test(message);
+    return sendFail(res, conflict ? ERROR_CODES.DATA_CONFLICT : ERROR_CODES.PARAM_ERROR, message, {}, conflict ? 409 : 400);
+  }
+});
+
+app.post('/api/auth/users/:id/reset-password', requireAuthActionSession('EMPLOYEE_RESET_PASSWORD'), async (req, res) => {
+  try {
+    const targetUser = await findAuthUserById(req.params.id);
+    if (!targetUser) return sendFail(res, ERROR_CODES.NOT_FOUND, 'user not found', {}, 404);
+    if (rejectIfNonAdminManagingAdmin(res, { actorUser: req.authUser, targetUser, operation: 'reset password for' })) return;
+
+    const user = await resetUserPassword(req.params.id, req.body?.password);
+    if (!user) return sendFail(res, ERROR_CODES.NOT_FOUND, 'user not found', {}, 404);
+    await recordAuthAuditLog({
+      actorUser: req.authUser,
+      action: 'PASSWORD_RESET',
+      targetUser: user,
+      metadata: { sessionInvalidated: true, mustChangePassword: user.mustChangePassword }
+    });
+    return sendSuccess(res, { user }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.PARAM_ERROR, error?.message || 'reset password failed', {}, 400);
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const sessionId = getRequestSessionId(req);
+    if (sessionId) await revokeSession(sessionId);
+    res.setHeader('Set-Cookie', clearSessionCookie());
+    return sendSuccess(res, {}, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'logout failed', {}, 500);
+  }
+});
 
 const API_KEY = process.env.KIMI_API_KEY || process.env.API_KEY || '';
 const KIMI_BASE_URL = String(process.env.KIMI_BASE_URL || 'https://api.moonshot.cn/v1').replace(/\/$/, '');
@@ -25,6 +729,12 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const GEMINI_DEFAULT_MODEL = String(process.env.GEMINI_MODEL || 'gemini-3-flash').trim();
 const GEMINI_FALLBACK_MODEL = String(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash').trim();
+
+// DeepSeek（默认文本主力；纯文本、无视觉——含图片的请求会自动路由到 Kimi）
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+const DEEPSEEK_BASE_URL = String(process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
+const DEEPSEEK_MODEL = String(process.env.DEEPSEEK_MODEL || 'deepseek-chat').trim();
+
 const AI_PROVIDER_TIMEOUT_MS = Math.max(8000, Number(process.env.AI_PROVIDER_TIMEOUT_MS || 45000));
 
 const USER_AGENT = 'XinyiIntelBot/5.0 (+https://xinyi.local)';
@@ -39,6 +749,8 @@ const DEFAULT_INTEL_KIND_QUOTA = Object.freeze({
 });
 const DEFAULT_INTEL_REGIONS = ['温州', '苍南', '平阳', '龙港'];
 const DEFAULT_INTEL_INDUSTRIES = ['塑料编织制品制造业', '食包', '药材', '印刷', '食品', '餐饮'];
+const FOCUSED_INTEL_REGIONS = ['龙港', '苍南', '平阳'];
+const FOCUSED_INTEL_INDUSTRIES = ['食包', '印刷', '塑编'];
 const REGION_FEATURED_INDUSTRIES = Object.freeze({
   温州: ['泵阀', '低压电器', '汽摩配', '鞋革', '服装', '智能装备'],
   苍南: ['塑料编织', '印刷包装', '食品包装', '纺织制品', '礼品工艺'],
@@ -57,6 +769,511 @@ const compactSearchTerms = (text, maxTerms = 8) => String(text || '')
   .filter(Boolean)
   .slice(0, Math.max(1, maxTerms))
   .join(' ');
+
+const normalizePublicLeadText = (value, maxLength = 500) => String(value || '').trim().slice(0, maxLength);
+
+const getPublicLeadToken = (req) => String(
+  req.headers['x-xinyi-public-lead-token'] ||
+  req.headers['x-public-lead-token'] ||
+  req.body?.token ||
+  ''
+).trim();
+
+const buildWebsiteLeadRecord = (body = {}, existingLead = null) => {
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const company = normalizePublicLeadText(body.company || body.companyName, 120);
+  const name = normalizePublicLeadText(body.contactName || body.name, 80);
+  const mobile = normalizePublicLeadText(body.mobile || body.phone || body.tel, 40);
+  const wechat = normalizePublicLeadText(body.wechat || body.wechatId, 80);
+  const position = normalizePublicLeadText(body.position || body.title, 80);
+  const industry = normalizePublicLeadText(body.industry, 120);
+  const targetCertifications = normalizePublicLeadText(body.targetCertifications || body.certification || body.intentCertification, 200);
+  const source = normalizePublicLeadText(body.source, 80) || '官网表单';
+  const pageUrl = normalizePublicLeadText(body.pageUrl || body.url || body.referrer, 500);
+  const message = normalizePublicLeadText(body.message || body.remark || body.note || body.content, 1000);
+  const submittedAt = normalizePublicLeadText(body.submittedAt, 80) || now.toISOString();
+  const followUpContent = [
+    `官网线索提交：${message || '未填写留言'}`,
+    pageUrl ? `页面：${pageUrl}` : '',
+    `提交时间：${submittedAt}`
+  ].filter(Boolean).join('\n');
+  const followUpRecord = {
+    id: `fr-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+    date: today,
+    type: 'system',
+    content: followUpContent,
+    operator: '官网表单'
+  };
+
+  if (existingLead) {
+    return {
+      ...existingLead,
+      name: existingLead.name || name,
+      company: existingLead.company || company,
+      mobile: existingLead.mobile || mobile,
+      wechat: existingLead.wechat || wechat,
+      position: existingLead.position || position,
+      industry: existingLead.industry || industry,
+      targetCertifications: existingLead.targetCertifications || targetCertifications,
+      lastContact: today,
+      followUpRecords: [...(Array.isArray(existingLead.followUpRecords) ? existingLead.followUpRecords : []), followUpRecord],
+      contacts: Array.isArray(existingLead.contacts) && existingLead.contacts.length > 0
+        ? existingLead.contacts
+        : [{
+            id: `c-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+            name,
+            mobile,
+            wechat,
+            position,
+            isPrimary: true
+          }]
+    };
+  }
+
+  return {
+    id: `L-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+    name,
+    company,
+    status: 'New',
+    score: 60,
+    potentialValue: 0,
+    lastContact: today,
+    probability: 20,
+    source,
+    intent: 'Medium',
+    position,
+    mobile,
+    wechat,
+    industry,
+    targetCertifications,
+    existingCertifications: [],
+    contacts: [{
+      id: `c-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      name,
+      mobile,
+      wechat,
+      position,
+      isPrimary: true
+    }],
+    followUpRecords: [followUpRecord]
+  };
+};
+
+const findDuplicateWebsiteLead = (leads, { company, mobile, name }) => {
+  const normalizedCompany = normalizePublicLeadText(company, 120).toLowerCase();
+  const normalizedMobile = normalizePublicLeadText(mobile, 40);
+  const normalizedName = normalizePublicLeadText(name, 80).toLowerCase();
+  if (!normalizedCompany) return null;
+  return leads.find((lead) => {
+    const sameCompany = normalizePublicLeadText(lead.company, 120).toLowerCase() === normalizedCompany;
+    if (!sameCompany) return false;
+    const leadMobile = normalizePublicLeadText(lead.mobile, 40);
+    if (normalizedMobile && leadMobile) return normalizedMobile === leadMobile;
+    return normalizedName && normalizePublicLeadText(lead.name, 80).toLowerCase() === normalizedName;
+  }) || null;
+};
+
+const LEADS_DATASET_KEY = 'leads_v8';
+
+const getLeadPayload = (body = {}) => {
+  if (body && typeof body === 'object' && body.lead && typeof body.lead === 'object') {
+    return body.lead;
+  }
+  return body && typeof body === 'object' ? body : {};
+};
+
+const getLeadsDataset = async () => {
+  const state = await getStateBatch([LEADS_DATASET_KEY]);
+  return Array.isArray(state?.datasets?.[LEADS_DATASET_KEY]) ? state.datasets[LEADS_DATASET_KEY] : [];
+};
+
+const saveLeadsDataset = async (leads, meta = {}) => upsertStateBatch(
+  { [LEADS_DATASET_KEY]: Array.isArray(leads) ? leads : [] },
+  {
+    source: meta.source || 'leads-api',
+    actorUserId: meta.actorUserId || '',
+    clientId: meta.clientId || '',
+    appVersion: meta.appVersion || 'leads-api'
+  }
+);
+
+const makeLeadId = () => `L-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+const makeContactId = () => `c-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const makeFollowUpId = () => `F-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+
+const buildLeadForApiCreate = (rawLead = {}) => {
+  const lead = rawLead && typeof rawLead === 'object' ? rawLead : {};
+  const today = new Date().toISOString().slice(0, 10);
+  const name = normalizePublicLeadText(lead.name, 80);
+  const mobile = normalizePublicLeadText(lead.mobile, 40);
+  const wechat = normalizePublicLeadText(lead.wechat, 80);
+  const position = normalizePublicLeadText(lead.position, 80);
+  const contacts = Array.isArray(lead.contacts)
+    ? lead.contacts
+    : [{
+        id: makeContactId(),
+        name,
+        mobile,
+        wechat,
+        position,
+        isPrimary: true
+      }];
+
+  return {
+    ...lead,
+    id: normalizePublicLeadText(lead.id, 80) || makeLeadId(),
+    name,
+    company: normalizePublicLeadText(lead.company, 120),
+    status: lead.status || 'New',
+    score: Number.isFinite(Number(lead.score)) ? Number(lead.score) : 60,
+    potentialValue: Number.isFinite(Number(lead.potentialValue)) ? Number(lead.potentialValue) : 0,
+    lastContact: normalizePublicLeadText(lead.lastContact, 40) || today,
+    probability: Number.isFinite(Number(lead.probability)) ? Number(lead.probability) : 20,
+    source: normalizePublicLeadText(lead.source, 80) || '官网',
+    intent: ['High', 'Medium', 'Low'].includes(lead.intent) ? lead.intent : 'Medium',
+    position,
+    mobile,
+    wechat,
+    contacts,
+    followUpRecords: Array.isArray(lead.followUpRecords) ? lead.followUpRecords : []
+  };
+};
+
+const buildFollowUpRecordForApi = (rawRecord = {}) => {
+  const record = rawRecord && typeof rawRecord === 'object' ? rawRecord : {};
+  return {
+    ...record,
+    id: normalizePublicLeadText(record.id, 80) || makeFollowUpId(),
+    date: normalizePublicLeadText(record.date, 40) || new Date().toISOString().slice(0, 10),
+    type: normalizePublicLeadText(record.type, 40) || '电话',
+    content: normalizePublicLeadText(record.content, 2000),
+    operator: normalizePublicLeadText(record.operator, 80) || '系统'
+  };
+};
+
+const CUSTOMERS_DATASET_KEY = 'customers_v8';
+
+const getCustomerPayload = (body = {}) => {
+  if (body && typeof body === 'object' && body.customer && typeof body.customer === 'object') {
+    return body.customer;
+  }
+  return body && typeof body === 'object' ? body : {};
+};
+
+const getCustomersDataset = async () => {
+  const state = await getStateBatch([CUSTOMERS_DATASET_KEY]);
+  return Array.isArray(state?.datasets?.[CUSTOMERS_DATASET_KEY]) ? state.datasets[CUSTOMERS_DATASET_KEY] : [];
+};
+
+const saveCustomersDataset = async (customers, meta = {}) => upsertStateBatch(
+  { [CUSTOMERS_DATASET_KEY]: Array.isArray(customers) ? customers : [] },
+  {
+    source: meta.source || 'customers-api',
+    actorUserId: meta.actorUserId || '',
+    clientId: meta.clientId || '',
+    appVersion: meta.appVersion || 'customers-api'
+  }
+);
+
+const makeCustomerId = () => `C-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+const buildCustomerForApiCreate = (rawCustomer = {}) => {
+  const customer = rawCustomer && typeof rawCustomer === 'object' ? rawCustomer : {};
+  const name = normalizePublicLeadText(customer.name, 160);
+  const contactPerson = normalizePublicLeadText(customer.contactPerson, 80);
+  const mobile = normalizePublicLeadText(customer.mobile, 40);
+  const contacts = Array.isArray(customer.contacts) && customer.contacts.length > 0
+    ? customer.contacts
+    : [{
+        id: makeContactId(),
+        name: contactPerson || '待补充联系人',
+        mobile,
+        isPrimary: true
+      }];
+
+  return {
+    ...customer,
+    id: normalizePublicLeadText(customer.id, 80) && customer.id !== 'temp' ? normalizePublicLeadText(customer.id, 80) : makeCustomerId(),
+    name,
+    contactPerson: contactPerson || contacts[0]?.name || '待补充联系人',
+    totalValue: Number.isFinite(Number(customer.totalValue)) ? Number(customer.totalValue) : 0,
+    riskStatus: ['low', 'medium', 'high'].includes(customer.riskStatus) ? customer.riskStatus : 'low',
+    activeContracts: Number.isFinite(Number(customer.activeContracts)) ? Number(customer.activeContracts) : 0,
+    mobile,
+    contacts,
+    followUpRecords: Array.isArray(customer.followUpRecords) ? customer.followUpRecords : []
+  };
+};
+
+const CONTRACTS_DATASET_KEY = 'contracts_v8';
+
+const getContractPayload = (body = {}) => {
+  if (body && typeof body === 'object' && body.contract && typeof body.contract === 'object') {
+    return body.contract;
+  }
+  return body && typeof body === 'object' ? body : {};
+};
+
+const getContractsDataset = async () => {
+  const state = await getStateBatch([CONTRACTS_DATASET_KEY]);
+  return Array.isArray(state?.datasets?.[CONTRACTS_DATASET_KEY]) ? state.datasets[CONTRACTS_DATASET_KEY] : [];
+};
+
+const saveContractsDataset = async (contracts, meta = {}) => upsertStateBatch(
+  { [CONTRACTS_DATASET_KEY]: Array.isArray(contracts) ? contracts : [] },
+  {
+    source: meta.source || 'contracts-api',
+    actorUserId: meta.actorUserId || '',
+    clientId: meta.clientId || '',
+    appVersion: meta.appVersion || 'contracts-api'
+  }
+);
+
+const makeContractId = () => `CT-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+const makeReceivableId = () => `R-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const makeContractAttachmentId = () => `ATT-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+
+const normalizeContractStatus = (status) => (
+  ['New', 'Pending', 'Converted', 'Risk', 'Lost', 'Active', 'Completed'].includes(status) ? status : 'Active'
+);
+
+const normalizeContractRiskLevel = (riskLevel) => (
+  ['Low', 'Medium', 'High'].includes(riskLevel) ? riskLevel : 'Low'
+);
+
+const normalizeArchiveStatus = (archiveStatus) => (
+  ['active', 'archived'].includes(archiveStatus) ? archiveStatus : 'active'
+);
+
+const normalizeReceivableStatus = (status) => (
+  ['paid', 'unpaid', 'overdue'].includes(status) ? status : 'unpaid'
+);
+
+const buildReceivableForApi = (rawReceivable = {}, index = 0) => {
+  const receivable = rawReceivable && typeof rawReceivable === 'object' ? rawReceivable : {};
+  return {
+    ...receivable,
+    id: normalizePublicLeadText(receivable.id, 80) || makeReceivableId(),
+    node: normalizePublicLeadText(receivable.node, 120) || `回款节点 ${index + 1}`,
+    amount: Number.isFinite(Number(receivable.amount)) ? Number(receivable.amount) : 0,
+    dueDate: normalizePublicLeadText(receivable.dueDate, 40) || new Date().toISOString().slice(0, 10),
+    status: normalizeReceivableStatus(receivable.status)
+  };
+};
+
+const buildContractAttachmentForApi = (rawAttachment = {}) => {
+  const attachment = rawAttachment && typeof rawAttachment === 'object' ? rawAttachment : {};
+  return {
+    ...attachment,
+    id: normalizePublicLeadText(attachment.id, 120) || makeContractAttachmentId(),
+    name: normalizePublicLeadText(attachment.name, 240) || '未命名附件',
+    size: normalizePublicLeadText(attachment.size, 80) || '0 KB',
+    type: normalizePublicLeadText(attachment.type, 120) || 'unknown',
+    uploadDate: normalizePublicLeadText(attachment.uploadDate, 40) || new Date().toISOString().slice(0, 10)
+  };
+};
+
+const buildContractForApiCreate = (rawContract = {}) => {
+  const contract = rawContract && typeof rawContract === 'object' ? rawContract : {};
+  const title = normalizePublicLeadText(contract.title, 200);
+  const customerName = normalizePublicLeadText(contract.customerName, 160);
+  const receivables = Array.isArray(contract.receivables)
+    ? contract.receivables.map((item, index) => buildReceivableForApi(item, index))
+    : [];
+  const attachments = Array.isArray(contract.attachments)
+    ? contract.attachments.map((item) => buildContractAttachmentForApi(item))
+    : [];
+
+  return {
+    ...contract,
+    id: normalizePublicLeadText(contract.id, 80) && contract.id !== 'temp' ? normalizePublicLeadText(contract.id, 80) : makeContractId(),
+    title: title || '未命名合同',
+    customerId: normalizePublicLeadText(contract.customerId, 80) || undefined,
+    customerName: customerName || '未知客户',
+    amount: Number.isFinite(Number(contract.amount)) ? Number(contract.amount) : 0,
+    signDate: normalizePublicLeadText(contract.signDate, 40) || new Date().toISOString().slice(0, 10),
+    status: normalizeContractStatus(contract.status),
+    serviceLine: normalizePublicLeadText(contract.serviceLine, 120) || '未分类',
+    riskLevel: normalizeContractRiskLevel(contract.riskLevel),
+    archiveStatus: normalizeArchiveStatus(contract.archiveStatus),
+    receivables,
+    attachments,
+    contractNo: normalizePublicLeadText(contract.contractNo, 120) || undefined,
+    contactPerson: normalizePublicLeadText(contract.contactPerson, 80) || undefined,
+    paymentMethod: normalizePublicLeadText(contract.paymentMethod, 120) || undefined,
+    remarks: normalizePublicLeadText(contract.remarks, 2000) || undefined,
+    serviceItems: Array.isArray(contract.serviceItems) ? contract.serviceItems : []
+  };
+};
+
+const PROJECTS_DATASET_KEY = 'projects_v8';
+
+const getProjectPayload = (body = {}) => {
+  if (body && typeof body === 'object' && body.project && typeof body.project === 'object') {
+    return body.project;
+  }
+  return body && typeof body === 'object' ? body : {};
+};
+
+const getProjectsDataset = async () => {
+  const state = await getStateBatch([PROJECTS_DATASET_KEY]);
+  return Array.isArray(state?.datasets?.[PROJECTS_DATASET_KEY]) ? state.datasets[PROJECTS_DATASET_KEY] : [];
+};
+
+const saveProjectsDataset = async (projects, meta = {}) => upsertStateBatch(
+  { [PROJECTS_DATASET_KEY]: Array.isArray(projects) ? projects : [] },
+  {
+    source: meta.source || 'projects-api',
+    actorUserId: meta.actorUserId || '',
+    clientId: meta.clientId || '',
+    appVersion: meta.appVersion || 'projects-api'
+  }
+);
+
+const makeProjectId = () => `P-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+const makeProjectTaskId = () => `T-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+
+const normalizeProjectStatus = (status) => (
+  ['New', 'Pending', 'Converted', 'Risk', 'Lost', 'Active', 'Completed'].includes(status) ? status : 'Active'
+);
+
+const normalizeProjectCategory = (category) => (
+  ['Delivery', 'FollowUp'].includes(category) ? category : 'Delivery'
+);
+
+const normalizeProjectMode = (mode) => (
+  ['followup', 'delivery'].includes(mode) ? mode : undefined
+);
+
+const normalizeProjectPaymentStatus = (status) => (
+  ['paid', 'partial', 'unpaid', 'overdue'].includes(status) ? status : 'unpaid'
+);
+
+const normalizeProjectType = (type) => (
+  ['Self-Operated', 'Outsourced', 'Joint'].includes(type) ? type : 'Self-Operated'
+);
+
+const normalizeTaskStatus = (status) => (
+  ['Pending', 'Completed'].includes(status) ? status : 'Pending'
+);
+
+const normalizeTaskPriority = (priority) => (
+  ['High', 'Medium', 'Low'].includes(priority) ? priority : 'Medium'
+);
+
+const normalizeTaskCategory = (category) => (
+  ['Core', 'Auxiliary', 'System', 'ThirdParty'].includes(category) ? category : 'Core'
+);
+
+const buildProjectTaskForApi = (rawTask = {}, index = 0, fallbackOwner = '待指派') => {
+  const task = rawTask && typeof rawTask === 'object' ? rawTask : {};
+  return {
+    ...task,
+    id: normalizePublicLeadText(task.id, 100) || makeProjectTaskId(),
+    title: normalizePublicLeadText(task.title, 240) || `项目任务 ${index + 1}`,
+    deadline: normalizePublicLeadText(task.deadline, 40) || new Date().toISOString().slice(0, 10),
+    status: normalizeTaskStatus(task.status),
+    priority: normalizeTaskPriority(task.priority),
+    category: normalizeTaskCategory(task.category),
+    owner: normalizePublicLeadText(task.owner, 100) || fallbackOwner
+  };
+};
+
+const normalizeProjectProgress = (progress, tasks = []) => {
+  if (Number.isFinite(Number(progress))) {
+    const value = Number(progress);
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }
+  const list = Array.isArray(tasks) ? tasks : [];
+  if (list.length === 0) return 0;
+  const completed = list.filter((task) => task?.status === 'Completed').length;
+  return Math.round((completed / list.length) * 100);
+};
+
+const normalizeSettlementConfig = (rawConfig = {}) => {
+  const config = rawConfig && typeof rawConfig === 'object' ? rawConfig : {};
+  const rule = ['Ratio', 'Fixed', 'ProfitShare'].includes(config.rule) ? config.rule : 'Ratio';
+  const base = ['Revenue', 'GrossProfit'].includes(config.base) ? config.base : 'Revenue';
+  return {
+    ...config,
+    rule,
+    value: Number.isFinite(Number(config.value)) ? Number(config.value) : 10,
+    base
+  };
+};
+
+const buildProjectForApiCreate = (rawProject = {}) => {
+  const project = rawProject && typeof rawProject === 'object' ? rawProject : {};
+  const manager = normalizePublicLeadText(project.manager, 100) || '待指派';
+  const tasks = Array.isArray(project.tasks)
+    ? project.tasks.map((item, index) => buildProjectTaskForApi(item, index, manager))
+    : [];
+
+  return {
+    ...project,
+    id: normalizePublicLeadText(project.id, 100) && project.id !== 'temp' ? normalizePublicLeadText(project.id, 100) : makeProjectId(),
+    customerId: normalizePublicLeadText(project.customerId, 100) || undefined,
+    name: normalizePublicLeadText(project.name, 240) || '未命名项目',
+    contractRef: normalizePublicLeadText(project.contractRef, 160) || '',
+    sourceType: normalizePublicLeadText(project.sourceType, 80) || undefined,
+    sourceRef: normalizePublicLeadText(project.sourceRef, 160) || undefined,
+    projectMode: normalizeProjectMode(project.projectMode),
+    costStatus: ['待补全', '已确认'].includes(project.costStatus) ? project.costStatus : project.costStatus,
+    projectAmount: Number.isFinite(Number(project.projectAmount)) ? Number(project.projectAmount) : project.projectAmount,
+    projectCategory: normalizeProjectCategory(project.projectCategory),
+    manager,
+    progress: normalizeProjectProgress(project.progress, tasks),
+    status: normalizeProjectStatus(project.status),
+    paymentStatus: normalizeProjectPaymentStatus(project.paymentStatus),
+    deadline: normalizePublicLeadText(project.deadline, 40) || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10),
+    duration: Number.isFinite(Number(project.duration)) ? Number(project.duration) : 30,
+    projectType: normalizeProjectType(project.projectType),
+    tasks,
+    serviceItems: Array.isArray(project.serviceItems) ? project.serviceItems : [],
+    settlementConfig: normalizeSettlementConfig(project.settlementConfig)
+  };
+};
+
+const PROJECT_TRANSACTION_ALLOWED_KEYS = new Set([
+  PROJECTS_DATASET_KEY,
+  CUSTOMERS_DATASET_KEY,
+  'reminders_v8',
+  'project_work_logs_v1',
+  'knowledge_docs_v8'
+]);
+
+const getProjectTransactionDatasets = (body = {}) => {
+  const datasets = body && typeof body === 'object' && body.datasets && typeof body.datasets === 'object'
+    ? body.datasets
+    : {};
+  return Object.entries(datasets).reduce((acc, [key, value]) => {
+    const datasetKey = String(key || '').trim();
+    if (!PROJECT_TRANSACTION_ALLOWED_KEYS.has(datasetKey)) return acc;
+    if (Array.isArray(value)) acc[datasetKey] = value;
+    return acc;
+  }, {});
+};
+
+const CONTRACT_TRANSACTION_ALLOWED_KEYS = new Set([
+  CONTRACTS_DATASET_KEY,
+  CUSTOMERS_DATASET_KEY,
+  PROJECTS_DATASET_KEY,
+  LEADS_DATASET_KEY,
+  'knowledge_docs_v8'
+]);
+
+const getContractTransactionDatasets = (body = {}) => {
+  const datasets = body && typeof body === 'object' && body.datasets && typeof body.datasets === 'object'
+    ? body.datasets
+    : {};
+  return Object.entries(datasets).reduce((acc, [key, value]) => {
+    const datasetKey = String(key || '').trim();
+    if (!CONTRACT_TRANSACTION_ALLOWED_KEYS.has(datasetKey)) return acc;
+    if (Array.isArray(value)) acc[datasetKey] = value;
+    return acc;
+  }, {});
+};
 
 const normalizeModelId = (input) => {
   const raw = String(input || '').trim();
@@ -95,7 +1312,54 @@ const normalizeAIError = (error) => {
   }
 };
 
-const hasAnyAIKey = () => Boolean(API_KEY || GEMINI_API_KEY);
+const hasAnyAIKey = () => Boolean(API_KEY || GEMINI_API_KEY || DEEPSEEK_API_KEY);
+
+// 检测消息中是否含图片（OpenAI content 数组里有 image_url）→ 需视觉模型
+const messagesHaveImage = (messages) => (Array.isArray(messages) ? messages : []).some((m) =>
+  Array.isArray(m?.content) && m.content.some((c) => c?.type === 'image_url')
+);
+
+// DeepSeek 走 OpenAI 兼容 /chat/completions（纯文本，无 Kimi 回退链）。可指定模型（如 deepseek-v4-flash 更快）。
+const requestDeepSeekCompletion = async ({ requestedModel, messages, jsonMode = false, temperature = 0.3 }) => {
+  if (!DEEPSEEK_API_KEY) {
+    const err = new Error('DEEPSEEK_API_KEY 未配置');
+    err.code = 'NO_KEY';
+    throw err;
+  }
+  const useModel = /deepseek/i.test(String(requestedModel || '')) ? String(requestedModel) : DEEPSEEK_MODEL;
+  const body = {
+    model: useModel,
+    messages,
+    ...(temperature === undefined ? {} : { temperature }),
+    ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
+  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_PROVIDER_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    const raw = await res.text();
+    let data = null;
+    try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+    if (!res.ok) {
+      const err = new Error(data?.error?.message || data?.message || raw || `HTTP ${res.status}`);
+      err.code = String(data?.error?.code || res.status);
+      throw err;
+    }
+    return { text: extractTextFromChoice(data?.choices?.[0]?.message?.content), modelUsed: useModel, raw: data };
+  } catch (error) {
+    if (String(error?.name || '') === 'AbortError') {
+      const e = new Error(`DeepSeek provider timeout (${AI_PROVIDER_TIMEOUT_MS}ms)`); e.code = 'TIMEOUT'; throw e;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+};
 
 const isRetryableError = (error) => {
   const msg = String(error?.message || error || '').toLowerCase();
@@ -117,6 +1381,15 @@ const isKimiQuotaOrBalanceError = (error) => {
 
 const toHttpStatus = (code, message) => {
   const msg = String(message || '').toLowerCase();
+  /*
+    我们自己的每日配额也是 429。
+
+    不能靠下面那些关键词碰运气命中：配额提示是中文写的
+    （「今天的 AI 调用次数已达上限」），里面没有 quota 也没有 429，
+    落到最后一行会变成 500——前端把它当成服务器故障，
+    用户看到的是「系统出错了」，而不是「你今天用得太多了」。
+  */
+  if (String(code || '').toUpperCase() === 'QUOTA_EXCEEDED') return 429;
   if (
     code === '429' ||
     msg.includes('rate limit') ||
@@ -412,27 +1685,91 @@ const requestGeminiCompletion = async ({
   throw err;
 };
 
-const requestAI = async (params) => {
-  const model = (params.requestedModel || '').toLowerCase();
-  // 1. Explicit Gemini request
-  if (model.includes('gemini')) {
-    return requestGeminiCompletion(params);
-  }
-
-  // 2. Kimi request (default)
+// Kimi(视觉/兜底) → Gemini 兜底 的统一封装
+const kimiThenGemini = async (params) => {
   try {
-    // If NO Kimi key but HAVE Gemini key, skip Kimi and go straight to Gemini
-    if (!API_KEY && GEMINI_API_KEY) {
-      throw new Error('KIMI_API_KEY_MISSING_USE_GEMINI');
-    }
+    if (!API_KEY && GEMINI_API_KEY) throw new Error('KIMI_API_KEY_MISSING_USE_GEMINI');
     return await requestKimiCompletion(params);
   } catch (err) {
-    // 3. Fallback to Gemini if Kimi fails (quota, rate limit, or no key)
+    const normalized = normalizeAIError(err);
+    const isKeyMissing = normalized.message === 'KIMI_API_KEY_MISSING_USE_GEMINI' || String(normalized.code || '') === 'NO_KEY';
+    if (GEMINI_API_KEY && (isKimiQuotaOrBalanceError(err) || isKeyMissing || isRetryableError(err))) {
+      console.warn(`[AI Fallback] Kimi failed (${normalized.message}), switching to Gemini...`);
+      return requestGeminiCompletion({ ...params, requestedModel: GEMINI_DEFAULT_MODEL });
+    }
+    const out = new Error(normalized.message); out.code = normalized.code; throw out;
+  }
+};
+
+/**
+ * 带计量与配额的 AI 调用。**所有面向用户的 AI 入口都该走这条**，
+ * 直接调 requestAI 的调用会绕过记账，账单上就成了一笔查不到出处的钱。
+ *
+ * 配额撞上限会抛（用户要知道为什么不响应）；
+ * 记账失败只警告不抛（计量是保护措施，不该反过来让主功能不可用）。
+ */
+const meteredAI = async (req, params, { endpoint = '', feature = '' } = {}) => {
+  const aiUsage = require('./services/aiUsage');
+  const quota = await aiUsage.checkQuota(req);
+  if (!quota.allowed) {
+    const err = new Error(quota.message);
+    err.code = 'QUOTA_EXCEEDED';
+    err.quota = { used: quota.used, limit: quota.limit };
+    throw err;
+  }
+
+  const startedAt = Date.now();
+  try {
+    const result = await requestAI(params);
+    await aiUsage.record({
+      actor: quota.actor, endpoint, feature,
+      modelRequested: params.requestedModel || '', modelUsed: result?.modelUsed || '',
+      raw: result?.raw, ok: true, durationMs: Date.now() - startedAt,
+    });
+    return result;
+  } catch (error) {
+    // 失败也要记：连续失败本身就是要看见的信号（key 过期、余额不足、上游抖动）
+    await aiUsage.record({
+      actor: quota.actor, endpoint, feature,
+      modelRequested: params.requestedModel || '', modelUsed: '',
+      ok: false, errorCode: String(error?.code || '') || 'ERROR', durationMs: Date.now() - startedAt,
+    });
+    throw error;
+  }
+};
+
+const requestAI = async (params) => {
+  const model = (params.requestedModel || '').toLowerCase();
+
+  // 1. 显式指定 provider
+  if (model.includes('gemini')) return requestGeminiCompletion(params);
+  if (model.includes('deepseek') && DEEPSEEK_API_KEY) {
+    try { return await requestDeepSeekCompletion(params); }
+    catch (err) { console.warn(`[AI] DeepSeek 显式请求失败(${err?.message})，回退 Kimi/Gemini`); return kimiThenGemini(params); }
+  }
+
+  // 2. 含图片 → 必须走视觉模型（DeepSeek 无视觉）→ Kimi，失败回退 Gemini
+  if (messagesHaveImage(params.messages)) {
+    console.log('[AI Route] 含图片 → Kimi 视觉');
+    return kimiThenGemini({ ...params, requestedModel: DEFAULT_MODEL });
+  }
+
+  // 3. 纯文本默认 → DeepSeek 主力；失败/无 key → Kimi → Gemini
+  if (DEEPSEEK_API_KEY) {
+    try { return await requestDeepSeekCompletion(params); }
+    catch (err) { console.warn(`[AI Fallback] DeepSeek 失败(${err?.message})，切 Kimi/Gemini`); return kimiThenGemini(params); }
+  }
+
+  // 4. 无 DeepSeek key → 原有 Kimi→Gemini
+  try {
+    if (!API_KEY && GEMINI_API_KEY) throw new Error('KIMI_API_KEY_MISSING_USE_GEMINI');
+    return await requestKimiCompletion(params);
+  } catch (err) {
     const normalized = normalizeAIError(err);
     const isQuotaError = isKimiQuotaOrBalanceError(err);
     const isKeyMissing = normalized.message === 'KIMI_API_KEY_MISSING_USE_GEMINI' || String(normalized.code || '') === 'NO_KEY';
     const isTransientError = isRetryableError(err);
-    
+
     if (GEMINI_API_KEY && (isQuotaError || isKeyMissing || isTransientError)) {
       console.warn(`[AI Fallback] Kimi failed (${normalized.message}), switching to Gemini...`);
       return requestGeminiCompletion({ ...params, requestedModel: GEMINI_DEFAULT_MODEL });
@@ -814,14 +2151,43 @@ const buildWebContextForQuery = async (query, maxResults = 5, deepCrawl = false,
 };
 
 // -------- Intel Radar Store & Scheduler --------
-const intelStorePath = path.resolve(__dirname, './intel_store.json');
+const legacyIntelStorePath = path.resolve(__dirname, './intel_store.json');
+const intelStorePath = (() => {
+  const configured = String(process.env.INTEL_STORE_PATH || process.env.XINYI_INTEL_STORE_PATH || '').trim();
+  if (configured) {
+    return path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured);
+  }
+  return path.resolve(process.cwd(), '.runtime/intel_store.json');
+})();
+
+const ensureIntelStore = () => {
+  const dir = path.dirname(intelStorePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  if (!fs.existsSync(intelStorePath) && fs.existsSync(legacyIntelStorePath)) {
+    try {
+      fs.copyFileSync(legacyIntelStorePath, intelStorePath);
+      return;
+    } catch {
+      // noop: fallback to empty store initialization
+    }
+  }
+
+  if (!fs.existsSync(intelStorePath)) {
+    fs.writeFileSync(
+      intelStorePath,
+      JSON.stringify({ lastRunAt: '', regions: [], industries: [], signals: [] }, null, 2)
+    );
+  }
+};
 
 const readIntelStore = () => {
   try {
-    if (fs.existsSync(intelStorePath)) {
-      const raw = fs.readFileSync(intelStorePath, 'utf-8');
-      return JSON.parse(raw);
-    }
+    ensureIntelStore();
+    const raw = fs.readFileSync(intelStorePath, 'utf-8');
+    return JSON.parse(raw);
   } catch (e) {
     console.error('Intel store read failed', e);
   }
@@ -830,6 +2196,7 @@ const readIntelStore = () => {
 
 const writeIntelStore = (store) => {
   try {
+    ensureIntelStore();
     fs.writeFileSync(intelStorePath, JSON.stringify(store, null, 2));
   } catch (e) {
     console.error('Intel store write failed', e);
@@ -2376,15 +3743,17 @@ app.get('/api/ai/health', (req, res) => {
   }
 
   return sendSuccess(res, {
-    provider: API_KEY ? 'moonshot-kimi' : 'google-gemini',
-    fallback: GEMINI_API_KEY ? 'google-gemini' : 'none',
-    keyLoaded: true,
-    defaultModel: DEFAULT_MODEL,
+    provider: DEEPSEEK_API_KEY ? 'deepseek' : (API_KEY ? 'moonshot-kimi' : 'google-gemini'),
+    textDefault: DEEPSEEK_API_KEY ? DEEPSEEK_MODEL : DEFAULT_MODEL,
+    visionProvider: API_KEY ? `moonshot-kimi(${DEFAULT_MODEL})` : (GEMINI_API_KEY ? `gemini(${GEMINI_DEFAULT_MODEL})` : 'none'),
+    fallback: [DEEPSEEK_API_KEY && 'deepseek', API_KEY && 'kimi', GEMINI_API_KEY && 'gemini'].filter(Boolean).join(' → '),
+    keys: { deepseek: Boolean(DEEPSEEK_API_KEY), kimi: Boolean(API_KEY), gemini: Boolean(GEMINI_API_KEY) },
+    defaultModel: DEEPSEEK_API_KEY ? DEEPSEEK_MODEL : DEFAULT_MODEL,
     geminiModel: GEMINI_DEFAULT_MODEL
   }, 'success');
 });
 
-app.get('/api/ai/selftest', async (req, res) => {
+app.get('/api/ai/selftest', requireSessionRoles(['ADMIN', 'MANAGER'], 'AI_SELFTEST'), async (req, res) => {
   try {
     if (!hasAnyAIKey()) {
       return sendFail(
@@ -2399,11 +3768,11 @@ app.get('/api/ai/selftest', async (req, res) => {
     const requestedModel = String(req.query.model || '').trim();
     const rawMode = String(req.query.raw || '').trim() === '1';
 
-    const result = await requestAI({
+    const result = await meteredAI(req, {
       requestedModel: requestedModel || DEFAULT_MODEL,
       messages: [{ role: 'user', content: 'ping' }],
       disableFallback: rawMode
-    });
+    }, { endpoint: '/api/ai/selftest', feature: 'selftest' });
 
     return sendSuccess(res, { model: result.modelUsed, text: result.text }, 'success');
   } catch (error) {
@@ -2427,11 +3796,11 @@ app.post('/api/ai/generate', async (req, res) => {
 
     const { model, prompt, config } = req.body;
     const messages = convertHistoryToMessages(prompt);
-    const result = await requestAI({
+    const result = await meteredAI(req, {
       requestedModel: model || DEFAULT_MODEL,
       messages,
       jsonMode: String(config?.responseMimeType || '').includes('application/json')
-    });
+    }, { endpoint: '/api/ai/generate', feature: String(req.body?.feature || '') });
 
     return sendSuccess(res, { text: result.text, model: result.modelUsed }, 'success');
   } catch (error) {
@@ -2475,10 +3844,10 @@ app.post('/api/ai/chat', async (req, res) => {
       }
     }
 
-    const result = await requestAI({
+    const result = await meteredAI(req, {
       requestedModel: model || DEFAULT_MODEL,
       messages
-    });
+    }, { endpoint: '/api/ai/chat', feature: allowWeb ? 'chat_web' : 'chat' });
 
     return sendSuccess(res, {
       text: result.text,
@@ -2493,29 +3862,107 @@ app.post('/api/ai/chat', async (req, res) => {
   }
 });
 
-app.post('/api/intel/fetch', async (req, res) => {
+// 可靠抓取：直抓「情报源设置」里配置的官网URL（不爬搜索引擎）→ AI 结构化 → 写入 PG。
+const stripHtmlToText = (html) => String(html || '')
+  .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+  .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+  .replace(/<[^>]+>/g, ' ')
+  .replace(/&nbsp;|&#160;/gi, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const runIntelFromSources = async ({ regions, industries, limit, sourceUrls }) => {
+  const today = new Date().toISOString().split('T')[0];
+  const nowIso = new Date().toISOString();
+  const selectedRegions = (regions.length ? regions : DEFAULT_INTEL_REGIONS);
+  const selectedIndustries = (industries.length ? industries : DEFAULT_INTEL_INDUSTRIES);
+
+  // 直连抓取每个配置源（并行，稳定，无搜索引擎依赖）
+  const fetched = await Promise.all(sourceUrls.slice(0, 12).map(async (url) => {
+    const html = await fetchTextWithTimeout(url, { timeoutMs: 9000, headers: { 'User-Agent': USER_AGENT } });
+    const text = stripHtmlToText(html).slice(0, 4000);
+    return text.length >= 60 ? { title: url, url, excerpt: text } : null;
+  }));
+  const sources = fetched.filter(Boolean);
+  if (sources.length === 0) return { signals: [], empty: true, reason: 'no-source-content' };
+
+  const prompt = buildIntelPrompt({ regions: selectedRegions, industries: prioritizeForPrompt(selectedIndustries), today, limit, sources });
+  // 情报提取用快模型 deepseek-v4-flash（有效+快，思考模型太慢）；内层超时兜底，绝不挂死
+  const intelModel = String(process.env.INTEL_LLM_MODEL || 'deepseek-v4-flash');
+  let completion = null;
   try {
-    const regions = normalizeList(req.body?.regions);
-    const industries = normalizeList(req.body?.industries);
-    const limit = Number(req.body?.limit || 20);
-    const timeoutMs = Number(process.env.INTEL_FETCH_TIMEOUT_MS || 45000);
+    completion = await withTimeout(
+      requestAI({ requestedModel: intelModel, messages: [{ role: 'user', content: prompt }], jsonMode: false, temperature: 0.2 }),
+      Number(process.env.INTEL_LLM_TIMEOUT_MS || 15000),
+      'INTEL_LLM_TIMEOUT'
+    );
+  } catch (e) {
+    return { signals: [], empty: true, reason: 'llm-timeout' };
+  }
+  const list = parseIntelList(completion?.text || '');
+
+  const signals = list.slice(0, Math.max(1, limit)).map((x, idx) => ({
+    id: String(x?.id || `SIG-SRC-${Date.now()}-${idx}`),
+    title: String(x?.title || '').slice(0, 180) || `情报-${idx + 1}`,
+    sourceName: String(x?.sourceName || '').trim() || '配置源',
+    sourceUrl: toHttpUrl(x?.sourceUrl) || sources[0].url,
+    publishedAt: String(x?.publishedAt || today).slice(0, 10),
+    summary: String(x?.summary || ''),
+    content: String(x?.content || x?.summary || ''),
+    kind: normalizeSignalKind(x?.kind || 'policy'),
+    regions: Array.isArray(x?.regions) && x.regions.length ? x.regions.map(String) : selectedRegions,
+    industries: Array.isArray(x?.industries) && x.industries.length ? x.industries.map(String) : selectedIndustries,
+    tags: Array.isArray(x?.tags) ? x.tags.map(String).filter(Boolean) : [],
+    score: Math.max(0, Math.min(100, Number(x?.score || 60))),
+    urgency: ['high', 'medium', 'low'].includes(String(x?.urgency || '').toLowerCase()) ? String(x.urgency).toLowerCase() : 'medium',
+    status: 'new',
+    opportunityHypothesis: Array.isArray(x?.opportunityHypothesis) ? x.opportunityHypothesis.map(String).filter(Boolean) : [],
+    recommendedActions: Array.isArray(x?.recommendedActions) ? x.recommendedActions.map(String).filter(Boolean) : [],
+    createdAt: nowIso, updatedAt: nowIso
+  }));
+
+  // 写入 PG（前端读 /api/signals 即可见）
+  try {
+    const { signalRepo } = require('./repos/batch4Repos');
+    const pool = require('./db/pool');
+    if (pool.isEnabled()) { for (const s of signals) await signalRepo.upsert(s); }
+  } catch (e) { console.warn('[intel] 写入 PG 失败:', e.message); }
+
+  return { signals, empty: signals.length === 0, modelUsed: completion?.modelUsed || DEFAULT_MODEL };
+};
+const prioritizeForPrompt = (arr) => Array.from(new Set(arr)).slice(0, 8);
+
+app.post('/api/intel/fetch', requireSessionRoles(['ADMIN', 'MANAGER'], 'INTEL_FETCH'), async (req, res) => {
+  try {
+    const cfg = (readIntelStore() || {}).config || {};
+    const regions = normalizeList(req.body?.regions?.length ? req.body.regions : cfg.regions);
+    const industries = normalizeList(req.body?.industries?.length ? req.body.industries : cfg.industries);
+    const limit = Number(req.body?.limit || cfg.limit || 20);
+    const sourceUrls = normalizeList(req.body?.sourceUrls?.length ? req.body.sourceUrls : cfg.sourceUrls).filter((u) => /^https?:\/\//i.test(u));
+    const timeoutMs = Number(process.env.INTEL_FETCH_TIMEOUT_MS || 60000);
     const today = new Date().toISOString().slice(0, 10);
 
     if (!hasAnyAIKey()) {
+      return sendFail(res, ERROR_CODES.AI_KEY_MISSING, 'AI Key 未配置', { signals: [], source: 'no-key' }, 500);
+    }
+
+    // 未配置情报源 → 快速给清晰指引（不再挂死爬虫）
+    if (sourceUrls.length === 0) {
       return sendFail(
         res,
-        ERROR_CODES.AI_KEY_MISSING,
-        'AI Key 未配置 (KIMI_API_KEY or GEMINI_API_KEY)',
-        { signals: [], source: 'no-key' },
-        500
+        ERROR_CODES.INTEL_FETCH_ERROR,
+        '未配置情报源。请点「情报源设置」填入政府/招投标/行业协会官网 URL 后再抓取；企业级商机由每日天眼查例程自动写入。',
+        { signals: [], source: 'no-source' },
+        400
       );
     }
 
-    const { signals, modelUsed, empty, droppedStale = 0, droppedUndated = 0, rescuedUndated = 0, droppedGeo = 0, droppedGeoConflict = 0 } = await withTimeout(
-      runIntelFetch({ regions, industries, limit }),
+    const { signals, modelUsed, empty } = await withTimeout(
+      runIntelFromSources({ regions, industries, limit, sourceUrls }),
       timeoutMs,
       `INTEL_FETCH_TIMEOUT(${timeoutMs}ms)`
     );
+    const droppedStale = 0, droppedUndated = 0, rescuedUndated = 0, droppedGeo = 0, droppedGeoConflict = 0;
 
     if (empty) {
       const store = readIntelStore();
@@ -2525,21 +3972,20 @@ app.post('/api/intel/fetch', async (req, res) => {
       const cacheFreshness = filterSignalsByFreshness(cacheGeoScoped.signals, today);
       const usableCached = cacheFreshness.fresh;
       if (usableCached.length > 0) {
-        return sendFail(
+        return sendSuccess(
           res,
-          ERROR_CODES.INTEL_FETCH_ERROR,
-          `本次联网检索未提取到可用结构化结果，已回退最近缓存（${store.lastRunAt || '未知时间'}）`,
           {
             stale: true,
             signals: usableCached,
             source: 'cache',
+            warning: `本次联网检索未提取到可用结构化结果，已回退最近缓存（${store.lastRunAt || '未知时间'}）`,
             droppedStale: Number(droppedStale || 0) + Number(cacheFreshness.droppedStale || 0),
             droppedUndated: Number(droppedUndated || 0) + Number(cacheFreshness.droppedUndated || 0),
             rescuedUndated: Number(rescuedUndated || 0),
             droppedGeo: Number(droppedGeo || 0) + Number(cacheGeoScoped.droppedGeo || 0),
             droppedGeoConflict: Number(droppedGeoConflict || 0) + Number(cacheGeoScoped.droppedGeoConflict || 0)
           },
-          200
+          `本次联网检索未提取到可用结构化结果，已回退最近缓存（${store.lastRunAt || '未知时间'}）`
         );
       }
 
@@ -2561,7 +4007,7 @@ app.post('/api/intel/fetch', async (req, res) => {
       );
     }
 
-    writeIntelStore({ lastRunAt: new Date().toISOString(), regions, industries, signals });
+    writeIntelStore({ ...(readIntelStore() || {}), lastRunAt: new Date().toISOString(), regions, industries, signals });
     return sendSuccess(res, {
       signals,
       model: modelUsed,
@@ -2593,20 +4039,19 @@ app.post('/api/intel/fetch', async (req, res) => {
     const isTimeout = String(e.message || '').includes('INTEL_FETCH_TIMEOUT');
 
     if (isTimeout && usableCached.length > 0) {
-      return sendFail(
+      return sendSuccess(
         res,
-        ERROR_CODES.TIMEOUT,
-        `抓取超时，已回退到最近一次缓存（${store.lastRunAt || '未知时间'}）`,
         {
             stale: true,
             signals: usableCached,
             source: 'cache',
+            warning: `抓取超时，已回退到最近一次缓存（${store.lastRunAt || '未知时间'}）`,
             droppedStale: Number(cacheFreshness.droppedStale || 0),
             droppedUndated: Number(cacheFreshness.droppedUndated || 0),
             droppedGeo: Number(cacheGeoScoped.droppedGeo || 0),
             droppedGeoConflict: Number(cacheGeoScoped.droppedGeoConflict || 0)
         },
-        200
+        `抓取超时，已回退到最近一次缓存（${store.lastRunAt || '未知时间'}）`
       );
     }
 
@@ -2625,6 +4070,183 @@ app.post('/api/intel/fetch', async (req, res) => {
   }
 });
 
+// ===== 系统自我诊断 + 低级自愈（仅 ADMIN）=====
+const diagPingProvider = async (label, fn) => {
+  try {
+    const r = await withTimeout(fn(), 9000, 'DIAG_TIMEOUT');
+    return { name: label, status: 'ok', detail: `可用（${r.modelUsed || 'ok'}）`, fixable: false };
+  } catch (e) {
+    return { name: label, status: 'fail', detail: String(e?.message || 'error').slice(0, 70), fixable: false, hint: '更新对应密钥' };
+  }
+};
+
+app.get('/api/admin/diagnose', requireSessionRoles(['ADMIN'], 'DIAGNOSE'), async (req, res) => {
+  const checks = [];
+  const pingMsg = [{ role: 'user', content: '回一个字：好' }];
+
+  // 1. 数据库
+  try {
+    const p = require('./db/pool');
+    const h = await p.health();
+    checks.push({ name: '数据库 PostgreSQL', status: h.ready ? 'ok' : 'fail', detail: h.reason || h.mode, fixable: false, hint: h.ready ? '' : '检查 Docker/xinyi-dev-db 是否运行' });
+  } catch (e) { checks.push({ name: '数据库 PostgreSQL', status: 'fail', detail: String(e?.message).slice(0, 60), fixable: false }); }
+
+  // 2. AI 三家密钥实测
+  if (DEEPSEEK_API_KEY) checks.push(await diagPingProvider('AI·DeepSeek(文本主力)', () => requestDeepSeekCompletion({ messages: pingMsg }))); else checks.push({ name: 'AI·DeepSeek', status: 'warn', detail: '未配置', fixable: false });
+  if (API_KEY) checks.push(await diagPingProvider('AI·Kimi(图片识别)', () => requestKimiCompletion({ requestedModel: DEFAULT_MODEL, messages: pingMsg, disableFallback: true }))); else checks.push({ name: 'AI·Kimi(图片识别)', status: 'warn', detail: '未配置→无法识图', fixable: false });
+  if (GEMINI_API_KEY) checks.push(await diagPingProvider('AI·Gemini(兜底)', () => requestGeminiCompletion({ requestedModel: GEMINI_DEFAULT_MODEL, messages: pingMsg }))); else checks.push({ name: 'AI·Gemini(兜底)', status: 'warn', detail: '未配置', fixable: false });
+
+  // 3. 业务数据量
+  try {
+    const { leadRepo } = require('./repos/leadRepo');
+    const { customerRepo } = require('./repos/customerRepo');
+    const { projectRepo } = require('./repos/projectRepo');
+    const { contractRepo } = require('./repos/contractRepo');
+    const [l, c, p, ct] = await Promise.all([leadRepo.list(), customerRepo.list(), projectRepo.list(), contractRepo.list()]);
+    checks.push({ name: '业务数据', status: 'ok', detail: `线索${l.length}/客户${c.length}/项目${p.length}/合同${ct.length}`, fixable: false });
+  } catch (e) { checks.push({ name: '业务数据', status: 'fail', detail: String(e?.message).slice(0, 50), fixable: false }); }
+
+  // 4. 情报源配置 + 双存储同步
+  const store = readIntelStore() || {};
+  const cfg = store.config || {};
+  checks.push({ name: '情报源配置', status: (cfg.sourceUrls && cfg.sourceUrls.length) ? 'ok' : 'warn', detail: `${(cfg.sourceUrls || []).length} 个源URL, ${(cfg.keywords || []).length} 关键词`, fixable: true, hint: cfg.regions ? '' : '情报源设置未配置' });
+  try {
+    const { signalRepo } = require('./repos/batch4Repos');
+    const pool = require('./db/pool');
+    const pgCount = pool.isEnabled() ? (await signalRepo.list()).length : 0;
+    const storeCount = Array.isArray(store.signals) ? store.signals.length : 0;
+    checks.push({ name: '情报双存储同步', status: Math.abs(pgCount - storeCount) > 20 ? 'warn' : 'ok', detail: `PG ${pgCount} 条 / 缓存 ${storeCount} 条`, fixable: true, hint: '可一键同步' });
+  } catch (e) { checks.push({ name: '情报双存储同步', status: 'warn', detail: String(e?.message).slice(0, 40), fixable: true }); }
+
+  // 5. 通知通道
+  checks.push({ name: '通知推送 webhook', status: String(process.env.NOTIFY_WEBHOOK_URL || '').trim() ? 'ok' : 'warn', detail: String(process.env.NOTIFY_WEBHOOK_URL || '').trim() ? '已配置' : '未配置→提醒推不到手机', fixable: false, hint: '填 NOTIFY_WEBHOOK_URL' });
+
+  const summary = {
+    ok: checks.filter((c) => c.status === 'ok').length,
+    warn: checks.filter((c) => c.status === 'warn').length,
+    fail: checks.filter((c) => c.status === 'fail').length,
+    autoFixable: checks.filter((c) => c.fixable && c.status !== 'ok').length
+  };
+  return sendSuccess(res, { checks, summary, at: new Date().toISOString() }, 'success');
+});
+
+app.post('/api/admin/self-heal', requireSessionRoles(['ADMIN'], 'SELF_HEAL'), async (req, res) => {
+  const fixed = [];
+  const skipped = [];
+  try {
+    // 修复1：情报配置缺失 → 补默认
+    const store = readIntelStore() || {};
+    if (!store.config || !Array.isArray(store.config.regions) || store.config.regions.length === 0) {
+      store.config = {
+        regions: DEFAULT_INTEL_REGIONS, industries: DEFAULT_INTEL_INDUSTRIES,
+        keywords: ['招标 认证', '抽检 不合格', '出口 欧盟 合规', '新建 扩产'],
+        sourceUrls: (store.config && store.config.sourceUrls) || [], limit: 20, updatedAt: new Date().toISOString()
+      };
+      writeIntelStore(store);
+      fixed.push('已补全情报雷达默认配置（区域/行业/关键词）');
+    }
+    // 修复2：情报双存储同步 → 用 PG 最新信号覆盖缓存，使 /api/intel/latest 一致
+    try {
+      const { signalRepo } = require('./repos/batch4Repos');
+      const pool = require('./db/pool');
+      if (pool.isEnabled()) {
+        const pgSignals = await signalRepo.list();
+        const store2 = readIntelStore() || {};
+        writeIntelStore({ ...store2, signals: pgSignals.slice(0, 200), syncedAt: new Date().toISOString() });
+        fixed.push(`已同步情报双存储（PG→缓存 ${Math.min(200, pgSignals.length)} 条）`);
+      }
+    } catch (e) { skipped.push('情报同步跳过：' + String(e?.message).slice(0, 40)); }
+    // 修复3：清理过期登录会话
+    try {
+      const auth = require('./authStore');
+      if (typeof auth.cleanupExpiredSessions === 'function') { await auth.cleanupExpiredSessions(); fixed.push('已清理过期登录会话'); }
+    } catch { /* 可选 */ }
+  } catch (e) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, e?.message || 'self-heal failed', { fixed, skipped }, 500);
+  }
+  return sendSuccess(res, { fixed, skipped }, fixed.length ? `已自动修复 ${fixed.length} 项` : '无可自动修复项（其余需人工，如更新密钥/启动Docker）');
+});
+
+// 真实通知推送测试（企业微信/钉钉/飞书 webhook）
+app.post('/api/notify/test', requireSessionRoles(['ADMIN', 'MANAGER'], 'NOTIFY_TEST'), async (req, res) => {
+  const { notify } = require('./services/notifyService');
+  const text = String(req.body?.text || '【信义系统】通知通道测试：这是一条测试推送 ✅').slice(0, 2000);
+  const result = await notify(text, req.body?.webhookUrl);
+  if (!result.ok) return sendFail(res, ERROR_CODES.UPSTREAM_ERROR, result.reason || '推送失败', result, 502);
+  return sendSuccess(res, result, '推送成功');
+});
+
+/*
+  月度经营判断：给老板看「这个月该把精力放哪」。
+
+  和原来的战略推演（SWOT + BCG 矩阵）是两件事：
+  那套是给大企业做年度规划的框架，对一家几个人、200-400 单/年的公司
+  只会输出「优势：本地化服务」这类正确但不指向动作的话。
+  实测上线至今一次都没被用过（战略洞察为空、战略任务 0 条）。
+
+  这个接口只返回**事实快照**，不含任何推断——
+  推断由前端拿去调模型，而模型说的每一条都要能指回快照里的具体数字。
+  分开的好处是快照本身可以被核对、被测试，出了问题分得清是数据错还是模型错。
+*/
+/*
+  AI 用量汇总。**只给老板和系统管理员看。**
+
+  这里能看到每个人调了多少次——那是很接近「监控员工」的数据，
+  给总助或者其他人看没有必要，而权限一旦开出去就很难收回来。
+*/
+app.get('/api/ai/usage', requireSessionRoles(['ADMIN', 'SYS_ADMIN'], 'AI_USAGE_VIEW'), async (req, res) => {
+  try {
+    const { summary } = require('./services/aiUsage');
+    return sendSuccess(res, await summary({ days: Number(req.query?.days) || 30 }), 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'AI 用量查询失败', {}, 500);
+  }
+});
+
+app.get('/api/review/monthly', requireSessionRoles(['ADMIN', 'SYS_ADMIN', 'MANAGER'], 'MONTHLY_REVIEW'), async (req, res) => {
+  try {
+    const { buildSnapshot, buildPrompt } = require('./services/monthlyReview');
+    const snapshot = await buildSnapshot();
+    return sendSuccess(res, { snapshot, prompt: buildPrompt(snapshot) }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || '经营快照生成失败', {}, 500);
+  }
+});
+
+// 情报源/抓取范围配置（面板可编辑；抓取例程读取此配置）
+app.get('/api/intel/config', requireSessionRoles(['ADMIN', 'MANAGER'], 'INTEL_CONFIG'), (req, res) => {
+  const cfg = (readIntelStore() || {}).config || {};
+  return sendSuccess(res, {
+    config: {
+      regions: cfg.regions?.length ? cfg.regions : FOCUSED_INTEL_REGIONS,
+      industries: cfg.industries?.length ? cfg.industries : FOCUSED_INTEL_INDUSTRIES,
+      keywords: cfg.keywords || ['招标 认证', '抽检 不合格', '出口 欧盟 合规', '新建 扩产'],
+      sourceUrls: cfg.sourceUrls || [],
+      limit: cfg.limit || 20,
+      updatedAt: cfg.updatedAt || ''
+    }
+  }, 'success');
+});
+
+app.post('/api/intel/config', requireSessionRoles(['ADMIN', 'MANAGER'], 'INTEL_CONFIG'), (req, res) => {
+  try {
+    const b = req.body || {};
+    const store = readIntelStore() || {};
+    store.config = {
+      regions: normalizeList(b.regions),
+      industries: normalizeList(b.industries),
+      keywords: normalizeList(b.keywords),
+      sourceUrls: normalizeList(b.sourceUrls).filter((u) => /^https?:\/\//i.test(u)),
+      limit: Math.min(50, Math.max(1, Number(b.limit) || 20)),
+      updatedAt: new Date().toISOString()
+    };
+    writeIntelStore(store);
+    return sendSuccess(res, { config: store.config }, 'success');
+  } catch (e) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, e?.message || 'intel config save failed', {}, 500);
+  }
+});
+
 app.get('/api/intel/latest', (req, res) => {
   const store = readIntelStore();
   const configuredRegions = normalizeList(store?.regions);
@@ -2640,6 +4262,549 @@ app.get('/api/intel/latest', (req, res) => {
     },
     'success'
   );
+});
+
+app.get('/api/leads', async (req, res) => {
+  try {
+    const leads = await getLeadsDataset();
+    return sendSuccess(res, { leads }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'leads fetch failed', {}, 500);
+  }
+});
+
+app.get('/api/leads/:id', async (req, res) => {
+  try {
+    const leadId = String(req.params.id || '').trim();
+    const leads = await getLeadsDataset();
+    const lead = leads.find((item) => String(item?.id || '') === leadId);
+    if (!lead) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Lead not found', {}, 404);
+    return sendSuccess(res, { lead }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'lead fetch failed', {}, 500);
+  }
+});
+
+app.post('/api/leads', async (req, res) => {
+  try {
+    const lead = buildLeadForApiCreate(getLeadPayload(req.body));
+    const leads = await getLeadsDataset();
+    const nextLeads = [lead, ...leads.filter((item) => String(item?.id || '') !== lead.id)];
+    const result = await saveLeadsDataset(nextLeads, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'leads-api')
+    });
+    return sendSuccess(res, { lead, written: result.written }, 'success', ERROR_CODES.SUCCESS, 201);
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'lead create failed', {}, 500);
+  }
+});
+
+app.patch('/api/leads/:id',
+  /*
+    线索是**可认领**资源：无主时谁改谁认领（业务方 2026-08-21 定）。
+    resource 解析器要把当前记录捞出来给授权层看归属——
+    不能只凭请求体判，否则调用方自己传个 ownerUserId 就绕过去了。
+  */
+  requireAction('LEAD_EDIT', {
+    resource: async (req) => {
+      const leads = await getLeadsDataset();
+      const row = leads.find((x) => String(x?.id || '') === String(req.params.id || '').trim());
+      return resourceOf('lead', row || {});
+    },
+  }),
+  async (req, res) => {
+  try {
+    const leadId = String(req.params.id || '').trim();
+    const updates = getLeadPayload(req.body);
+    const leads = await getLeadsDataset();
+    const index = leads.findIndex((item) => String(item?.id || '') === leadId);
+    if (index < 0) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Lead not found', {}, 404);
+
+    // 无主线索：本次写入顺带认领。补丁放在 updates 之后，
+    // 防止调用方在请求体里自带 ownerUserId 把自己写成别人。
+    const claim = claimPatch(req.authzDecision, req.authUser);
+    const nextLead = { ...leads[index], ...updates, ...claim, id: leadId };
+    const nextLeads = leads.map((item, idx) => idx === index ? nextLead : item);
+    const result = await saveLeadsDataset(nextLeads, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'leads-api')
+    });
+
+    if (Object.keys(claim).length) {
+      await recordOwnershipChange({
+        kind: 'claim',
+        resourceType: 'lead',
+        resourceId: leadId,
+        actor: { ...req.authUser, viaAiAgent: Boolean(req.aiActor) },
+        toUserId: req.authUser?.id,
+        toName: req.authUser?.name,
+        policy: req.authzDecision?.policy,
+        reason: req.authzDecision?.reason,
+      });
+    }
+
+    return sendSuccess(res, {
+      lead: nextLead,
+      written: result.written,
+      claimed: Object.keys(claim).length > 0,
+    }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'lead update failed', {}, 500);
+  }
+});
+
+app.post('/api/leads/:id/follow-ups', async (req, res) => {
+  try {
+    const leadId = String(req.params.id || '').trim();
+    const record = buildFollowUpRecordForApi(req.body?.record || req.body);
+    const leads = await getLeadsDataset();
+    const index = leads.findIndex((item) => String(item?.id || '') === leadId);
+    if (index < 0) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Lead not found', {}, 404);
+
+    const followUpRecords = Array.isArray(leads[index]?.followUpRecords) ? leads[index].followUpRecords : [];
+    const nextLead = {
+      ...leads[index],
+      followUpRecords: [...followUpRecords, record]
+    };
+    const nextLeads = leads.map((item, idx) => idx === index ? nextLead : item);
+    const result = await saveLeadsDataset(nextLeads, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'leads-api')
+    });
+    return sendSuccess(res, { lead: nextLead, record, written: result.written }, 'success', ERROR_CODES.SUCCESS, 201);
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'lead follow-up failed', {}, 500);
+  }
+});
+
+app.get('/api/customers', async (req, res) => {
+  try {
+    const customers = await getCustomersDataset();
+    return sendSuccess(res, { customers }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'customers fetch failed', {}, 500);
+  }
+});
+
+app.get('/api/customers/:id', async (req, res) => {
+  try {
+    const customerId = String(req.params.id || '').trim();
+    const customers = await getCustomersDataset();
+    const customer = customers.find((item) => String(item?.id || '') === customerId);
+    if (!customer) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Customer not found', {}, 404);
+    return sendSuccess(res, { customer }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'customer fetch failed', {}, 500);
+  }
+});
+
+app.post('/api/customers', async (req, res) => {
+  try {
+    const customer = buildCustomerForApiCreate(getCustomerPayload(req.body));
+    const customers = await getCustomersDataset();
+    const nextCustomers = [customer, ...customers.filter((item) => String(item?.id || '') !== customer.id)];
+    const result = await saveCustomersDataset(nextCustomers, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'customers-api')
+    });
+    return sendSuccess(res, { customer, written: result.written }, 'success', ERROR_CODES.SUCCESS, 201);
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'customer create failed', {}, 500);
+  }
+});
+
+app.patch('/api/customers/:id', async (req, res) => {
+  try {
+    const customerId = String(req.params.id || '').trim();
+    const updates = getCustomerPayload(req.body);
+    const customers = await getCustomersDataset();
+    const index = customers.findIndex((item) => String(item?.id || '') === customerId);
+    if (index < 0) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Customer not found', {}, 404);
+
+    const nextCustomer = { ...customers[index], ...updates, id: customerId };
+    const nextCustomers = customers.map((item, idx) => idx === index ? nextCustomer : item);
+    const result = await saveCustomersDataset(nextCustomers, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'customers-api')
+    });
+    return sendSuccess(res, { customer: nextCustomer, written: result.written }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'customer update failed', {}, 500);
+  }
+});
+
+app.post('/api/customers/:id/follow-ups', async (req, res) => {
+  try {
+    const customerId = String(req.params.id || '').trim();
+    const record = buildFollowUpRecordForApi(req.body?.record || req.body);
+    const customers = await getCustomersDataset();
+    const index = customers.findIndex((item) => String(item?.id || '') === customerId);
+    if (index < 0) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Customer not found', {}, 404);
+
+    const followUpRecords = Array.isArray(customers[index]?.followUpRecords) ? customers[index].followUpRecords : [];
+    const nextCustomer = {
+      ...customers[index],
+      followUpRecords: [...followUpRecords, record]
+    };
+    const nextCustomers = customers.map((item, idx) => idx === index ? nextCustomer : item);
+    const result = await saveCustomersDataset(nextCustomers, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'customers-api')
+    });
+    return sendSuccess(res, { customer: nextCustomer, record, written: result.written }, 'success', ERROR_CODES.SUCCESS, 201);
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'customer follow-up failed', {}, 500);
+  }
+});
+
+app.get('/api/projects', async (req, res) => {
+  try {
+    const projects = await getProjectsDataset();
+    return sendSuccess(res, { projects }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'projects fetch failed', {}, 500);
+  }
+});
+
+app.get('/api/projects/:id', async (req, res) => {
+  try {
+    const projectId = String(req.params.id || '').trim();
+    const projects = await getProjectsDataset();
+    const project = projects.find((item) => String(item?.id || '') === projectId);
+    if (!project) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Project not found', {}, 404);
+    return sendSuccess(res, { project }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'project fetch failed', {}, 500);
+  }
+});
+
+app.post('/api/projects', async (req, res) => {
+  try {
+    const project = buildProjectForApiCreate(getProjectPayload(req.body));
+    const projects = await getProjectsDataset();
+    const nextProjects = [project, ...projects.filter((item) => String(item?.id || '') !== project.id)];
+    const result = await saveProjectsDataset(nextProjects, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'projects-api')
+    });
+    return sendSuccess(res, { project, written: result.written }, 'success', ERROR_CODES.SUCCESS, 201);
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'project create failed', {}, 500);
+  }
+});
+
+app.post('/api/projects/transaction', async (req, res) => {
+  try {
+    const datasets = getProjectTransactionDatasets(req.body || {});
+    const keys = Object.keys(datasets);
+    if (!Array.isArray(datasets[PROJECTS_DATASET_KEY])) {
+      return sendFail(res, ERROR_CODES.PARAM_ERROR, 'projects_v8 array is required', {}, 400);
+    }
+    if (keys.length === 0) {
+      return sendFail(res, ERROR_CODES.PARAM_ERROR, 'no supported project transaction datasets', {}, 400);
+    }
+
+    const projectId = normalizePublicLeadText(req.body?.projectId, 120);
+    const project = projectId
+      ? datasets[PROJECTS_DATASET_KEY].find((item) => String(item?.id || '') === projectId)
+      : null;
+    if (projectId && !project) {
+      return sendFail(res, ERROR_CODES.PARAM_ERROR, 'projectId not found in projects_v8', {}, 400);
+    }
+
+    const result = await upsertStateBatch(datasets, {
+      source: 'projects-transaction-api',
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'projects-transaction-api')
+    });
+
+    return sendSuccess(res, {
+      written: result.written,
+      keys,
+      project: project || null
+    }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'project transaction failed', {}, 500);
+  }
+});
+
+app.patch('/api/projects/:id', async (req, res) => {
+  try {
+    const projectId = String(req.params.id || '').trim();
+    const updates = getProjectPayload(req.body);
+    const projects = await getProjectsDataset();
+    const index = projects.findIndex((item) => String(item?.id || '') === projectId);
+    if (index < 0) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Project not found', {}, 404);
+
+    const nextProject = { ...projects[index], ...updates, id: projectId };
+    if (Array.isArray(nextProject.tasks)) {
+      nextProject.progress = normalizeProjectProgress(nextProject.progress, nextProject.tasks);
+    }
+    const nextProjects = projects.map((item, idx) => idx === index ? nextProject : item);
+    const result = await saveProjectsDataset(nextProjects, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'projects-api')
+    });
+    return sendSuccess(res, { project: nextProject, written: result.written }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'project update failed', {}, 500);
+  }
+});
+
+app.post('/api/projects/:id/tasks', async (req, res) => {
+  try {
+    const projectId = String(req.params.id || '').trim();
+    const projects = await getProjectsDataset();
+    const index = projects.findIndex((item) => String(item?.id || '') === projectId);
+    if (index < 0) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Project not found', {}, 404);
+
+    const project = projects[index];
+    const task = buildProjectTaskForApi(req.body?.task || req.body, 0, normalizePublicLeadText(project.manager, 100) || '待指派');
+    const tasks = Array.isArray(project.tasks) ? project.tasks : [];
+    const nextTasks = tasks.some((item) => item.id === task.id) ? tasks : [...tasks, task];
+    const nextProject = {
+      ...project,
+      tasks: nextTasks,
+      progress: normalizeProjectProgress(undefined, nextTasks)
+    };
+    const nextProjects = projects.map((item, idx) => idx === index ? nextProject : item);
+    const result = await saveProjectsDataset(nextProjects, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'projects-api')
+    });
+    return sendSuccess(res, { project: nextProject, task, written: result.written }, 'success', ERROR_CODES.SUCCESS, 201);
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'project task create failed', {}, 500);
+  }
+});
+
+app.patch('/api/projects/:id/tasks/:taskId', async (req, res) => {
+  try {
+    const projectId = String(req.params.id || '').trim();
+    const taskId = String(req.params.taskId || '').trim();
+    const projects = await getProjectsDataset();
+    const index = projects.findIndex((item) => String(item?.id || '') === projectId);
+    if (index < 0) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Project not found', {}, 404);
+
+    const project = projects[index];
+    const tasks = Array.isArray(project.tasks) ? project.tasks : [];
+    const taskIndex = tasks.findIndex((item) => String(item?.id || '') === taskId);
+    if (taskIndex < 0) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Project task not found', {}, 404);
+
+    const updates = req.body && typeof req.body === 'object' && req.body.task && typeof req.body.task === 'object'
+      ? req.body.task
+      : (req.body && typeof req.body === 'object' ? req.body : {});
+    const nextTasks = tasks.map((item, idx) => idx === taskIndex ? { ...item, ...updates, id: taskId } : item);
+    const nextProject = {
+      ...project,
+      tasks: nextTasks,
+      progress: normalizeProjectProgress(undefined, nextTasks)
+    };
+    const nextProjects = projects.map((item, idx) => idx === index ? nextProject : item);
+    const result = await saveProjectsDataset(nextProjects, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'projects-api')
+    });
+    return sendSuccess(res, { project: nextProject, task: nextTasks[taskIndex], written: result.written }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'project task update failed', {}, 500);
+  }
+});
+
+app.get('/api/contracts', async (req, res) => {
+  try {
+    const contracts = await getContractsDataset();
+    return sendSuccess(res, { contracts }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'contracts fetch failed', {}, 500);
+  }
+});
+
+app.get('/api/contracts/:id', async (req, res) => {
+  try {
+    const contractId = String(req.params.id || '').trim();
+    const contracts = await getContractsDataset();
+    const contract = contracts.find((item) => String(item?.id || '') === contractId);
+    if (!contract) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Contract not found', {}, 404);
+    return sendSuccess(res, { contract }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'contract fetch failed', {}, 500);
+  }
+});
+
+app.post('/api/contracts', async (req, res) => {
+  try {
+    const contract = buildContractForApiCreate(getContractPayload(req.body));
+    const contracts = await getContractsDataset();
+    const nextContracts = [contract, ...contracts.filter((item) => String(item?.id || '') !== contract.id)];
+    const result = await saveContractsDataset(nextContracts, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'contracts-api')
+    });
+    return sendSuccess(res, { contract, written: result.written }, 'success', ERROR_CODES.SUCCESS, 201);
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'contract create failed', {}, 500);
+  }
+});
+
+/*
+  归属指派路由**不在这里**，在 batch1/batch2/batch3 里（用同一个工厂生成，
+  见 server/authz/ownership.js 的 makeAssignOwnerRoute）。
+  最初写在这里读写 state store 数据集，而真实数据走 batch 路由的 PG repo，
+  两边不是同一个存储，指派永远 404。教训：新增路由前先确认这类资源
+  现在到底由谁在处理，app.js 里很多同名路由已经是 PG 未启用时的兜底了。
+*/
+
+app.patch('/api/contracts/:id', async (req, res) => {
+  try {
+    const contractId = String(req.params.id || '').trim();
+    const updates = getContractPayload(req.body);
+    const contracts = await getContractsDataset();
+    const index = contracts.findIndex((item) => String(item?.id || '') === contractId);
+    if (index < 0) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Contract not found', {}, 404);
+
+    const nextContract = { ...contracts[index], ...updates, id: contractId };
+    const nextContracts = contracts.map((item, idx) => idx === index ? nextContract : item);
+    const result = await saveContractsDataset(nextContracts, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'contracts-api')
+    });
+    return sendSuccess(res, { contract: nextContract, written: result.written }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'contract update failed', {}, 500);
+  }
+});
+
+app.post('/api/contracts/:id/attachments', async (req, res) => {
+  try {
+    const contractId = String(req.params.id || '').trim();
+    const attachment = buildContractAttachmentForApi(req.body?.attachment || req.body);
+    const contracts = await getContractsDataset();
+    const index = contracts.findIndex((item) => String(item?.id || '') === contractId);
+    if (index < 0) return sendFail(res, ERROR_CODES.PARAM_ERROR, 'Contract not found', {}, 404);
+
+    const attachments = Array.isArray(contracts[index]?.attachments) ? contracts[index].attachments : [];
+    const nextContract = {
+      ...contracts[index],
+      attachments: attachments.some((item) => item.id === attachment.id) ? attachments : [...attachments, attachment]
+    };
+    const nextContracts = contracts.map((item, idx) => idx === index ? nextContract : item);
+    const result = await saveContractsDataset(nextContracts, {
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'contracts-api')
+    });
+    return sendSuccess(res, { contract: nextContract, attachment, written: result.written }, 'success', ERROR_CODES.SUCCESS, 201);
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'contract attachment failed', {}, 500);
+  }
+});
+
+app.post('/api/contracts/transaction', async (req, res) => {
+  try {
+    const datasets = getContractTransactionDatasets(req.body || {});
+    const keys = Object.keys(datasets);
+    if (!Array.isArray(datasets[CONTRACTS_DATASET_KEY])) {
+      return sendFail(res, ERROR_CODES.PARAM_ERROR, 'contracts_v8 array is required', {}, 400);
+    }
+    if (keys.length === 0) {
+      return sendFail(res, ERROR_CODES.PARAM_ERROR, 'no supported contract transaction datasets', {}, 400);
+    }
+
+    const contractId = normalizePublicLeadText(req.body?.contractId, 120);
+    const contract = contractId
+      ? datasets[CONTRACTS_DATASET_KEY].find((item) => String(item?.id || '') === contractId)
+      : null;
+    if (contractId && !contract) {
+      return sendFail(res, ERROR_CODES.PARAM_ERROR, 'contractId not found in contracts_v8', {}, 400);
+    }
+
+    const result = await upsertStateBatch(datasets, {
+      source: 'contracts-transaction-api',
+      actorUserId: req.authUser?.id || '',
+      clientId: String(req.body?.clientId || ''),
+      appVersion: String(req.body?.appVersion || 'contracts-transaction-api')
+    });
+
+    return sendSuccess(res, {
+      written: result.written,
+      keys,
+      contract: contract || null
+    }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'contract transaction failed', {}, 500);
+  }
+});
+
+app.post('/api/public/website-leads', async (req, res) => {
+  try {
+    if (!PUBLIC_LEAD_ENABLED) {
+      return sendFail(res, ERROR_CODES.NOT_FOUND, 'public lead intake is not enabled', {}, 404);
+    }
+    if (PUBLIC_LEAD_TOKEN) {
+      const token = getPublicLeadToken(req);
+      if (!token || !safeTokenEqual(token, PUBLIC_LEAD_TOKEN)) {
+        return sendFail(res, ERROR_CODES.NO_PERMISSION, 'invalid public lead token', {}, 403);
+      }
+    }
+    if (String(req.body?.website || req.body?.homepage || '').trim()) {
+      return sendSuccess(res, { accepted: true, ignored: true }, 'success');
+    }
+
+    const company = normalizePublicLeadText(req.body?.company || req.body?.companyName, 120);
+    const name = normalizePublicLeadText(req.body?.contactName || req.body?.name, 80);
+    const mobile = normalizePublicLeadText(req.body?.mobile || req.body?.phone || req.body?.tel, 40);
+    if (!company || !name) {
+      return sendFail(res, ERROR_CODES.PARAM_ERROR, 'company and contactName are required', {}, 400);
+    }
+
+    const state = await getStateBatch(['leads_v8']);
+    const currentLeads = Array.isArray(state?.datasets?.leads_v8) ? state.datasets.leads_v8 : [];
+    const duplicate = findDuplicateWebsiteLead(currentLeads, { company, mobile, name });
+    const nextLead = buildWebsiteLeadRecord(req.body || {}, duplicate);
+    const nextLeads = duplicate
+      ? currentLeads.map((lead) => lead.id === duplicate.id ? nextLead : lead)
+      : [nextLead, ...currentLeads];
+
+    const result = await upsertStateBatch(
+      { leads_v8: nextLeads },
+      {
+        source: 'official-website',
+        actorUserId: 'PUBLIC_WEBSITE',
+        clientId: normalizePublicLeadText(req.body?.clientId, 80),
+        appVersion: 'website-lead-intake'
+      }
+    );
+
+    return sendSuccess(
+      res,
+      {
+        accepted: true,
+        created: !duplicate,
+        leadId: nextLead.id,
+        written: result.written
+      },
+      'success',
+      ERROR_CODES.SUCCESS,
+      duplicate ? 200 : 201
+    );
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'website lead intake failed', {}, 500);
+  }
 });
 
 app.post('/api/state/sync', async (req, res) => {
@@ -2710,11 +4875,11 @@ const scheduleIntelJob = () => {
   // Default: run before 09:00 to ensure morning briefing is ready for workday.
   const hour = Number(process.env.INTEL_CRON_HOUR || 8);
   const minute = Number(process.env.INTEL_CRON_MINUTE || 55);
-  const defaultRegions = String(process.env.INTEL_REGIONS || '温州,苍南,平阳,龙港')
+  const defaultRegions = String(process.env.INTEL_REGIONS || FOCUSED_INTEL_REGIONS.join(','))
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  const defaultIndustries = String(process.env.INTEL_INDUSTRIES || '塑料编织制品制造业,食包,药材,印刷,食品,餐饮')
+  const defaultIndustries = String(process.env.INTEL_INDUSTRIES || FOCUSED_INTEL_INDUSTRIES.join(','))
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
@@ -2748,29 +4913,65 @@ const scheduleIntelJob = () => {
 
 const startServer = async () => {
   let stateHealth = null;
+  let authHealth = null;
   try {
     stateHealth = await initStateStore();
   } catch (error) {
+    if (REQUIRE_POSTGRES) {
+      console.error('[StateStore] 初始化失败（XINYI_REQUIRE_POSTGRES=true），服务启动已中止', error?.message || error);
+      process.exitCode = 1;
+      return;
+    }
     console.error('[StateStore] 初始化失败，将继续以降级模式启动', error?.message || error);
+  }
+
+  if (REQUIRE_POSTGRES && stateHealth?.mode !== 'postgres') {
+    console.error(`[StateStore] 当前模式为 ${stateHealth?.mode || 'unknown'}，但 XINYI_REQUIRE_POSTGRES=true，服务启动已中止`);
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    authHealth = await initAuthStore();
+  } catch (error) {
+    if (REQUIRE_AUTH_POSTGRES) {
+      console.error('[AuthStore] 初始化失败（XINYI_AUTH_REQUIRE_POSTGRES=true），服务启动已中止', error?.message || error);
+      process.exitCode = 1;
+      return;
+    }
+    console.error('[AuthStore] 初始化失败，将继续以降级模式启动', error?.message || error);
+  }
+
+  if (REQUIRE_AUTH_POSTGRES && authHealth?.mode !== 'postgres') {
+    console.error(`[AuthStore] 当前模式为 ${authHealth?.mode || 'unknown'}，但 XINYI_AUTH_REQUIRE_POSTGRES=true，服务启动已中止`);
+    process.exitCode = 1;
+    return;
   }
 
   app.listen(port, () => {
     const stateMode = stateHealth?.mode || 'unknown';
     const stateReason = stateHealth?.reason || 'n/a';
+    const authMode = authHealth?.mode || 'unknown';
+    const authReason = authHealth?.reason || 'n/a';
     const providerInfo = API_KEY
       ? `Kimi (${DEFAULT_MODEL})${GEMINI_API_KEY ? ` -> Gemini (${GEMINI_DEFAULT_MODEL})` : ''}`
       : `Gemini (${GEMINI_DEFAULT_MODEL})`;
-    console.log(`\n🚀 后端服务已启动！\n👉 API 地址: http://localhost:${port}\n👉 AI Provider: ${providerInfo}\n👉 StateStore: ${stateMode} (${stateReason})\n👉 请新开一个终端运行前端页面。`);
+    console.log(`\n🚀 后端服务已启动！\n👉 API 地址: http://localhost:${port}\n👉 AI Provider: ${providerInfo}\n👉 StateStore: ${stateMode} (${stateReason})\n👉 AuthStore: ${authMode} (${authReason})\n👉 请新开一个终端运行前端页面。`);
     scheduleIntelJob();
   });
 };
 
-if (process.env.VERCEL) {
-  // Vercel Serverless Environment
-  // Do not listen to port, just export the app
-  initStateStore().catch(console.error);
-  module.exports = app;
-} else {
-  // Local Environment
+const createApp = () => app;
+
+if (require.main === module) {
+  // Local CLI execution: node server/app.js
   startServer();
+} else if (process.env.VERCEL) {
+  // Vercel Serverless Environment: pre-warm store connection
+  initStateStore().catch(console.error);
+  initAuthStore().catch(console.error);
 }
+
+module.exports = app;
+module.exports.createApp = createApp;
+module.exports.startServer = startServer;

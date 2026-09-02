@@ -11,7 +11,24 @@ export enum Status {
 }
 
 // 一、身份角色定义
-export type RoleID = 'ADMIN' | 'MANAGER' | 'CONSULTANT' | 'FINANCE';
+/**
+ * 权限模板。角色 ≠ 岗位：岗位放 positionTags，例外权限用 extraActions 委派。
+ * SYS_ADMIN 是技术管理员，与业务最高权限 ADMIN 分开，便于将来收紧业务可见范围。
+ */
+export type RoleID = 'ADMIN' | 'SYS_ADMIN' | 'MANAGER' | 'SALES' | 'CONSULTANT' | 'FINANCE';
+
+/**
+ * 系统管理员权限模式。
+ * full   —— 技术 + 业务全权（系统稳定运行前使用）
+ * limited —— 技术全权 + 业务只读，改业务数据需临时提权
+ */
+export type SysAdminMode = 'full' | 'limited';
+
+/** 客户/线索可见范围策略（公司级，由老板设置） */
+export type CustomerVisibilityPolicy =
+  | 'all'        // 全员可见
+  | 'dedupe'     // 可查重：能搜到「已由某某跟进」，看不到联系方式与跟进记录
+  | 'owner';     // 仅负责人可见
 export type DashboardPersona = 'boss' | 'sales' | 'consultant' | 'finance';
 
 export interface Role {
@@ -38,6 +55,12 @@ export interface UserProfile {
   positionTags?: string[];
   reportsToUserId?: string;
   wechatBinding?: WeChatBinding;
+  /** 在角色默认能力之外额外授予的动作（行政代管账号、顾问续签合同等场景） */
+  extraActions?: ActionCode[];
+  /** 显式撤销的动作，优先级高于角色默认与 extraActions */
+  deniedActions?: ActionCode[];
+  /** 账号有效期（YYYY-MM-DD）。留空表示永久有效，用于长期兼职/亲属 */
+  accountExpiresAt?: string;
 }
 
 export type NotificationChannel = 'system' | 'wechat' | 'email' | 'sms';
@@ -56,11 +79,59 @@ export interface WeChatBinding {
 }
 
 // 二、任务原子化协议
+/**
+ * 任务跳过原因。界面上一律显示中文，不出现英文码。
+ * 取值来自真实业务场景，改这里要和业务方确认。
+ */
+export type TaskSkipReason =
+  | 'CustomerHandled'
+  | 'CustomerDropped'
+  | 'StandardChanged'
+  | 'DeferredToRenewal'
+  | 'LegacyBackfill'
+  | 'Other';
+
+export const TASK_SKIP_REASON_LABEL: Record<TaskSkipReason, string> = {
+  CustomerHandled: '客户自行处理',
+  CustomerDropped: '客户放弃该体系',
+  StandardChanged: '标准变更，不需要此步骤',
+  DeferredToRenewal: '顺延到续期项目',
+  /*
+    系统上线前就做完的活。
+
+    这批项目是真做过的，但当时没在系统里记过程，
+    补录时**不能直接标成"已完成"**——那等于凭空造出一条
+    "某人某天勾了这个任务"的执行记录，而实际没人勾过。
+
+    标成跳过 + 这个原因，说的是实话：活干了，过程记录没有。
+    将来查"这个项目当时谁做的第几步"，看到的是"无过程记录"，
+    而不是一条看起来煞有介事却查无此人的记录。
+  */
+  LegacyBackfill: '系统上线前完成，无过程记录',
+  Other: '其他',
+};
+
 export interface ProjectTask {
   id: string;
   title: string;
   deadline: string;
-  status: 'Pending' | 'Completed';
+  /**
+   * 任务状态。'Skipped'（已跳过）是刻意加的第三态。
+   *
+   * 为什么不强制「任务全完成才能完结项目」：
+   * 强制不会让人做事，只会让人假打勾——空着至少还知道没做，假勾了你以为做了。
+   * 现实中也确实存在客户自行处理、客户放弃该体系、标准变更等情况。
+   * 所以改成「不强制完成，但强制交代」：跳过必须填原因。
+   */
+  status: 'Pending' | 'Completed' | 'Skipped';
+  /**
+   * 跳过原因（status='Skipped' 时必填）。
+   * 结构化枚举而不是自由文本——攒起来才能回答
+   * 「哪个任务在 80% 的项目里都被跳过」，那是精简任务模板的唯一真实依据。
+   */
+  skipReason?: TaskSkipReason;
+  /** 选「其他」时的补充说明 */
+  skipNote?: string;
   priority: 'High' | 'Medium' | 'Low';
   category: 'Core' | 'Auxiliary' | 'System' | 'ThirdParty'; // 区分核心与辅助任务用于计算进度
   owner: string;
@@ -143,6 +214,8 @@ export interface FollowUpRecord {
 
 export interface Lead {
   id: string;
+  /** 归属销售的用户 ID。判断「我的线索」以它为准，姓名只作显示 */
+  ownerUserId?: string;
   name: string;
   company: string;
   status: Status;
@@ -222,6 +295,17 @@ export interface Receivable {
   dueDate: string;
   status: 'paid' | 'unpaid' | 'overdue';
   rejectionReason?: string;
+  /**
+   * 销售报备"客户已付款，请财务核对"。
+   * 这不是到账确认——确认到账始终只有财务能做（PAYMENT_CONFIRM）。
+   * 记录报备人和时间，责任链清楚：销售报信、财务确认。
+   */
+  paymentClaim?: {
+    claimedBy: string;
+    claimedByUserId: string;
+    claimedAt: string;
+    note?: string;
+  };
 }
 
 export interface ContractAttachment {
@@ -363,6 +447,8 @@ export interface SettlementConfig {
 export interface Project {
   id: string;
   customerId?: string; // 关联客户ID (最终必须存在)
+  /** 负责人的用户 ID。判断「我的项目」与数据权限以它为准，manager 只作显示 */
+  ownerUserId?: string;
   name: string;
   contractRef: string;
   sourceType?: ProjectSourceType; // 新增：项目来源类型（兼容字段，不替换旧逻辑）
@@ -409,16 +495,83 @@ export interface Project {
       firstServiceDate?: string;
       lastServiceDate?: string;
       serviceCount?: number;
+      cooperationCount?: number;
+      lastProjectAt?: string;
+      lastProjectType?: string;
+      nextOpportunity?: string;
+      totalAmount?: number;
+      yearAmount?: number;
+      level?: 'A' | 'B' | 'C';
     };
   };
 }
 
-export type AIActionType = 'ADD_REMINDER' | 'UPDATE_RISK' | 'SUGGEST_TASK' | 'UPDATE_STATUS' | 'CREATE_CONTRACT';
+/*
+  AI 可以提案的动作。
+
+  后三个是 2026-09-01 补的**高风险动作**——它们的共同点不是「重要」，
+  是「做错了很难发现、发现了很难回退」：
+    · CONFIRM_RECEIVABLE 确认到账不可撤销，还会触发项目付款状态和客户分级
+    · COMPLETE_PROJECT   一口气写七八处（评级、分级、PDCA、提醒、结算草稿）
+    · CREATE_CONTRACT    金额是提成和业绩的基数，AI 读错小数点就全错
+
+  它们**只能提案，不能直接执行**——见 AIChatWidget 的分流。
+  区别不在动作本身有多危险，在**这个动作是谁决定的**：
+  人自己点按钮是他的判断；AI 从一句话推断出要动哪一笔，中间隔着一层猜测。
+*/
+export type AIActionType =
+  | 'ADD_REMINDER' | 'UPDATE_RISK' | 'SUGGEST_TASK' | 'UPDATE_STATUS'
+  | 'CREATE_CONTRACT' | 'CONFIRM_RECEIVABLE' | 'COMPLETE_PROJECT';
 
 export interface AIAction {
   type: AIActionType;
   payload: any;
   reason: string;
+}
+
+/**
+ * AI 提案：AI 起草的一个动作，等人确认后才生效（待确认队列）。
+ *
+ * 为什么必须有这层：原来 AI 诊断出的高优先级动作是**直接自动执行**的
+ * （AppContext 里 `executeAIAction` 无条件调用），人不知道 AI 改了什么；
+ * 而其余动作压根不执行，只在页面上展示。两头都错——
+ * 该受监督的偷偷做了，该产生价值的只是摆着看。
+ *
+ * 收口成一条管道后：AI 一律只提案，人一键批准/驳回，执行只发生在批准之后。
+ * 这样 AI 从「填表工具」变成「受监督的助手」，能力可以放开而不失控。
+ */
+export type AIProposalStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+
+export type AIProposalSource =
+  | 'project_diagnosis'    // 项目诊断
+  | 'audit_remediation'    // 不符合项整改方案
+  | 'lead_scoring'         // 线索评分与排序
+  | 'task_template'        // 任务模板精简建议
+  | 'doc_draft'            // 体系文件起草
+  | 'chat_high_risk';      // AI 对话框里推断出的高风险动作（2026-09-01）
+
+export interface AIProposal {
+  id: string;
+  createdAt: string;
+  source: AIProposalSource;
+  /** 关联对象 id（项目/不符合项/线索…），配合 source 定位 */
+  sourceRef: string;
+  /** 给人看的一句话，队列里就显示这个 */
+  title: string;
+  /** 可执行动作，批准后由 executeAIAction 落地 */
+  action: AIAction;
+  /** AI 为什么这么建议——人要据此判断，不能只给结论 */
+  reason: string;
+  confidence?: 'high' | 'medium' | 'low';
+  status: AIProposalStatus;
+  decidedBy?: string;
+  decidedAt?: string;
+  /**
+   * 驳回原因。和任务的「跳过原因」是同一个道理：
+   * 它记录了 AI 哪里想错了，是让 AI 变准的唯一真实依据，
+   * 攒起来比任何通用模型调优都管用。
+   */
+  rejectReason?: string;
 }
 
 export interface AIDecisionLog {
@@ -505,6 +658,39 @@ export interface KnowledgeDoc {
   autoGenerated?: boolean;
   accessRoles?: RoleID[]; // empty/undefined => all roles
   accessUserIds?: string[]; // explicit allowlist
+
+  /* ── 检索维度（2026-08-24 新增，全部可选，不影响存量文档）──────────
+     为什么加这几个而不是做文件夹式分类：
+     一份《平阳油茶合作社 SC 认证复盘》同时属于「农业」「SC 标准」
+     「客户复盘」「我们的经验」「2026 年」——放进任何**一个**文件夹都是错的。
+     多维标签才能让「食品厂做 SC 要注意什么」这种问法检索得准。 */
+
+  /** 行业。信义按行业做认证，塑编厂和食品厂的经验不能混着给 */
+  industry?: string;
+  /** 涉及的标准/体系，如 ['ISO 9001', 'SC']。业务上最有区分度的维度 */
+  standards?: string[];
+
+  /**
+   * 可信层级。**AI 引用时必须区分**，这是最要紧的一个字段。
+   *
+   *   official       标准原文、官方文件 —— 可以直接照着答
+   *   ourExperience  我们做过的项目总结 —— 是经验不是规定，要说明「据我们以往经验」
+   *   aiDraft        AI 生成还没人审 —— 只能当草稿提示，不能当依据
+   *
+   * 不分层的后果：AI 把一份没人审过的 AI 草稿当成公司规定答给客户。
+   * 越是"记得清楚"的 AI，说错时越有说服力。
+   */
+  trustLevel?: 'official' | 'ourExperience' | 'aiDraft';
+
+  /**
+   * 失效日期。标准会改版（ISO 9001:2015 之后还会有新版），
+   * **过期的知识比没有知识更危险**——它看起来仍然权威。
+   * 到期后检索时降权并提示"这份依据可能已过期"。
+   */
+  validUntil?: string;
+  /** 上次人工复核的时间与复核人。长期没人看过的经验要标出来 */
+  reviewedAt?: string;
+  reviewedBy?: string;
 }
 
 export type MarketSignalKind = 'policy' | 'industry' | 'company' | 'tender' | 'standard' | 'event';
@@ -566,6 +752,7 @@ export interface StrategicTask {
 
 // 1. 动作代码定义 (Action Codes)
 export type ActionCode = 
+  | 'PROJECT_VIEW'
   | 'PROJECT_CREATE'
   | 'PROJECT_EDIT_INFO'
   | 'PROJECT_ASSIGN_MANAGER'
@@ -573,11 +760,60 @@ export type ActionCode =
   | 'TASK_CREATE'
   | 'TASK_COMPLETE'
   | 'TASK_DELETE'
+  | 'LEAD_CREATE'          // 新建/导入线索
+  | 'SETTLEMENT_MANAGE'    // 生成、调整、发放结算（与只读的 SETTLEMENT_VIEW 分开）
+  | 'KNOWLEDGE_WRITE'      // 写入知识中心
+  | 'REMINDER_WRITE'       // 创建/修改提醒
+  /** 运行项目 AI 诊断。原来写死成 ['ADMIN','SYS_ADMIN','MANAGER'] 数组，
+   *  绕过权限矩阵——体检脚本查不到，改角色定义也不会同步。 */
+  | 'PROJECT_AI_DIAGNOSE'
+  /** 系统自检与自愈（`/api/admin/diagnose`）。**和 PROJECT_AI_DIAGNOSE 不是一回事**：
+   *  那个是「诊断某个项目的交付风险」，属于业务动作，总助也该有；
+   *  这个是「检查整套系统是否健康、并自动修复配置」，属于运维动作。
+   *
+   *  2026-08-31 补。原来 AI 对话框的 diagnose 动作被错映射到 PROJECT_AI_DIAGNOSE，
+   *  于是前端放行总助、而服务端 `/api/admin/diagnose` 只认 ADMIN——
+   *  总助会撞上一个看起来像 bug 的 403。两边现在用同一个动作码。 */
+  | 'SYSTEM_DIAGNOSE'
+  /** 删除**别人**的工作日志（删自己的不需要此权限）。
+   *  工作日志是现场第一手记录，属于最值钱的沉淀数据，删除权必须进矩阵。 */
+  | 'WORKLOG_DELETE_ANY'
   | 'CONTRACT_CREATE'
   | 'CONTRACT_VIEW_AMOUNT'
   | 'PAYMENT_CONFIRM'
+  /** 查看结算/提成金额。刻意与 CONTRACT_VIEW_AMOUNT 分开：
+   *  销售必须看得到自己谈的合同金额，但不该看到别人的提成。 */
+  | 'SETTLEMENT_VIEW'
   | 'CUSTOMER_CREATE'
-  | 'LEAD_CONVERT';
+  | 'LEAD_CONVERT'
+  /* ── 修改类动作 ──────────────────────────────────────────────
+     2026-08-21 补。之前只有 *_CREATE 没有 *_EDIT，
+     导致「销售可以看全部客户，但只能修改自己的」这条规矩
+     **没有动作码可挂**——建了角色也管不住修改行为。
+     授权判定按后缀识别读写方向（见 authorize.js 的 WRITE_ACTION），
+     所以命名必须保持 _EDIT 后缀。 */
+  | 'CUSTOMER_EDIT'
+  | 'LEAD_EDIT'
+  | 'CONTRACT_EDIT'
+  /* ── 归属动作 ────────────────────────────────────────────────
+     两种归属机制，业务方 2026-08-21 定：
+       线索  → 认领（LEAD_CLAIM）：无主线索谁跟进谁认领，改的瞬间归到他名下。
+               455 条无主线索靠人工指派不现实，让归属在日常干活中自然长出来。
+       合同/项目 → 指派（*_ASSIGN_OWNER）：必须由管理者显式指定负责人，
+               不能自认领——合同和项目牵扯金额与交付责任，认领等于自己给自己派活。
+     PROJECT_ASSIGN_MANAGER 已存在（指派项目经理），
+     PROJECT_ASSIGN_OWNER 是另一件事（指派归属人，决定谁能改），不要合并。 */
+  | 'LEAD_CLAIM'
+  | 'LEAD_ASSIGN_OWNER'
+  | 'CONTRACT_ASSIGN_OWNER'
+  | 'PROJECT_ASSIGN_OWNER'
+  | 'EMPLOYEE_VIEW'
+  | 'EMPLOYEE_CREATE'
+  | 'EMPLOYEE_UPDATE'
+  | 'EMPLOYEE_UPDATE_ROLE'
+  | 'EMPLOYEE_DISABLE'
+  | 'EMPLOYEE_RESET_PASSWORD'
+  | 'AUTH_AUDIT_VIEW';
 
 // 2. AI 可调用指令白名单 (AI Allowed Actions)
 export type AIAllowedAction = 
@@ -590,9 +826,27 @@ export type AIAllowedAction =
   | 'CREATE_CONTRACT';    // -> CONTRACT_CREATE
 
 // 3. 角色能力表结构
+export type DataScope = 'ALL' | 'DEPARTMENT' | 'OWN' | 'NONE';
+
 export interface RoleCapability {
   actions: ActionCode[]; // 该角色拥有的动作代码列表
-  dataScope: 'ALL' | 'DEPARTMENT' | 'OWN' | 'NONE'; // 数据范围
+  /**
+   * @deprecated 用 readScope / writeScope 替代。保留是为了不破坏旧代码。
+   *
+   * 单一 dataScope 表达不了真实业务：
+   * 「销售可以看全部客户，但只能修改自己的」——读是 ALL、写是 OWN，
+   * 一个字段说不清。2026-08-20 业务方确认后拆开。
+   */
+  dataScope: DataScope;
+  /** 能看到哪些数据 */
+  readScope: DataScope;
+  /** 能修改哪些数据。永远不宽于 readScope——改不了自己看不见的东西 */
+  writeScope: DataScope;
+  /**
+   * 单次操作的金额上限（分）。超过则拒绝。
+   * 不设表示不限。用于「销售只能确认 5 万以下回款」这类约束。
+   */
+  maxAmountFen?: number;
 }
 
 // --- Raw Data Layer ---

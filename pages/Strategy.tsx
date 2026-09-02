@@ -16,11 +16,14 @@ import {
   Circle,
   Plus,
   Trash2,
-  MoreHorizontal
+  MoreHorizontal,
+  CalendarCheck
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { StrategicTask } from '../types';
 import { useLocation } from 'react-router-dom';
+import MonthlyReview from '../components/MonthlyReview';
+import { MonthlyAction } from '../src/modules/review/normalize';
 
 // Fix: Component defined outside to prevent re-renders
 // Explicitly using React.FC to ensure key prop is handled correctly by TS
@@ -96,7 +99,15 @@ const TaskCard: React.FC<{ task: StrategicTask }> = ({ task }) => {
 
 const Strategy = () => {
   const { strategicInsight, isAnalyzingStrategy, runDeepAnalysis, strategicTasks, addStrategicTask, generateStrategicTasksFromInsight } = useApp();
-  const [activeTab, setActiveTab] = useState<'analysis' | 'execution'>('analysis');
+  /*
+    默认落在「本月经营判断」，不是 SWOT。
+
+    SWOT/BCG 那套上线至今**一次都没被用过**（战略洞察为空、战略任务 0 条）——
+    它是给大企业做年度规划的框架，对一家 200-400 单/年的公司只会输出
+    「优势：本地化服务」这类正确但不指向动作的话。
+    把真正能用的东西放在默认位置，是这次改动的重点，不是顺手调的顺序。
+  */
+  const [activeTab, setActiveTab] = useState<'review' | 'analysis' | 'execution'>('review');
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [dashboardFocusLabel, setDashboardFocusLabel] = useState('');
   const [focusedStatus, setFocusedStatus] = useState<'Pending' | 'In Progress' | 'Completed' | ''>('');
@@ -109,10 +120,12 @@ const Strategy = () => {
       opportunities: strategicInsight.swot?.opportunities?.map((s: any) => s.content || s) || [],
       threats: strategicInsight.swot?.threats?.map((s: any) => s.content || s) || [],
   } : {
-    strengths: ['拥有行业领先的 ISO 认证专家团队', '自研 AI 辅助系统降低 30% 人力成本', '客户续费率保持在 85% 以上'],
-    weaknesses: ['新行业（如新能源）案例积累不足', '部分偏远地区交付依赖第三方', '品牌知名度在华南地区较弱'],
-    opportunities: ['国家大力推行 ESG 与绿色制造标准', '中小企业数字化转型带来的合规需求', '“出海”企业对国际认证的爆发式增长'],
-    threats: ['低价竞争对手扰乱市场价格体系', '政策法规变动可能导致旧业务萎缩', '头部机构开始下沉抢占中小客户'],
+    // 未跑 AI 推演时的样例，仅用于演示布局。标题处会显式标注"示例内容"，
+    // 避免被当成基于真实业务数据的结论。
+    strengths: ['（示例）拥有行业领先的 ISO 认证专家团队', '（示例）自研 AI 辅助系统降低 30% 人力成本', '（示例）客户续费率保持在 85% 以上'],
+    weaknesses: ['（示例）新行业（如新能源）案例积累不足', '（示例）部分偏远地区交付依赖第三方', '（示例）品牌知名度在华南地区较弱'],
+    opportunities: ['（示例）国家大力推行 ESG 与绿色制造标准', '（示例）中小企业数字化转型带来的合规需求', '（示例）"出海"企业对国际认证的爆发式增长'],
+    threats: ['（示例）低价竞争对手扰乱市场价格体系', '（示例）政策法规变动可能导致旧业务萎缩', '（示例）头部机构开始下沉抢占中小客户'],
   };
 
   const bcgData = strategicInsight ? [
@@ -136,11 +149,38 @@ const Strategy = () => {
           priority: 'Medium',
           owner: '待定',
           status: 'Pending',
-          deadline: '2025-12-31',
+          /*
+            截止日默认为 30 天后，不能写死日期。
+
+            原来写死 '2025-12-31'——而今天是 2026 年，
+            **新建的战略任务一出生就是逾期的**，直接进逾期统计。
+            写死的日期不会报错，只会随时间悄悄变成过期数据。
+          */
+          deadline: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10),
           impact: '待评估',
           type: 'Market'
       });
       setNewTaskTitle('');
+  };
+
+  /*
+    把一条 AI 建议收成战役。
+
+    **依据要一起带过来**（写进 impact）。只存标题的话，
+    过两周回头看这条战役，谁也说不清当初是哪个数字让它进来的——
+    那时它和拍脑袋定的目标就没区别了。
+  */
+  const adoptMonthlyAction = (action: MonthlyAction) => {
+      addStrategicTask({
+          id: `ST-${Date.now()}`,
+          title: action.title,
+          priority: action.urgency === 'high' ? 'High' : action.urgency === 'low' ? 'Low' : 'Medium',
+          owner: '待定',
+          status: 'Pending',
+          deadline: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10),
+          impact: action.why,
+          type: 'Operation'
+      });
   };
 
   useEffect(() => {
@@ -148,7 +188,11 @@ const Strategy = () => {
       const focus = state.dashboardFocus;
       const tabQuery = String(new URLSearchParams(location.search).get('tab') || '').trim();
 
-      if (focus?.type === 'analysis' || tabQuery === 'analysis') {
+      if (focus?.type === 'review' || tabQuery === 'review') {
+          setActiveTab('review');
+          setFocusedStatus('');
+          setDashboardFocusLabel('本月经营判断');
+      } else if (focus?.type === 'analysis' || tabQuery === 'analysis') {
           setActiveTab('analysis');
           setFocusedStatus('');
           setDashboardFocusLabel('战略分析视图');
@@ -196,7 +240,7 @@ const Strategy = () => {
                 className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center shadow-sm transition-all active:scale-95 ${isAnalyzingStrategy ? 'bg-indigo-50 text-indigo-400 cursor-wait' : 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:shadow-lg'}`}
               >
                 {isAnalyzingStrategy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                {isAnalyzingStrategy ? 'AI 全局推演中...' : '启动 Kimi 深度战略推演'}
+                {isAnalyzingStrategy ? 'AI 全局推演中...' : '启动深度战略推演'}
               </button>
           )}
           {activeTab === 'execution' && (
@@ -209,6 +253,13 @@ const Strategy = () => {
                 {isAnalyzingStrategy ? '正在拆解战役...' : 'AI 自动生成必赢战役'}
               </button>
           )}
+          <button
+            onClick={() => setActiveTab('review')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center ${activeTab === 'review' ? 'bg-gray-800 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}
+          >
+            <CalendarCheck className="w-4 h-4 mr-2" />
+            本月经营判断
+          </button>
           <button
             onClick={() => setActiveTab('analysis')}
             className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center ${activeTab === 'analysis' ? 'bg-gray-800 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}
@@ -243,6 +294,8 @@ const Strategy = () => {
         </div>
       )}
 
+      {activeTab === 'review' && <MonthlyReview onAdopt={adoptMonthlyAction} />}
+
       {/* Main Analysis Content */}
       {activeTab === 'analysis' && (
         <div className="space-y-6">
@@ -268,7 +321,9 @@ const Strategy = () => {
                 <Target className="w-5 h-5 mr-2 text-blue-600" />
                 SWOT 分析矩阵 {isAnalyzingStrategy && <Loader2 className="w-4 h-4 ml-2 animate-spin text-gray-400"/>}
               </h3>
-              <span className="text-xs text-gray-400">数据源: 全量业务系统 (序列化快照)</span>
+              <span className={`text-xs font-bold px-2 py-1 rounded-full border ${strategicInsight ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
+                {strategicInsight ? '数据源：全量业务系统（AI 推演结果）' : '示例内容 · 点右上角「启动深度战略推演」生成真实分析'}
+              </span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100">
               <div className="p-6 bg-blue-50/30">
