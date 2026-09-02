@@ -32,6 +32,7 @@ const batch1Router = require('./routes/batch1');
 const batch2Router = require('./routes/batch2');
 const batch3Router = require('./routes/batch3');
 const batch4Router = require('./routes/batch4');
+const batch5Router = require('./routes/batch5');
 const knowledgeRouter = require('./routes/knowledge');
 const remindersRouter = require('./routes/reminders');
 const uploadsRouter = require('./routes/uploads');
@@ -99,7 +100,9 @@ const isProtectedApiPath = (pathname) => (
     凡是用 requireSessionRoles 的路由，前缀都必须在这个名单里。
     tests/protected-api-paths.test.js 会守住这条规则。
   */
-  pathname.startsWith('/api/review')
+  pathname.startsWith('/api/review') ||
+  pathname.startsWith('/api/work-logs') ||
+  pathname.startsWith('/api/task-templates')
 );
 
 const readCookie = (cookieHeader, key) => {
@@ -365,6 +368,7 @@ app.use(batch1Router);
 app.use(batch2Router);
 app.use(batch3Router);
 app.use(batch4Router);
+app.use(batch5Router);
 app.use(knowledgeRouter);
 app.use(remindersRouter);
 app.use(uploadsRouter);

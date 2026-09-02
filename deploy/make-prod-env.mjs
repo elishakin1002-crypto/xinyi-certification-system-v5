@@ -61,6 +61,21 @@ const PROD = {
   */
   VITE_SYS_ADMIN_MODE: 'full',
 
+  /*
+    工作日志 / 任务模板 / 不符合项 走服务端读写（2026-09-02 补）。
+
+    在此之前这三份数据只在各人浏览器的 localStorage 里，
+    取不到还会退回代码里的 MOCK 假数据，然后整份推回服务器 ——
+    一台空浏览器就能用假数据覆盖真数据，而且不报错。
+
+    **这三个开关必须开着**：关掉就退回本地副本模式，
+    多人同时用时会互相覆盖。
+  */
+  VITE_BATCH5_API_ENABLED: '1',
+  VITE_BATCH5_API_READ_ENABLED: '1',
+  VITE_AUDIT_API_ENABLED: '1',
+  VITE_AUDIT_API_READ_ENABLED: '1',
+
   VITE_AI_BACKEND_URL: '/api/ai',
   CORS_ALLOWED_ORIGINS: 'http://124.223.209.102',
   API_JSON_LIMIT: '25mb',

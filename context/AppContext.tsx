@@ -15,6 +15,7 @@ import { projectService, type ProjectTransactionDatasets } from '../services/pro
 import { signalService } from '../services/signalService';
 import { knowledgeService } from '../services/knowledgeService';
 import { settlementService } from '../services/settlementService';
+import { workLogService, taskTemplateService, auditIssueService } from '../services/batch5Service';
 import { reminderService } from '../services/reminderService';
 import { authService } from '../services/authService';
 import { serializeWorldState } from '../services/dataSerializer';
@@ -289,6 +290,29 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
   const [strategicTasks, setStrategicTasks] = useState<StrategicTask[]>(() => dataService.get('strategic_tasks_v1', dataService.get('strategicTasks_v1', [])));
   const [backendReadReadyUserId, setBackendReadReadyUserId] = useState<string>('');
   const wechatPushAttemptedIdsRef = React.useRef<Set<string> | null>(null);
+
+  /*
+    ── 记下哪些数据集是**真的从服务端加载过**的 ──────────────────
+
+    整份状态同步以前是无差别推送 18 个数据集：不管这个浏览器手里那份
+    是从服务端拿的、从 localStorage 翻出来的、还是代码里的 MOCK 假数据，
+    一律整份写回服务器。
+
+    后果在 2026-09-02 的线上现场看得很清楚：
+      project_work_logs_v1   推上来 0 条    而表里有 47 行
+    浏览器根本没加载过工作日志（那时还没有读接口），
+    却理直气壮地用一个空数组去覆盖别人的数据。
+    只因为「空数组不删表」那条保护才没酿成事故。
+
+    规则改成：**没从服务端加载过的数据集，没资格覆盖服务端。**
+    这条比「加版本号」简单得多，而且堵死的是同一类问题的根 ——
+    问题从来不是「两份都是真数据，该听谁的」，
+    而是「一份是真的，另一份根本不知道自己在说什么」。
+  */
+  const hydratedDatasetsRef = React.useRef<Set<string>>(new Set());
+  const markHydrated = React.useCallback((key: string) => {
+    hydratedDatasetsRef.current.add(key);
+  }, []);
   void demoSeedVersion;
 
   const [userProfiles, setUserProfiles] = useState<UserProfile[]>(() => {
@@ -436,6 +460,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         const apiLeads = await leadService.listLeads();
         if (cancelled) return;
         setLeads(apiLeads);
+        markHydrated('leads_v8');
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.warn('[LeadService] read failed, fallback to local leads', msg);
@@ -455,6 +480,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         const apiCustomers = await customerService.listCustomers();
         if (cancelled) return;
         setCustomers(apiCustomers);
+        markHydrated('customers_v8');
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.warn('[CustomerService] read failed, fallback to local customers', msg);
@@ -474,6 +500,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         const apiContracts = await contractService.listContracts();
         if (cancelled) return;
         setContracts(apiContracts);
+        markHydrated('contracts_v8');
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.warn('[ContractService] read failed, fallback to local contracts', msg);
@@ -493,6 +520,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         const apiProjects = await projectService.listProjects();
         if (cancelled) return;
         setProjects(apiProjects);
+        markHydrated('projects_v8');
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.warn('[ProjectService] read failed, fallback to local projects', msg);
@@ -511,6 +539,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         const apiSignals = await signalService.listSignals();
         if (cancelled) return;
         setMarketSignals(apiSignals);
+        markHydrated('market_signals_v1');
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.warn('[SignalService] read failed, fallback to local signals', msg);
@@ -528,6 +557,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         const apiDocs = await knowledgeService.listDocs();
         if (cancelled) return;
         setKnowledgeDocs(apiDocs);
+        markHydrated('knowledge_docs_v8');
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.warn('[KnowledgeService] read failed, fallback to local docs', msg);
@@ -545,6 +575,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         const apiSettlements = await settlementService.listSettlements();
         if (cancelled) return;
         setSettlements(apiSettlements);
+        markHydrated('settlements_v8');
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.warn('[SettlementService] read failed, fallback to local settlements', msg);
@@ -562,6 +593,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         const apiReminders = await reminderService.listReminders();
         if (cancelled) return;
         setReminders(apiReminders);
+        markHydrated('reminders_v8');
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.warn('[ReminderService] read failed, fallback to local reminders', msg);
@@ -570,6 +602,65 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     hydrateRemindersFromApi();
     return () => { cancelled = true; };
   }, [effectiveUserId]);
+
+  /*
+    工作日志 / 任务模板 / 不符合项：2026-09-02 补上服务端读。
+
+    在此之前这三份数据只存在于各人的浏览器里，取不到还会退回 MOCK 假数据。
+    于是「一台空浏览器拿假数据覆盖真数据」是随时可能发生的事 ——
+    而它不报错，只是数据悄悄变了。
+  */
+  useEffect(() => {
+    if (!workLogService.isReadEnabled()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await workLogService.list();
+        if (cancelled) return;
+        setProjectWorkLogs(rows);
+        markHydrated('project_work_logs_v1');
+      } catch (error) {
+        console.warn('[WorkLogService] read failed, fallback to local work logs',
+          error instanceof Error ? error.message : String(error));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [effectiveUserId, markHydrated]);
+
+  useEffect(() => {
+    if (!taskTemplateService.isReadEnabled()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await taskTemplateService.list();
+        if (cancelled) return;
+        setTaskTemplates(rows);
+        setTemplatesNormalized(false);
+        markHydrated('task_templates_v1');
+      } catch (error) {
+        console.warn('[TaskTemplateService] read failed, fallback to local templates',
+          error instanceof Error ? error.message : String(error));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [effectiveUserId, markHydrated]);
+
+  useEffect(() => {
+    if (!auditIssueService.isReadEnabled()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await auditIssueService.list();
+        if (cancelled) return;
+        setAuditIssues(rows);
+        markHydrated('audit_issues_v1');
+      } catch (error) {
+        console.warn('[AuditIssueService] read failed, fallback to local audit issues',
+          error instanceof Error ? error.message : String(error));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [effectiveUserId, markHydrated]);
 
   // 人员花名册单一真相源：从「员工账号」(auth_users) 同步，业务(项目负责人/看板/提醒)与登录账号统一
   useEffect(() => {
@@ -1132,12 +1223,38 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
       task_templates_v1: taskTemplates
     };
 
+    // 本地缓存照写不误：那是自己这台机器的副本，写坏了只影响自己
     Object.entries(datasets).forEach(([key, value]) => {
       dataService.set(key, value);
     });
 
+    /*
+      ── 只把「从服务端加载过的」推回服务端 ────────────────────────
+
+      没加载过的数据集，这个浏览器手里那份可能是 localStorage 的陈年副本，
+      也可能是代码里的 MOCK 假数据。用它去覆盖服务端，
+      本质上是让一个不知情的人替所有人做决定。
+
+      被排除在外的典型：
+        current_user_id / current_role   本机 UI 状态，推上去等于
+                                         把「我现在以谁的身份在看」写给全公司
+        user_profiles_v1                 员工花名册的真相源是 auth_users，
+                                         不是某个浏览器的内存
+                                         （2026-08-28 的 11 个账号就是这么没的）
+        ai_decision_logs_v1              本机日志
+
+      一条都不剩地推空，则说明这个浏览器还没准备好 —— 那就整批不推，
+      而不是推一批空数组上去。
+    */
+    const hydrated = hydratedDatasetsRef.current;
+    const syncable = Object.fromEntries(
+      Object.entries(datasets).filter(([key]) => hydrated.has(key))
+    );
+
+    if (Object.keys(syncable).length === 0) return;
+
     stateSyncService.scheduleSync({
-      datasets,
+      datasets: syncable,
       source: 'app-context',
       actorUserId: effectiveUserId,
       clientId: normalizedCurrentUser.id,

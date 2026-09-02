@@ -31,14 +31,34 @@ rsync -az --delete \
 echo ">>> [2/4] 安装依赖 + 构建 + 迁移"
 $SSH "cd $APP && npm ci --no-audit --no-fund >/dev/null 2>&1 && npm run build:metrics >/dev/null && npm run build 2>&1 | grep -E 'built in|error' && npm run migrate 2>&1 | tail -2"
 
-echo ">>> [3/4] 修权限（rsync 会把本地的 0700 带过来，每次都要修）"
+echo ">>> [3/5] 修权限（rsync 会把本地的 0700 带过来，每次都要修）"
 $SSH "sudo chmod o+x $APP && sudo chmod -R a+rX $APP/dist $APP/public && chmod 600 $APP/.env.local"
 
-echo ">>> [4/4] 重启并自检"
-$SSH "sudo systemctl restart xinyi && sudo nginx -t >/dev/null 2>&1 && sudo systemctl reload nginx && sleep 4
+# ── Nginx / systemd 配置也要跟着代码走 ─────────────────────────
+# 2026-09-02 发现：deploy.sh 只同步应用代码，**不部署这两份配置**。
+# 于是仓库里的 nginx-xinyi.conf 和服务器上跑的那份各走各的 ——
+# 我在仓库里删掉了 8080，部署完发现端口还开着，
+# 因为服务器上那份根本没被替换过，而且没有任何提示。
+#
+# 配置和代码脱节的坏处不是「这次没生效」，
+# 是**下次有人照着仓库里的配置排查线上问题，看到的是一份假的**。
+echo ">>> [4/5] 部署 Nginx / systemd 配置"
+scp -q -i "$KEY" -o StrictHostKeyChecking=no deploy/nginx-xinyi.conf "ubuntu@$HOST:/tmp/nginx-xinyi.conf"
+scp -q -i "$KEY" -o StrictHostKeyChecking=no deploy/xinyi.service      "ubuntu@$HOST:/tmp/xinyi.service"
+$SSH "set -e
+sudo mv /tmp/nginx-xinyi.conf /etc/nginx/sites-available/xinyi
+sudo ln -sf /etc/nginx/sites-available/xinyi /etc/nginx/sites-enabled/xinyi
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo mv /tmp/xinyi.service /etc/systemd/system/xinyi.service
+sudo systemctl daemon-reload
+sudo nginx -t 2>&1 | tail -1"
+
+echo ">>> [5/5] 重启并自检"
+# Nginx 用 restart 不用 reload：reload 不会释放已经监听的端口，
+# 配置里删掉一个 listen 之后 reload 完那个端口还开着 —— 又是一个「改了没生效」。
+$SSH "sudo systemctl restart xinyi && sudo systemctl restart nginx && sleep 4
 echo '  服务: '\$(systemctl is-active xinyi nginx postgresql | paste -sd' ' -)
 printf '  首页 80    '; curl -sS -m 8 -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1/
-printf '  首页 8080  '; curl -sS -m 8 -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:8080/
 printf '  后端健康   '; curl -sS -m 8 http://127.0.0.1:3001/api/auth/health | head -c 120; echo
 printf '  鉴权闸门   '; curl -sS -m 8 -o /dev/null -w '/api/state/batch 未登录 -> HTTP %{http_code}（应为 401）\n' http://127.0.0.1:3001/api/state/batch
 EXT=\$(grep -oE 'https://[^\"'\'' )]+' $APP/dist/index.html | grep -vE 'aistudiocdn|esm.sh' | wc -l)
