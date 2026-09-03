@@ -5,7 +5,7 @@
 // 防的是「程序跑飞」：某个页面写出循环、某个重试没有退避、
 // 有人反复点一个按钮——这类事故的特征是量级异常，不是稍微多用了点。
 //
-// 所以上限定得很宽（顾问一天 200 次），宽到正常人碰不到、
+// 所以上限定得很宽（顾问一天 30 万 tokens，约正常用量的 7 倍），宽到正常人碰不到、
 // 而循环跑起来几分钟就撞上。定得太紧的配额会被绕过或者被要求关掉，
 // 那时它就一点用都没有了。
 //
@@ -21,27 +21,64 @@ const crypto = require('node:crypto');
 const pool = require('../db/pool');
 
 /**
- * 每人每天的调用次数上限。取角色里最宽的一个。
+ * 每人每天的 token 上限。取角色里最宽的一个。
  *
- * 老板不设限：他要是真在一天里调了 500 次，那也是他自己的钱和他自己的判断，
- * 系统不该在这件事上替他做主。
+ * ── 为什么从「调用次数」改成「token」（2026-09-03）──────────────
+ * 原来数的是 count(*)：一次问「在吗」和一次扔进 30 页合同 PDF 都算 1 次，
+ * 而两者的成本差几十倍。**按次数限额根本管不住钱**——
+ * 200 次闲聊可能花一毛，20 次合同解析可能花十块。
+ *
+ * ── 这个上限的定位是「熔断」，不是「配给」────────────────────
+ * 按线上实测：一次对话中位数约 1200 tokens，最大 2134。
+ * 一个人一天认真用 30 次也就 4 万 tokens。
+ * 下面给的额度是这个量的 5 倍以上 —— **正常干活永远碰不到**。
+ *
+ * 它防的是另一件事：**程序 bug 打成死循环、或者有人反复拖同一份大文件**。
+ * 那种情况一晚上能烧掉一个月的预算，而且没人会发现。
+ *
+ * 所以：额度定得宽，宁可漏也不要误伤 ——
+ * 一个同事因为「怕超额」而不敢用 AI，损失远大于省下的那几块钱。
+ *
+ * ── 价格参考（2026-09，每百万 token，美元）────────────────────
+ *   deepseek-v4-pro    输入 0.66~1.32（谷/峰）  输出 1.98~3.96
+ *   deepseek-v4-flash  输入 0.22~0.44          输出 0.66~1.32
+ *   kimi-k3            输入 3.00               输出 15.00
+ * 20 万 tokens 走 DeepSeek 峰时大约 ¥3，走 Kimi 大约 ¥15。
  */
-const DAILY_LIMIT_BY_ROLE = {
+const DAILY_TOKEN_LIMIT_BY_ROLE = {
+  // 总经理和系统管理员不设限。上线期要能随便测，
+  // 卡住这两个账号省下的钱，远不如「因为怕超额而不敢用」的损失大。
   ADMIN: Infinity,
   SYS_ADMIN: Infinity,
-  MANAGER: 300,
-  SALES: 200,
-  CONSULTANT: 200,
-  FINANCE: 100,
+  MANAGER: 400_000,
+  SALES: 300_000,
+  CONSULTANT: 300_000,
+  FINANCE: 200_000,
 };
 
-/** 没有会话的内部调用（定时任务、情报抓取）。给一个够用但不无限的额度 */
-const SYSTEM_DAILY_LIMIT = 500;
+/*
+  没有会话的内部调用（情报雷达定时抓取、月度复盘）。
+
+  给得比人宽：它一次要读几十条情报，单次 token 量本来就大，
+  而且它是无人值守跑的 —— 卡住了没人知道，第二天才发现情报没更新。
+*/
+const SYSTEM_DAILY_TOKEN_LIMIT = 1_000_000;
+
+/*
+  全公司一天的总上限。**这才是真正的熔断闸**。
+
+  单人额度防不住「所有人同时出问题」，也防不住系统调用失控。
+  这一条是最后一道：无论谁在用、用什么，一天烧到这个数就全停。
+
+  按上面的价格，200 万 tokens 走 DeepSeek 峰时约 ¥30 ——
+  一天烧掉 30 块说明肯定出事了，停下来查是对的。
+*/
+const COMPANY_DAILY_TOKEN_LIMIT = Number(process.env.AI_COMPANY_DAILY_TOKENS || 2_000_000);
 
 const limitFor = (roles = []) => {
   const list = Array.isArray(roles) ? roles : [];
-  if (list.length === 0) return DAILY_LIMIT_BY_ROLE.CONSULTANT;
-  return Math.max(...list.map((r) => DAILY_LIMIT_BY_ROLE[String(r).toUpperCase()] ?? 0));
+  if (list.length === 0) return DAILY_TOKEN_LIMIT_BY_ROLE.CONSULTANT;
+  return Math.max(...list.map((r) => DAILY_TOKEN_LIMIT_BY_ROLE[String(r).toUpperCase()] ?? 0));
 };
 
 /** 从 express 的 req 上认出调用人。没有会话就算系统调用 */
@@ -74,10 +111,26 @@ const usedToday = async (actor) => {
   const where = actor.kind === 'system'
     ? { sql: "actor_kind = 'system'", params: [] }
     : { sql: 'actor_user_id = $1', params: [actor.userId] };
+  /*
+    统计 token 不是次数。
+
+    COALESCE 到 0：拿不到 token 的调用（上游没返回 usage）算 0 而不是跳过整行——
+    宁可少算也不能因为一条 NULL 让整个 SUM 变成 NULL，
+    那会让额度检查静默失效，而且是往「无限放行」的方向失效。
+  */
   const { rows } = await pool.query(
-    `SELECT count(*)::int n FROM ai_usage_log
+    `SELECT COALESCE(SUM(COALESCE(total_tokens, 0)), 0)::bigint n FROM ai_usage_log
       WHERE ${where.sql} AND created_at >= CURRENT_DATE AND ok = TRUE`, where.params);
-  return rows[0]?.n || 0;
+  return Number(rows[0]?.n || 0);
+};
+
+/** 全公司今天用掉的 token。最后一道熔断闸靠它。 */
+const companyUsedToday = async () => {
+  if (!pool.isEnabled()) return 0;
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(COALESCE(total_tokens, 0)), 0)::bigint n FROM ai_usage_log
+      WHERE created_at >= CURRENT_DATE AND ok = TRUE`);
+  return Number(rows[0]?.n || 0);
 };
 
 /**
@@ -88,7 +141,7 @@ const usedToday = async (actor) => {
  */
 const checkQuota = async (req) => {
   const actor = actorFrom(req);
-  const limit = actor.kind === 'system' ? SYSTEM_DAILY_LIMIT : limitFor(actor.roles);
+  const limit = actor.kind === 'system' ? SYSTEM_DAILY_TOKEN_LIMIT : limitFor(actor.roles);
   if (!Number.isFinite(limit)) return { allowed: true, used: 0, limit: Infinity, actor };
 
   let used = 0;
@@ -105,9 +158,35 @@ const checkQuota = async (req) => {
       used,
       limit,
       actor,
-      message: `今天的 AI 调用次数已达上限（${used}/${limit}）。这个上限是用来兜底防止程序异常的，正常使用碰不到——如果你确实需要，请找管理员。明天零点恢复。`,
+      message: `今天的 AI 用量已达上限（${Math.round(used / 1000)}k/${Math.round(limit / 1000)}k tokens）。`
+        + `这个上限是用来兜底防止程序异常的，正常使用碰不到——`
+        + `如果你确实需要，请找系统管理员放开。明天零点恢复。`,
     };
   }
+
+  /*
+    全公司总闸。放在个人额度之后：个人超了先说个人的，信息更具体。
+    这一道防的是「所有人同时出问题」和系统调用失控 ——
+    单人额度对这两种情况都无能为力。
+  */
+  try {
+    const companyUsed = await companyUsedToday();
+    if (companyUsed >= COMPANY_DAILY_TOKEN_LIMIT) {
+      return {
+        allowed: false,
+        used,
+        limit,
+        actor,
+        message: `全公司今天的 AI 用量已达上限（${Math.round(companyUsed / 1000)}k tokens）。`
+          + `这通常意味着系统出了异常（比如某个功能在反复调用），`
+          + `已自动暂停以免继续产生费用。请联系系统管理员。`,
+      };
+    }
+  } catch (e) {
+    // 总闸查不到就放行——它是保护措施，不能反过来把业务卡死
+    console.warn('[aiUsage] 公司总额度查询失败，放行:', e?.message || e);
+  }
+
   return { allowed: true, used, limit, actor };
 };
 
@@ -179,4 +258,7 @@ const summary = async ({ days = 30 } = {}) => {
   };
 };
 
-module.exports = { checkQuota, record, summary, actorFrom, usageFrom, limitFor, DAILY_LIMIT_BY_ROLE };
+module.exports = {
+  checkQuota, record, summary, actorFrom, usageFrom, limitFor,
+  DAILY_TOKEN_LIMIT_BY_ROLE, COMPANY_DAILY_TOKEN_LIMIT, companyUsedToday,
+};

@@ -44,40 +44,67 @@ test('取真实 token 数，取不到就记 NULL，绝不用估算冒充', async
 });
 
 test('多角色取最宽的额度，老板不设限', async () => {
-  assert.equal(aiUsage.limitFor(['ADMIN']), Infinity, '老板花的是他自己的钱，系统不替他做主');
-  assert.equal(aiUsage.limitFor(['CONSULTANT']), 200);
-  assert.equal(aiUsage.limitFor(['FINANCE']), 100);
+  /*
+    2026-09-03：额度从「调用次数」改成「token」。
+    按次数根本管不住钱 —— 一次问「在吗」和一次扔进 30 页合同 PDF 都算 1 次，
+    成本差几十倍。
+  */
+  assert.equal(aiUsage.limitFor(['ADMIN']), Infinity, '总经理不设限：上线期要能随便用');
+  assert.equal(aiUsage.limitFor(['SYS_ADMIN']), Infinity, '系统管理员不设限：卡住他就没法排查');
+  assert.equal(aiUsage.limitFor(['CONSULTANT']), 300_000);
+  assert.equal(aiUsage.limitFor(['FINANCE']), 200_000);
   // 一人多角色时按最宽的算，否则加一个角色反而变得更受限，说不通
-  assert.equal(aiUsage.limitFor(['FINANCE', 'CONSULTANT']), 200);
-  assert.equal(aiUsage.limitFor([]), 200, '没有角色时给个默认额度，不能是 0');
+  assert.equal(aiUsage.limitFor(['FINANCE', 'CONSULTANT']), 300_000);
+  assert.equal(aiUsage.limitFor([]), 300_000, '没有角色时给个默认额度，不能是 0');
 });
 
-test('没撞上限就放行，并报出用了多少', async () => {
+test('没撞上限就放行，并报出用了多少 token', async () => {
   const user = { id: 'U-1', name: '甲', roles: ['CONSULTANT'] };
   for (let i = 0; i < 3; i++) {
-    await aiUsage.record({ req: reqOf(user), endpoint: '/api/ai/generate', ok: true, raw: {} });
+    await aiUsage.record({
+      req: reqOf(user), endpoint: '/api/ai/generate', ok: true,
+      raw: { usage: { prompt_tokens: 700, completion_tokens: 300, total_tokens: 1000 } },
+    });
   }
   const q = await aiUsage.checkQuota(reqOf(user));
   assert.equal(q.allowed, true);
-  assert.equal(q.used, 3);
-  assert.equal(q.limit, 200);
+  assert.equal(q.used, 3000, '统计的是 token 总量，不是调用次数');
+  assert.equal(q.limit, 300_000);
+});
+
+test('取不到 token 的调用算 0，不能让整个统计变成 NULL', async () => {
+  /*
+    上游没返回 usage 时 total_tokens 是 NULL。
+    SUM 遇到全是 NULL 会返回 NULL —— 那时额度检查会静默失效，
+    而且是往「无限放行」的方向失效，最危险的那个方向。
+  */
+  const user = { id: 'U-NULL', name: '无用量', roles: ['CONSULTANT'] };
+  await aiUsage.record({ req: reqOf(user), endpoint: '/api/ai/chat', ok: true, raw: {} });
+  const q = await aiUsage.checkQuota(reqOf(user));
+  assert.equal(q.used, 0, '拿不到 token 应算 0，而不是 NaN 或 null');
+  assert.equal(q.allowed, true);
 });
 
 test('撞上限要拦住，并说清什么时候恢复', async () => {
   // 说不清什么时候恢复的限制，用户只会觉得系统坏了
-  const user = { id: 'U-2', name: '乙', roles: ['FINANCE'] };  // 上限 100
+  const user = { id: 'U-2', name: '乙', roles: ['FINANCE'] };  // 上限 20 万 tokens
   const rows = [];
-  for (let i = 0; i < 100; i++) {
-    rows.push(aiUsage.record({ req: reqOf(user), endpoint: '/api/ai/chat', ok: true, raw: {} }));
+  for (let i = 0; i < 20; i++) {
+    rows.push(aiUsage.record({
+      req: reqOf(user), endpoint: '/api/ai/chat', ok: true,
+      raw: { usage: { prompt_tokens: 7000, completion_tokens: 3000, total_tokens: 10_000 } },
+    }));
   }
   await Promise.all(rows);
 
   const q = await aiUsage.checkQuota(reqOf(user));
   assert.equal(q.allowed, false);
-  assert.equal(q.used, 100);
+  assert.equal(q.used, 200_000);
   assert.match(q.message, /上限/);
   assert.match(q.message, /明天/, '没说什么时候恢复');
-  assert.match(q.message, /100/, '没说清用了多少');
+  assert.match(q.message, /200k/, '没说清用了多少');
+  assert.match(q.message, /正常使用碰不到/,
+    '要讲清这是防程序异常的兜底 —— 不然人会以为公司在限制他用 AI');
 });
 
 test('失败的调用不计入配额', async () => {
@@ -108,7 +135,12 @@ test('失败照样要记账——连续失败本身就是要看见的信号', as
 test('每个人的额度互不影响', async () => {
   const a = { id: 'U-A', name: '甲', roles: ['FINANCE'] };
   const b = { id: 'U-B', name: '乙', roles: ['FINANCE'] };
-  for (let i = 0; i < 100; i++) await aiUsage.record({ req: reqOf(a), ok: true });
+  for (let i = 0; i < 20; i++) {
+    await aiUsage.record({
+      req: reqOf(a), ok: true,
+      raw: { usage: { prompt_tokens: 7000, completion_tokens: 3000, total_tokens: 10_000 } },
+    });
+  }
   assert.equal((await aiUsage.checkQuota(reqOf(a))).allowed, false);
   assert.equal((await aiUsage.checkQuota(reqOf(b))).allowed, true, '一个人用满了把别人也挡住了');
 });
@@ -117,7 +149,11 @@ test('没有会话的内部调用算作系统调用，单独一份额度', async
   // 定时任务、情报抓取没有登录用户，不能因此不受限，也不能挤占某个人的额度
   const q = await aiUsage.checkQuota({});
   assert.equal(q.actor.kind, 'system');
-  assert.equal(q.limit, 500);
+  /*
+    系统调用的额度比人宽：情报雷达一次要读几十条，单次 token 量本来就大，
+    而且它无人值守 —— 卡住了没人知道，第二天才发现情报没更新。
+  */
+  assert.equal(q.limit, 1_000_000);
 });
 
 test('记账失败不能让 AI 功能挂掉', async () => {
