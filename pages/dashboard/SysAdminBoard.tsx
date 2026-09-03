@@ -17,7 +17,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Activity, AlertTriangle, Bot, Database, HardDrive, KeyRound,
-  RefreshCw, ShieldCheck, Sliders, Users, Wrench
+  RefreshCw, ShieldCheck, Sliders, Users, Wrench, MessageSquare
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -33,6 +33,22 @@ type Overview = {
   data: { size: string; rows: Array<{ table: string; rows: number }> } | null;
   version: { app: string; node: string; uptimeHours: number; migrations: { applied: number; latest: string } | null };
   generatedAt: string;
+};
+
+
+type FeedbackRow = {
+  id: string; kind: string; severity: string; status: string;
+  intent: string; actual: string; route: string; user_name: string;
+};
+
+const FB_KIND: Record<string, string> = {
+  bug: '出错了', confused: '不会用', wrong: '结果不对', improve: '希望改进',
+};
+const FB_SEV: Record<string, string> = {
+  blocked: '挡住干活了', annoying: '有点烦', later: '不急',
+};
+const FB_STATUS: Record<string, string> = {
+  ack: '已看到', doing: '处理中', done: '已解决', wontfix: '暂不处理',
 };
 
 const KIND_LABEL: Record<string, string> = {
@@ -66,6 +82,12 @@ const Stat: React.FC<{ label: string; value: React.ReactNode; tone?: 'normal' | 
 const SysAdminBoard: React.FC = () => {
   const navigate = useNavigate();
   const [data, setData] = useState<Overview | null>(null);
+  /*
+    反馈单独取一次，不塞进 sysadmin-overview。
+    概览接口挂了的时候反馈还能显示 —— 观察面板最忌讳
+    「一个数据源出问题，整块变空白」，那时候恰恰最需要看东西。
+  */
+  const [fb, setFb] = useState<FeedbackRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -84,7 +106,15 @@ const SysAdminBoard: React.FC = () => {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  const loadFeedback = async () => {
+    try {
+      const res = await fetch('/api/feedback', { credentials: 'include' });
+      const body = await res.json();
+      if (res.ok && body?.ok !== false) setFb(body.data?.feedback || []);
+    } catch { /* 反馈取不到不影响其余面板 */ }
+  };
+
+  useEffect(() => { load(); loadFeedback(); }, []);
 
   if (loading && !data) {
     return <div className="p-8 text-sm text-gray-400">正在读取系统状态…</div>;
@@ -182,6 +212,51 @@ const SysAdminBoard: React.FC = () => {
                   <p className="text-[10px] text-gray-400 mt-0.5">
                     {e.route || '—'} · {/* 影响人数放前面：3 个人各碰 1 次，比 1 个人碰 100 次严重 */}
                     影响 {e.affected} 人，发生 {e.count} 次
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/*
+        同事主动说的问题。
+
+        和上面那块「踩到但没说」是**两回事，缺一不可**：
+          上面   机器自动抓的 JS 崩溃 / 接口报错 —— 同事不知情
+          这里   人主动填的 —— 机器抓不到
+
+        最难查的一类恰恰是「系统没报错，但结果不是他要的」：
+        自动采集看不见，只有人能说。
+      */}
+      <Card
+        title="同事主动反馈"
+        icon={<MessageSquare className="w-4 h-4" />}
+        tone={fb.some(f => f.severity === 'blocked' && f.status === 'new') ? 'alert' : 'normal'}
+      >
+        {fb.length === 0 ? (
+          <p className="text-sm text-gray-400 py-6 text-center">还没有人提反馈</p>
+        ) : (
+          <div className="space-y-2">
+            {fb.slice(0, 8).map((f) => (
+              <div key={f.id} className="flex items-start gap-3 py-2 border-b border-gray-50 last:border-0">
+                <span className={`text-[10px] font-black rounded px-1.5 py-0.5 shrink-0 mt-0.5 ${
+                  f.severity === 'blocked' ? 'bg-red-100 text-red-700'
+                    : f.severity === 'annoying' ? 'bg-amber-100 text-amber-700'
+                    : 'bg-gray-100 text-gray-500'
+                }`}>
+                  {FB_KIND[f.kind] || f.kind}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-gray-800 break-words">
+                    {f.intent ? `想：${f.intent}` : ''}
+                    {f.intent && f.actual ? ' → ' : ''}
+                    {f.actual ? `结果：${f.actual}` : ''}
+                  </p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">
+                    {f.user_name || '匿名'} · {f.route || '—'} · {FB_SEV[f.severity] || ''}
+                    {f.status !== 'new' ? ` · ${FB_STATUS[f.status] || f.status}` : ''}
                   </p>
                 </div>
               </div>

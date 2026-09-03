@@ -1119,13 +1119,42 @@ const Customers = () => {
                                     <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100">
                                         <div className="text-xs font-bold text-gray-400 uppercase mb-2">客户认知沉淀 (Notes)</div>
                                         {isEditing ? (
-                                            <textarea 
+                                            <>
+                                            {/*
+                                              原来的提示是「记录客户画像、偏好、决策链等长期价值信息」。
+                                              这三个词对写的人没有任何指导作用 ——
+                                              「客户画像」到底写什么？规模？行业？老板脾气？
+                                              结果要么空着，要么写成「该客户比较配合」这种无法使用的话。
+
+                                              换成**四个具体问题 + 一个真实例句**。
+                                              人照着例子写，写出来的东西才有人能用、AI 也能用：
+                                              「谁拍板」能直接指导下次找谁谈，
+                                              「上次为什么犹豫」能预判这次的阻力。
+                                            */}
+                                            <textarea
                                                 className="w-full bg-white border border-gray-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                                rows={3}
-                                                placeholder="在此记录客户画像、偏好、决策链等长期价值信息..."
+                                                rows={6}
+                                                placeholder={[
+                                                  '照着下面四条写，越具体越有用：',
+                                                  '',
+                                                  '1. 谁拍板 —— 名字、职务、平时谁对接',
+                                                  '2. 在意什么 —— 价格 / 速度 / 稳妥 / 面子，最在意哪个',
+                                                  '3. 什么时候找他 —— 淡旺季、审厂时间、避开什么时候',
+                                                  '4. 上次为什么犹豫 —— 或者为什么最后签了',
+                                                  '',
+                                                  '例：',
+                                                  '厂长张总拍板，日常对接采购小李。张总最怕停产，',
+                                                  '价格能谈但工期不能拖。每年 3-4 月客户审厂最忙，别这时候约。',
+                                                  '上次犹豫是担心我们只做证书不管落地，看了案例才签。',
+                                                ].join('\n')}
                                                 value={editingData.customerNotes || ''}
                                                 onChange={e => setEditingData({...editingData, customerNotes: e.target.value})}
                                             />
+                                            <p className="mt-2 text-[11px] text-gray-400 leading-relaxed">
+                                                这段内容会进 AI 语料。写「比较配合」这类形容词没用，
+                                                写「怕停产、工期不能拖」这类具体事实，下次谈判和续约才用得上。
+                                            </p>
+                                            </>
                                         ) : (
                                             <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
                                                 {editingData.customerNotes || '暂无沉淀'}

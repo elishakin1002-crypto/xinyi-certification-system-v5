@@ -2,7 +2,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Sidebar from './Sidebar';
 import AIChatWidget from './AIChatWidget';
-import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye } from 'lucide-react';
+import FeedbackModal from './FeedbackModal';
+import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { authService } from '../services/authService';
 import { dataService } from '../services/dataService';
@@ -33,6 +34,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
   const [isBellOpen, setIsBellOpen] = useState(false);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -561,6 +563,24 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
              {/* 核心功能：身份切换器 */}
 
              {/*
+               反馈入口。**系统管理员视角不显示** —— 他就是收反馈的人，
+               给自己留一个「向自己反馈」的按钮只会占位置。
+
+               放在铃铛旁边而不是收进菜单里：同事在被卡住的当下才会想反馈，
+               那一刻他不会去翻菜单找。看不见的入口等于没有入口。
+             */}
+             {currentViewPersona !== 'sysadmin' && (
+               <button
+                 onClick={() => setIsFeedbackOpen(true)}
+                 aria-label="反馈问题"
+                 title="反馈问题"
+                 className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
+               >
+                 <MessageSquare className="w-5 h-5" />
+               </button>
+             )}
+
+             {/*
                铃铛。原来点了是 navigate('/dashboard') —— 而人多半就站在工作台上，
                所以表现为「点了没有任何反应」。
 
@@ -664,6 +684,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           {children}
         </main>
         <AIChatWidget />
+        <FeedbackModal open={isFeedbackOpen} onClose={() => setIsFeedbackOpen(false)} />
       </div>
     </div>
   );

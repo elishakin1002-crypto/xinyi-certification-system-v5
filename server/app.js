@@ -34,6 +34,7 @@ const batch3Router = require('./routes/batch3');
 const batch4Router = require('./routes/batch4');
 const batch5Router = require('./routes/batch5');
 const clientErrorsRouter = require('./routes/clientErrors');
+const feedbackRouter = require('./routes/feedback');
 const sysadminOverviewRouter = require('./routes/sysadminOverview');   // 守卫在模块内部，见该文件
 const knowledgeRouter = require('./routes/knowledge');
 const remindersRouter = require('./routes/reminders');
@@ -110,7 +111,9 @@ const isProtectedApiPath = (pathname) => (
     而是为了拿到 req.authUser：错误报告里最有价值的一条信息就是「谁踩到的」。
     没有这个，收到一堆匿名错误，连去问谁都不知道。
   */
-  pathname.startsWith('/api/client-errors')
+  pathname.startsWith('/api/client-errors') ||
+  // 反馈必须知道是谁提的 —— 匿名反馈没法追问，而追问往往是必要的
+  pathname.startsWith('/api/feedback')
 );
 
 const readCookie = (cookieHeader, key) => {
@@ -405,6 +408,7 @@ app.use(batch3Router);
 app.use(batch4Router);
 app.use(batch5Router);
 app.use(clientErrorsRouter);
+app.use(feedbackRouter);
 app.use(sysadminOverviewRouter);
 app.use(knowledgeRouter);
 app.use(remindersRouter);

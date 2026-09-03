@@ -375,11 +375,33 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
       .map(role => ROLE_TO_PERSONA[role])
       .filter(Boolean)
   )) as DashboardPersona[];
+  /*
+    巡检账号可以预览任何一个工作台。
+
+    ── 修的是什么 ────────────────────────────────────────────────
+    原来只有一条规则：你得**拥有**那个角色，才能切到它的视角，
+    否则悄悄退回原视角。
+
+    于是系统管理员（只有 SYS_ADMIN 一个角色）点「咨询顾问」时，
+    这里判定他没有 CONSULTANT → 返回 activePersona → 页面纹丝不动。
+    菜单给了他这个选项，底层却不认 —— 表现就是「点了没有任何反应」，
+    而且不报错，让人以为是自己没点中。
+
+    ── 为什么放开是安全的 ────────────────────────────────────────
+    persona 只决定**工作台显示哪一套卡片**，不决定能看到什么数据。
+    权限始终按账号本身的角色判定，服务端 enforce 模式下
+    切到「财务视角」也拿不到多余的数据 —— 卡片会是空的。
+
+    换句话说：这是换一副眼镜，不是换一个身份。
+  */
+  const VIEW_INSPECTOR_ROLES: RoleID[] = ['ADMIN', 'SYS_ADMIN'];
+
   const resolveDashboardPersona = (queryPersona?: string | null): DashboardPersona => {
     const parsed = normalizePersona(queryPersona);
     if (parsed) {
       const requiredRole = PERSONA_TO_ROLE[parsed];
       if (normalizedCurrentUser.roles.includes(requiredRole)) return parsed;
+      if (normalizedCurrentUser.roles.some((r) => VIEW_INSPECTOR_ROLES.includes(r))) return parsed;
     }
     return activePersona;
   };
