@@ -13,17 +13,42 @@ set -euo pipefail
 HOST="${DEPLOY_HOST:-124.223.209.102}"
 KEY="${DEPLOY_KEY:-$HOME/.ssh/id_ed25519_xinyi}"
 APP=/opt/xinyi
+REL=/opt/xinyi-releases
 SSH="ssh -i $KEY -o StrictHostKeyChecking=no ubuntu@$HOST"
 
 cd "$(dirname "$0")/.."
 
-echo ">>> [1/4] 同步代码"
+# ── 部署前先给现在这个版本打快照 ──────────────────────────────
+# 没有快照就没有回滚，而「改坏了只能再改一次修回来」是最容易
+# 越修越坏的处境 —— 你在压力下写代码，同事在那边干不了活。
+# 有了快照，顺序才能变成「先恢复服务，再慢慢查」。
+#
+# 只留最近 8 个：每个约 15MB，够回退到一周前，也不会把磁盘吃掉。
+echo ">>> [0/5] 快照当前版本（供回滚）"
+$SSH "set -e
+if [ -d $APP/dist ]; then
+  sudo mkdir -p $REL && sudo chown ubuntu:ubuntu $REL
+  SHA=\$(cat $APP/VERSION 2>/dev/null || echo nover)
+  tar -czf $REL/\$(date +%Y%m%d-%H%M%S)-\$SHA.tar.gz \
+      -C $APP --exclude=node_modules --exclude=backups --exclude=.runtime . 2>/dev/null
+  ls -1t $REL/*.tar.gz 2>/dev/null | tail -n +9 | xargs -r rm -f
+  echo '    已快照 '\$(ls -1 $REL/*.tar.gz 2>/dev/null | wc -l)' 个版本可回退'
+else
+  echo '    首次部署，无可快照的版本'
+fi"
+
+echo "$(git rev-parse --short HEAD 2>/dev/null || echo nogit)" > VERSION
+echo ">>> [1/5] 同步代码"
 # --exclude .env.local 是**必须的**：同步过去会用开发配置覆盖生产配置，
 # 而开发配置里 XINYI_SESSION_COOKIE_SECURE、DATABASE_URL 全都不一样，
 # 结果是所有人突然登不进去，而且看不出和这次部署有关。
 rsync -az --delete \
   --exclude node_modules --exclude .git --exclude dist --exclude .runtime \
   --exclude '.env.local' --exclude '*.log' \
+  `# backups 必须排除：rsync --delete 会把服务器上「本地没有」的东西删掉，` \
+  `# 而备份天生只存在于服务器。2026-09-03 演练时发现每次部署都在删备份，` \
+  `# 账号拆分前那个 29.7MB 的备份就是这么没的 —— 而且全程没有任何提示。` \
+  --exclude backups \
   --exclude .codex-work --exclude .claude --exclude outputs --exclude release \
   --exclude test-results --exclude playwright-report \
   -e "ssh -i $KEY -o StrictHostKeyChecking=no" ./ "ubuntu@$HOST:$APP/"

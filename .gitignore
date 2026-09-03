@@ -49,3 +49,4 @@ release/
 .codex-work/
 # 本机专属设置（每个人的机器不一样，提交了会互相覆盖）
 .claude/settings.local.json
+VERSION
