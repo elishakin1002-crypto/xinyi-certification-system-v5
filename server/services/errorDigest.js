@@ -15,7 +15,7 @@
 // 已经标记 ack / fixed / ignored 的不再重复报 ——
 // 报过一次还天天报，等于逼人把整个通知渠道静音。
 const pool = require('../db/pool');
-const { notify } = require('./notifyService');
+const { notifyAdmin } = require('./notifyService');
 
 const THRESHOLD_USERS = 2;    // 影响到 2 个人以上
 const THRESHOLD_COUNT = 20;   // 或者一天发生 20 次以上
@@ -78,7 +78,13 @@ const runErrorDigest = async () => {
     const digest = await collectDigest();
     const text = buildMessage(digest);
     if (!text) return { sent: false, reason: '今天没有需要打扰的错误' };
-    const result = await notify(text);
+    /*
+      走管理通道，不走工作群。
+      2026-09-03 配通道时发现 webhook 指向的是企业全员群 ——
+      13 个同事进来后会天天收到「Cannot read properties of undefined」，
+      而他们既看不懂也帮不上忙，几次之后就会开始无视这个群。
+    */
+    const result = await notifyAdmin(text);
     return { sent: Boolean(result?.ok), reason: result?.reason || '', count: digest.rows.length };
   } catch (error) {
     console.warn('[errorDigest] 生成失败:', error?.message || error);

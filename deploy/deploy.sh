@@ -92,9 +92,14 @@ echo \"  外部 CDN 引用: \$EXT 处（应为 0，非 0 说明本地化被改�
 # 这种「静默失效」正是可观测性设施最常见的死法 ——
 # 它不出声，而你以为它在工作。所以每次部署都点一次名。
 if grep -q '^NOTIFY_WEBHOOK_URL=http' $APP/.env.local; then
-  echo '  通知通道   已配置'
+  echo '  业务通道   已配置（工作群：证书到期这类提醒）'
 else
-  echo '  通知通道   !!! 未配置 —— 错误摘要生成了也发不出去'
+  echo '  业务通道   未配置'
+fi
+if grep -q '^ADMIN_WEBHOOK_URL=http' $APP/.env.local; then
+  echo '  管理通道   已配置（管理员群：错误摘要、反馈）'
+else
+  echo '  管理通道   !!! 未配置 —— 错误摘要不会发，也不会退回工作群（那是故意的）'
 fi"
 
 echo ">>> 完成  http://$HOST"

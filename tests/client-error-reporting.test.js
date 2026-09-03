@@ -145,3 +145,32 @@ test('未登录也能上报 —— 会话过期时的错误最该被看见', () 
   assert.match(app, /isBestEffortIdentityPath\(req\.path\)\)\s*\{[\s\S]{0,600}return next\(\);/,
     '未登录时没有放行');
 });
+
+test('系统错误只发管理员，不发工作群', () => {
+  /*
+    2026-09-03：配好第一个 webhook 后发现它指向的是**企业全员群**。
+    13 个同事进来后会天天收到「Cannot read properties of undefined」——
+    他们既看不懂也帮不上忙。
+
+    发几次之后全公司学会一件事：这个群的消息可以不看。
+    而那时候，真正要紧的「某某证书下月到期」也一起被无视了。
+
+    两条通道收的人和该做的事完全不同：
+      业务通道 → 工作群，顾问看了知道该干什么
+      管理通道 → 管理员群，只有技术能处理
+  */
+  const digest = read('server/services/errorDigest.js');
+  assert.match(digest, /notifyAdmin\(text\)/, '错误摘要还在往业务群发');
+  assert.doesNotMatch(digest, /= await notify\(text\)/, '还留着发工作群的旧写法');
+
+  const notify = read('server/services/notifyService.js');
+  assert.match(notify, /ADMIN_WEBHOOK_URL/, '没有独立的管理通道');
+  /*
+    没配管理通道时**不发**，不能退回业务群。
+    退回去发一次，全公司就学会无视这个群 —— 宁可漏发。
+  */
+  assert.match(notify, /const notifyAdmin[\s\S]{0,400}if \(!url\)[\s\S]{0,300}ok: false/,
+    '管理通道没配时应当直接不发，而不是退回业务群');
+  assert.doesNotMatch(notify, /const notifyAdmin[\s\S]{0,500}NOTIFY_WEBHOOK_URL/,
+    '管理通道退回了业务通道 —— 系统报错会倒进全公司的群');
+});
