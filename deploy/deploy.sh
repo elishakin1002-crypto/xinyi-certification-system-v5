@@ -87,6 +87,14 @@ printf '  首页 80    '; curl -sS -m 8 -o /dev/null -w 'HTTP %{http_code}\n' ht
 printf '  后端健康   '; curl -sS -m 8 http://127.0.0.1:3001/api/auth/health | head -c 120; echo
 printf '  鉴权闸门   '; curl -sS -m 8 -o /dev/null -w '/api/state/batch 未登录 -> HTTP %{http_code}（应为 401）\n' http://127.0.0.1:3001/api/state/batch
 EXT=\$(grep -oE 'https://[^\"'\'' )]+' $APP/dist/index.html | grep -vE 'aistudiocdn|esm.sh' | wc -l)
-echo \"  外部 CDN 引用: \$EXT 处（应为 0，非 0 说明本地化被改回去了）\""
+echo \"  外部 CDN 引用: \$EXT 处（应为 0，非 0 说明本地化被改回去了）\"
+# 通知通道丢了不会报任何错，只是从此再也收不到错误摘要。
+# 这种「静默失效」正是可观测性设施最常见的死法 ——
+# 它不出声，而你以为它在工作。所以每次部署都点一次名。
+if grep -q '^NOTIFY_WEBHOOK_URL=http' $APP/.env.local; then
+  echo '  通知通道   已配置'
+else
+  echo '  通知通道   !!! 未配置 —— 错误摘要生成了也发不出去'
+fi"
 
 echo ">>> 完成  http://$HOST"

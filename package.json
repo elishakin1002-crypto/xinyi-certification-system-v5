@@ -61,7 +61,11 @@
     "health:ai": "node scripts/health-ai-behavior.mjs",
     "state:history": "node scripts/state-history.mjs",
     "auth:migrate:pg": "node scripts/migrate-auth-to-postgres.mjs",
-    "backfill:contract-owner": "node scripts/backfill-contract-owner.mjs"
+    "backfill:contract-owner": "node scripts/backfill-contract-owner.mjs",
+    "deploy": "bash deploy/deploy.sh",
+    "rollback": "bash deploy/rollback.sh",
+    "rollback:list": "bash deploy/rollback.sh --list",
+    "drill": "bash deploy/restore-drill.sh"
   },
   "dependencies": {
     "cors": "^2.8.5",

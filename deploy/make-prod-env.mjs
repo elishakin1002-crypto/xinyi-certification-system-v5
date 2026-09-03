@@ -87,6 +87,21 @@ const PROD = {
 
   // 企业微信没配密钥前保持关闭，否则会在同事那边制造噪音
   WECOM_PUSH_ENABLED: 'false',
+
+  /*
+    错误摘要与反馈的推送通道（企业微信群「消息推送」生成的 Webhook）。
+
+    **这里故意留空**：它是一个具体的地址，属于这台服务器的配置，
+    不该写进代码仓库 —— 谁 clone 到都能往那个群里发消息。
+
+    重建服务器后要手工补一次：
+      群聊 → 右上角「···」→ 消息推送 → 添加 → 复制 Webhook 地址
+      写进服务器的 .env.local：NOTIFY_WEBHOOK_URL=https://qyapi.weixin.qq.com/...
+
+    Mac 版把这个功能叫「消息推送」，不叫「群机器人」—— 按后者找会找不到。
+    deploy.sh 的自检会检查这一项，漏了会提示。
+  */
+  NOTIFY_WEBHOOK_URL: '',
 };
 
 const out = [];
