@@ -1820,6 +1820,38 @@ const meteredAI = async (req, params, { endpoint = '', feature = '' } = {}) => {
   }
 };
 
+/*
+  ── DeepSeek 熔断 ─────────────────────────────────────────────
+
+  「DeepSeek 便宜所以优先」是对的，但**不能变成死规矩**。
+
+  2026-09-03 的情况：DeepSeek 欠费，于是每一次对话都要
+  先打一趟 DeepSeek、等它返回 Insufficient Balance、再转 Kimi。
+  一个人聊十句就白等十个来回 —— 而且余额不足这种事，
+  下一秒不会自己变好，重试一万次都是同一个答案。
+
+  所以：碰到「余额/密钥」这类**不会自愈**的错误就暂停 DeepSeek 一段时间，
+  期间直接走 Kimi；一旦有一次成功立刻恢复。
+  网络抖动这类**会自愈**的错误不熔断 —— 那种下一次就可能好了，
+  为它停用主力模型反而更贵。
+*/
+const DEEPSEEK_PAUSE_MS = Math.max(60_000, Number(process.env.DEEPSEEK_PAUSE_MS || 10 * 60_000));
+let deepSeekPausedUntil = 0;
+
+const deepSeekPaused = () => {
+  if (Date.now() < deepSeekPausedUntil) return true;
+  deepSeekPausedUntil = 0;
+  return false;
+};
+const clearDeepSeekPause = () => { deepSeekPausedUntil = 0; };
+const noteDeepSeekFailure = (err) => {
+  const msg = String(err?.message || err || '');
+  // 只对「不会自己好」的错误熔断
+  if (!/insufficient balance|余额|欠费|unauthorized|invalid api key|401|403|not found the model/i.test(msg)) return;
+  deepSeekPausedUntil = Date.now() + DEEPSEEK_PAUSE_MS;
+  console.warn(`[AI] DeepSeek 暂停 ${Math.round(DEEPSEEK_PAUSE_MS / 60000)} 分钟（${msg.slice(0, 80)}），期间直接走 Kimi。充值后下次恢复窗口自动重试。`);
+};
+
 const requestAI = async (params) => {
   const model = (params.requestedModel || '').toLowerCase();
 
@@ -1841,11 +1873,14 @@ const requestAI = async (params) => {
     合同图片识别是干活的路径，不能为了省钱走死。
   */
   if (messagesHaveImage(params.messages)) {
-    if (DEEPSEEK_API_KEY) {
+    if (DEEPSEEK_API_KEY && !deepSeekPaused()) {
       try {
         console.log('[AI Route] 含图片 → DeepSeek 视觉');
-        return await requestDeepSeekCompletion({ ...params, requestedModel: DEEPSEEK_VISION_MODEL });
+        const r = await requestDeepSeekCompletion({ ...params, requestedModel: DEEPSEEK_VISION_MODEL });
+        clearDeepSeekPause();
+        return r;
       } catch (err) {
+        noteDeepSeekFailure(err);
         console.warn(`[AI Route] DeepSeek 视觉失败(${err?.message})，回退 Kimi 视觉`);
       }
     }
@@ -1854,9 +1889,16 @@ const requestAI = async (params) => {
   }
 
   // 3. 纯文本默认 → DeepSeek 主力；失败/无 key → Kimi → Gemini
-  if (DEEPSEEK_API_KEY) {
-    try { return await requestDeepSeekCompletion(params); }
-    catch (err) { console.warn(`[AI Fallback] DeepSeek 失败(${err?.message})，切 Kimi/Gemini`); return kimiThenGemini(params); }
+  if (DEEPSEEK_API_KEY && !deepSeekPaused()) {
+    try {
+      const r = await requestDeepSeekCompletion(params);
+      clearDeepSeekPause();   // 成功即恢复，不用等冷却走完
+      return r;
+    } catch (err) {
+      noteDeepSeekFailure(err);
+      console.warn(`[AI Fallback] DeepSeek 失败(${err?.message})，切 Kimi/Gemini`);
+      return kimiThenGemini(params);
+    }
   }
 
   // 4. 无 DeepSeek key → 原有 Kimi→Gemini

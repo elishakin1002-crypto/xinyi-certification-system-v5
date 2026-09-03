@@ -816,13 +816,16 @@ ${ragContext}
       if (currentFile) sourceFlags.push(`文件 ${currentFile.type.toUpperCase()}`);
       if (sourceFlags.length === 0) sourceFlags.push('纯对话');
       const requestNotes: string[] = [];
-      if (usagePct >= 100) requestNotes.push('预计上下文超预算，可能导致响应变慢。');
-      if (usagePct >= 80 && usagePct < 100) requestNotes.push('预计上下文接近预算上限。');
+      // 措辞不能像「你超额了」——这只是提醒会变慢，不是拦你
+      if (usagePct >= 100) requestNotes.push('这次带的上下文比较大，回答可能慢一些（不影响能不能用）。');
+      if (usagePct >= 80 && usagePct < 100) requestNotes.push('上下文接近建议大小，回答可能稍慢。');
       if (currentFile?.type === 'pdf' || currentFile?.type === 'image') requestNotes.push('图片/PDF 会触发视觉解析，耗时通常高于纯文本。');
       if (tools && tools.length > 0) requestNotes.push('本次已启用联网检索。');
 
       const requestMeta = {
-        model: 'kimi-k2.5',
+        // 实际用哪个模型由服务端按「文本走 DeepSeek、图片走视觉、失败回退」决定，
+        // 前端写死一个名字只会误导人 —— 尤其是写死了一个已经不存在的 kimi-k2.5。
+        model: '由服务端选择',
         budgetTokens: tokenBudget,
         estimatedTokens,
         usagePct,
@@ -973,8 +976,22 @@ ${ragContext}
                             <div className="mt-3 pt-3 border-t border-gray-100">
                                 <details className="group">
                                     <summary className="cursor-pointer text-[11px] font-bold text-gray-600 list-none flex items-center justify-between">
+                                        {/*
+                                          原来写的是「预算 1023/12000 tokens (9%)」。
+
+                                          这行**不是**任何人的使用额度，它只是「这次对话带了多大的上下文」，
+                                          超了也照发，只是可能慢一点。但「预算 x/y」这个说法
+                                          长得就像配额，用的人会以为自己被限量了，
+                                          于是不敢多问 —— 而这套系统的价值恰恰在于多问。
+
+                                          真正的每日额度在服务端 aiUsage.js，
+                                          总经理和系统管理员是 Infinity。
+                                        */}
                                         <span>
-                                            预算 {msg.requestMeta.estimatedTokens}/{msg.requestMeta.budgetTokens} tokens ({msg.requestMeta.usagePct}%)
+                                            本次上下文 {msg.requestMeta.estimatedTokens} tokens
+                                            <span className="font-normal text-gray-400">
+                                                （偏大会变慢，不限量）
+                                            </span>
                                         </span>
                                         <span className="text-[10px] text-gray-400">{msg.requestMeta.sourceSummary}</span>
                                     </summary>
