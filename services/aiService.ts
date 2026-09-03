@@ -1,3 +1,5 @@
+import { reportClientError } from './errorReporter';
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'model';
   parts: { text?: string; inlineData?: { mimeType: string; data: string } }[];
@@ -18,7 +20,15 @@ class AIService {
     this.backendUrl = (envBackendUrl || '/api/ai').replace(/\/$/, '');
 
     const envModel = (import.meta as any).env?.VITE_KIMI_MODEL as string | undefined;
-    this.defaultModel = envModel || 'kimi-k2.5';
+    /*
+      默认模型不再写死 kimi-k2.5 —— 2026-09-03 查 Moonshot 账号，
+      可用的是 kimi-k3 / kimi-k2.6 / kimi-k2.7-code*，**根本没有 k2.5**。
+      配了一个不存在的模型，报错却是「AI 后端不可用」，很难往这上面想。
+
+      另外这个值现在只在「显式指定模型」时用得上：
+      服务端已经改成纯文本走 DeepSeek、含图片走 DeepSeek 视觉，Kimi 是兜底。
+    */
+    this.defaultModel = envModel || 'kimi-k3';
   }
 
   private resolveBackendTimeout(endpoint: string, payload: unknown): number {
@@ -53,7 +63,8 @@ class AIService {
 
   private resolveTemperature(model: string, requested?: number): number | undefined {
     const normalized = String(model || '').trim().toLowerCase();
-    // kimi-k2.5 rejects custom temperature values (provider requires default behavior).
+    // kimi-k2.5 不接受自定义 temperature。该模型已不在账号可用列表里，
+    // 这条留着是防止有人手工指定它时又踩一次。
     if (normalized === 'kimi-k2.5') return undefined;
     if (typeof requested === 'number') return requested;
     return 0.2;
@@ -131,14 +142,55 @@ class AIService {
       .trim();
   }
 
-  private backendUnavailableFallback = async <T>(): Promise<T> => {
-    throw new Error('AI 后端不可用，请确认服务端 /api/ai 已启动并配置模型密钥。');
+  /*
+    把上游的真实原因翻译成同事看得懂的一句话。
+
+    ── 为什么要有这一层 ──────────────────────────────────────────
+    2026-09-03：AI 对话框报「AI 后端不可用，请确认服务端已启动并配置模型密钥」。
+    真实原因是 **DeepSeek 账户余额不足**，而这句提示把人引向了
+    「是不是服务挂了」「是不是密钥没配」——两个都不是。
+    我自己也顺着这句话多查了两轮才翻到后端日志。
+
+    错误信息指错方向，比没有错误信息更费时间。
+
+    ── 分两层说 ──────────────────────────────────────────────────
+    给同事看的是「能不能干活、该找谁」，不是 API 的原文；
+    原文保留在 cause 里，管理员在系统日志里能看到。
+  */
+  private explainAiFailure(cause: unknown): string {
+    const raw = String((cause as any)?.message || cause || '');
+    const lower = raw.toLowerCase();
+
+    if (/insufficient balance|余额不足|欠费/i.test(raw)) {
+      return 'AI 服务余额不足，暂时无法使用。请联系系统管理员充值。';
+    }
+    if (/not found the model|model.*not (found|exist)|无此模型/i.test(raw)) {
+      return 'AI 模型配置有误（指定的模型不存在）。请联系系统管理员。';
+    }
+    if (/permission denied|unauthorized|invalid api key|401|403/i.test(lower)) {
+      return 'AI 服务密钥无效或已过期。请联系系统管理员。';
+    }
+    if (/rate limit|too many requests|429/i.test(lower)) {
+      return 'AI 服务当前请求过多，请稍等一会儿再试。';
+    }
+    if (/timeout|timed out|超时/i.test(lower)) {
+      return 'AI 响应超时。可以再试一次，如果一直这样请联系系统管理员。';
+    }
+    if (/quota|配额/i.test(lower)) {
+      return '今天的 AI 使用额度已用完。请联系系统管理员。';
+    }
+    // 认不出来的，把原文带上——总比一句放之四海皆准的废话强
+    return `AI 暂时不可用${raw ? `：${raw.slice(0, 120)}` : ''}。请联系系统管理员。`;
+  }
+
+  private backendUnavailableFallback = async <T>(cause?: unknown): Promise<T> => {
+    throw new Error(this.explainAiFailure(cause));
   }
 
   private async routeRequest<T>(
     endpoint: string,
     payload: any,
-    fallbackMethod: () => Promise<T>,
+    fallbackMethod: (cause?: unknown) => Promise<T>,
     options?: { timeoutMs?: number; allowAbortFallback?: boolean }
   ): Promise<T> {
     const now = Date.now();
@@ -187,7 +239,13 @@ class AIService {
       const cooldownMs = Math.min(60000, 2000 * Math.pow(2, Math.min(5, nextFailures)));
       this.backendState.disabledUntil = Date.now() + cooldownMs;
       console.warn(`⚠️ 后端 AI 不可用 (${endpoint})，${cooldownMs}ms 后重试。`, error);
-      return fallbackMethod();
+      /*
+        AI 挂了要进错误收集。
+        同事碰到「AI 不能用」几乎不会来说 —— 他会以为是自己网不好，
+        换个方式绕过去。而这恰恰是最该被管理员看见的一类故障。
+      */
+      reportClientError('api', String((error as any)?.message || error), { source: `AI${endpoint}` });
+      return fallbackMethod(error);
     }
   }
 

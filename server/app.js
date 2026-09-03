@@ -799,6 +799,19 @@ const GEMINI_FALLBACK_MODEL = String(process.env.GEMINI_FALLBACK_MODEL || 'gemin
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 const DEEPSEEK_BASE_URL = String(process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
 const DEEPSEEK_MODEL = String(process.env.DEEPSEEK_MODEL || 'deepseek-chat').trim();
+/*
+  DeepSeek 的视觉模型。
+
+  2026-09-03 查账号可用模型时发现的：DeepSeek 现在有 deepseek-v4-flash-vision-exp。
+  在此之前「含图片必须走 Kimi」是硬编码的前提 —— 那个前提已经过时了。
+
+  业务方定的原则是「除多模态外一律走 DeepSeek，因为便宜」。
+  既然多模态它也能做，那就连这块一起省下来，Kimi 退为兜底。
+
+  带 -exp 说明是实验版，所以**失败必须能回退到 Kimi**，
+  不能因为想省钱把合同识别这条路走死。
+*/
+const DEEPSEEK_VISION_MODEL = String(process.env.DEEPSEEK_VISION_MODEL || 'deepseek-v4-flash-vision-exp').trim();
 
 const AI_PROVIDER_TIMEOUT_MS = Math.max(8000, Number(process.env.AI_PROVIDER_TIMEOUT_MS || 45000));
 
@@ -1813,8 +1826,25 @@ const requestAI = async (params) => {
     catch (err) { console.warn(`[AI] DeepSeek 显式请求失败(${err?.message})，回退 Kimi/Gemini`); return kimiThenGemini(params); }
   }
 
-  // 2. 含图片 → 必须走视觉模型（DeepSeek 无视觉）→ Kimi，失败回退 Gemini
+  /*
+    2. 含图片 → 视觉模型。
+
+    2026-09-03 之前这里是「DeepSeek 无视觉 → 直接走 Kimi」。
+    那个前提已经不成立：DeepSeek 账号里有 deepseek-v4-flash-vision-exp。
+
+    按业务方定的「能用 DeepSeek 就用 DeepSeek（便宜）」，
+    视觉也先试 DeepSeek。但它带 -exp，所以失败必须能退到 Kimi ——
+    合同图片识别是干活的路径，不能为了省钱走死。
+  */
   if (messagesHaveImage(params.messages)) {
+    if (DEEPSEEK_API_KEY) {
+      try {
+        console.log('[AI Route] 含图片 → DeepSeek 视觉');
+        return await requestDeepSeekCompletion({ ...params, requestedModel: DEEPSEEK_VISION_MODEL });
+      } catch (err) {
+        console.warn(`[AI Route] DeepSeek 视觉失败(${err?.message})，回退 Kimi 视觉`);
+      }
+    }
     console.log('[AI Route] 含图片 → Kimi 视觉');
     return kimiThenGemini({ ...params, requestedModel: DEFAULT_MODEL });
   }
