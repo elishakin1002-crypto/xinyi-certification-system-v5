@@ -12,6 +12,7 @@ import { gateAiActions, AI_ACTION_PERMISSION, AI_ACTION_LABEL } from '../src/mod
 import { isEmptyPromise, EMPTY_PROMISE_NOTICE } from '../src/modules/ai_center/emptyPromise';
 import { checkActionIntent, buildIntentPrompt } from '../src/modules/ai_center/intentGuard';
 import { buildIdentityContext } from '../src/modules/ai_center/identityContext';
+import { buildSysAdminContext } from '../src/modules/ai_center/sysadminContext';
 import { aiProposalService } from '../services/aiProposalService';
 import { HIGH_RISK_ACTIONS, buildProposalFor } from '../src/modules/ai_center/highRisk';
 import {
@@ -135,6 +136,20 @@ const AIChatWidget = () => {
   
   // V5.0: Active Context for Objection Handling (Sales Scripting)
   const [activeContext, setActiveContext] = useState<{name: string, info: string} | null>(null);
+
+  /*
+    系统状态快照，只有系统管理员会取。
+
+    ── 为什么要缓存 ──────────────────────────────────────────
+    每问一句就拉一次会给数据库添无谓的压力，而系统状态一分钟内
+    不会变到影响判断。60 秒足够新，也不至于每句都查。
+
+    ── 为什么不是所有人都取 ──────────────────────────────────
+    这份数据里有 IP、登录时间、各人 AI 用量。
+    顾问的 AI 不该知道谁几点从哪登录的。
+  */
+  const [sysSnapshot, setSysSnapshot] = useState<any>(null);
+  const sysSnapshotAtRef = useRef<number>(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -722,8 +737,37 @@ const AIChatWidget = () => {
         (action) => checkActionPermission(action).allowed,
       );
 
+      /*
+        系统管理员：把真实系统状态塞进上下文。
+
+        2026-09-03 之前，管理员问「系统健康吗」，AI 手上一个数据都没有，
+        只能回「建议定期检查备份」这类放之四海皆准的废话 ——
+        **没有数据的诊断不叫诊断，叫算命**。
+
+        取失败就不注入，不拦对话：观察设施故障不该让 AI 用不了。
+      */
+      let sysContext = '';
+      const isSysAdmin = Array.isArray(currentUser?.roles) && currentUser.roles.includes('SYS_ADMIN' as any);
+      if (isSysAdmin) {
+        try {
+          const fresh = Date.now() - sysSnapshotAtRef.current < 60_000;
+          let snap = fresh ? sysSnapshot : null;
+          if (!snap) {
+            const r = await fetch('/api/admin/sysadmin-overview', { credentials: 'include' });
+            const b = await r.json();
+            if (r.ok && b?.ok !== false) {
+              snap = b.data;
+              setSysSnapshot(snap);
+              sysSnapshotAtRef.current = Date.now();
+            }
+          }
+          if (snap) sysContext = buildSysAdminContext(snap);
+        } catch { /* 取不到就不注入，不影响对话 */ }
+      }
+
       let systemPrompt = `你是信义系统AI助手，擅长CRM、合同、财务、认证管理。${dateContext}
 ${identityContext}
+${sysContext}
 ${ragContext}
 
 规则：
