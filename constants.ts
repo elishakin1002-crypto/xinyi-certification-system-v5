@@ -156,7 +156,7 @@ export const CUSTOMER_VISIBILITY_POLICY: CustomerVisibilityPolicy =
   (String(import.meta.env?.VITE_CUSTOMER_VISIBILITY || '').trim() as CustomerVisibilityPolicy) || 'all';
 
 export const SYSTEM_ROLES: Role[] = [
-  { id: 'ADMIN', name: '老板', description: '全局视野，关注风险与利润' },
+  { id: 'ADMIN', name: '总经理', description: '全局视野，关注风险与利润' },
   { id: 'SYS_ADMIN', name: '系统管理员', description: '系统维护、账号与配置，稳定后可收窄为业务只读' },
   /*
     总助（总经理助理）。2026-08-24 由「交付负责人」改名。
@@ -169,7 +169,7 @@ export const SYSTEM_ROLES: Role[] = [
     导致选「销售」实际拿到的是一个**不能建线索、不能认领线索，
     却能删任务和删别人工作日志**的角色。那个 hack 已一并移除。
   */
-  { id: 'MANAGER', name: '总助', description: '代老板统筹派活与进度，管资料不碰钱' },
+  { id: 'MANAGER', name: '总助', description: '代总经理统筹派活与进度，管资料不碰钱' },
   { id: 'SALES', name: '销售', description: '线索到签约，可查看交付进度但不改' },
   { id: 'CONSULTANT', name: '咨询顾问', description: '具体执行任务与客户沟通' },
   { id: 'FINANCE', name: '财务', description: '关注回款、开票与结算' },
@@ -205,7 +205,7 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
 };
 
 export const DEFAULT_USER_PROFILES: UserProfile[] = [
-  { id: 'U-001', name: '老板（示例）', roles: ['ADMIN', 'CONSULTANT'], activeRole: 'ADMIN', positionTags: ['公司负责人', '销售'] },
+  { id: 'U-001', name: '总经理（示例）', roles: ['ADMIN', 'CONSULTANT'], activeRole: 'ADMIN', positionTags: ['公司负责人', '销售'] },
   { id: 'U-002', name: '总助（示例）', roles: ['MANAGER'], activeRole: 'MANAGER', positionTags: ['统筹派活'] },
   { id: 'U-003', name: '财务（示例）', roles: ['FINANCE'], activeRole: 'FINANCE', positionTags: ['对公财务'] },
   { id: 'U-004', name: '咨询顾问1（示例）', roles: ['CONSULTANT'], activeRole: 'CONSULTANT', positionTags: ['食品包装认证指导负责人'] },

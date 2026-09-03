@@ -30,7 +30,7 @@ const demoLeads: any[] = [
         date: yesterday,
         method: '电话',
         content: '客户咨询 ISO 9001 认证流程和周期',
-        operator: '老板（示例）',
+        operator: '总经理（示例）',
         result: '有意向，需后续跟进'
       }
     ],
@@ -65,7 +65,7 @@ const demoLeads: any[] = [
         date: thisMonth + '-05',
         method: '面谈',
         content: '现场调研，确定 HACCP 认证需求',
-        operator: '老板（示例）',
+        operator: '总经理（示例）',
         result: '已签约'
       }
     ],
@@ -89,7 +89,7 @@ const demoCustomers: any[] = [
         date: yesterday,
         method: '微信',
         content: '发送认证资料清单',
-        operator: '老板（示例）',
+        operator: '总经理（示例）',
         result: '客户已接收'
       }
     ],
@@ -128,7 +128,7 @@ const demoCustomers: any[] = [
         date: thisMonth + '-10',
         method: '电话',
         content: '项目启动会议安排',
-        operator: '老板（示例）',
+        operator: '总经理（示例）',
         result: '已确定时间'
       }
     ],
@@ -241,7 +241,7 @@ const demoContracts: any[] = [
     serviceLine: 'ISO 9001 质量管理体系认证',
     riskLevel: 'Low',
     archiveStatus: 'active',
-    owner: '老板（示例）',
+    owner: '总经理（示例）',
     receivables: [
       {
         id: 'REC-001',
@@ -278,7 +278,7 @@ const demoContracts: any[] = [
     serviceLine: 'IATF 16949 汽车质量管理体系认证',
     riskLevel: 'Medium',
     archiveStatus: 'active',
-    owner: '老板（示例）',
+    owner: '总经理（示例）',
     receivables: [
       {
         id: 'REC-004',
@@ -315,7 +315,7 @@ const demoContracts: any[] = [
     serviceLine: 'HACCP 食品安全管理体系认证',
     riskLevel: 'Low',
     archiveStatus: 'active',
-    owner: '老板（示例）',
+    owner: '总经理（示例）',
     receivables: [
       {
         id: 'REC-007',
@@ -348,7 +348,7 @@ const demoProjects: any[] = [
     id: 'PROJ-DEMO-001',
     name: '温州宏远包装 ISO 9001 认证项目',
     contractRef: 'XY-2025-001',
-    manager: '老板（示例）',
+    manager: '总经理（示例）',
     progress: 35,
     status: Status.Active,
     paymentStatus: 'partial',
@@ -375,7 +375,7 @@ const demoProjects: any[] = [
         status: 'Completed',
         priority: 'High',
         category: 'Core',
-        owner: '老板（示例）'
+        owner: '总经理（示例）'
       },
       {
         id: 'TASK-002',
@@ -384,7 +384,7 @@ const demoProjects: any[] = [
         status: 'InProgress',
         priority: 'High',
         category: 'Core',
-        owner: '老板（示例）'
+        owner: '总经理（示例）'
       },
       {
         id: 'TASK-003',
@@ -393,7 +393,7 @@ const demoProjects: any[] = [
         status: 'Pending',
         priority: 'High',
         category: 'Core',
-        owner: '老板（示例）'
+        owner: '总经理（示例）'
       },
       {
         id: 'TASK-004',
@@ -402,7 +402,7 @@ const demoProjects: any[] = [
         status: 'Pending',
         priority: 'Medium',
         category: 'Core',
-        owner: '老板（示例）'
+        owner: '总经理（示例）'
       },
       {
         id: 'TASK-005',
@@ -411,7 +411,7 @@ const demoProjects: any[] = [
         status: 'Pending',
         priority: 'Medium',
         category: 'Core',
-        owner: '老板（示例）'
+        owner: '总经理（示例）'
       },
       {
         id: 'TASK-006',
@@ -420,7 +420,7 @@ const demoProjects: any[] = [
         status: 'Pending',
         priority: 'High',
         category: 'Core',
-        owner: '老板（示例）'
+        owner: '总经理（示例）'
       }
     ],
     settlementConfig: { rule: 'Ratio', value: 8, base: 'Revenue' },
@@ -555,7 +555,7 @@ const demoProjects: any[] = [
     sourceType: 'lead',
     sourceRef: 'LEAD-DEMO-003',
     projectMode: 'delivery',
-    manager: '老板（示例）',
+    manager: '总经理（示例）',
     progress: 100,
     status: Status.Completed,
     paymentStatus: 'paid',
@@ -582,7 +582,7 @@ const demoProjects: any[] = [
         status: 'Completed',
         priority: 'High',
         category: 'Core',
-        owner: '老板（示例）'
+        owner: '总经理（示例）'
       },
       {
         id: 'TASK-014',
@@ -591,7 +591,7 @@ const demoProjects: any[] = [
         status: 'Completed',
         priority: 'High',
         category: 'Core',
-        owner: '老板（示例）'
+        owner: '总经理（示例）'
       },
       {
         id: 'TASK-015',
@@ -600,7 +600,7 @@ const demoProjects: any[] = [
         status: 'Completed',
         priority: 'High',
         category: 'Core',
-        owner: '老板（示例）'
+        owner: '总经理（示例）'
       }
     ],
     settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' },
@@ -628,7 +628,7 @@ const demoProjectWorkLogs: any[] = [
     id: 'LOG-001',
     projectId: 'PROJ-DEMO-001',
     operatorUserId: 'U-001',
-    operatorName: '老板（示例）',
+    operatorName: '总经理（示例）',
     logDate: yesterday,
     workContent: '完成现状调研报告编写',
     actualHours: 4,
@@ -640,7 +640,7 @@ const demoProjectWorkLogs: any[] = [
     id: 'LOG-002',
     projectId: 'PROJ-DEMO-001',
     operatorUserId: 'U-001',
-    operatorName: '老板（示例）',
+    operatorName: '总经理（示例）',
     logDate: thisMonth + '-19',
     workContent: '质量手册框架设计',
     actualHours: 6,
@@ -771,7 +771,7 @@ const demoCertificateProjects: any[] = [
     sourceRef: 'cust-cert-001',
     projectMode: 'followup',
     projectCategory: 'FollowUp',
-    manager: '老板（示例）',
+    manager: '总经理（示例）',
     progress: 35,
     status: Status.Active,
     paymentStatus: 'unpaid',
@@ -779,7 +779,7 @@ const demoCertificateProjects: any[] = [
     duration: 45,
     projectType: 'Self-Operated',
     tasks: [
-      { id: 'task-cert-001', title: '确认客户续证意向', deadline: '2026-04-03', status: 'Completed', priority: 'High', category: 'Core', owner: '老板（示例）' },
+      { id: 'task-cert-001', title: '确认客户续证意向', deadline: '2026-04-03', status: 'Completed', priority: 'High', category: 'Core', owner: '总经理（示例）' },
       { id: 'task-cert-002', title: '收集复评审核资料', deadline: '2026-04-08', status: 'Pending', priority: 'High', category: 'Core', owner: '咨询顾问1（示例）' },
       { id: 'task-cert-003', title: '锁定认证机构排期', deadline: '2026-04-12', status: 'Pending', priority: 'High', category: 'Core', owner: '交付负责人（示例）' }
     ],
@@ -794,7 +794,7 @@ const demoCertificateProjects: any[] = [
     sourceRef: 'cust-cert-002',
     projectMode: 'followup',
     projectCategory: 'FollowUp',
-    manager: '老板（示例）',
+    manager: '总经理（示例）',
     progress: 20,
     status: Status.Active,
     paymentStatus: 'unpaid',
@@ -802,7 +802,7 @@ const demoCertificateProjects: any[] = [
     duration: 20,
     projectType: 'Self-Operated',
     tasks: [
-      { id: 'task-cert-004', title: '立即联系客户确认现状', deadline: '2026-04-01', status: 'Pending', priority: 'High', category: 'Core', owner: '老板（示例）' },
+      { id: 'task-cert-004', title: '立即联系客户确认现状', deadline: '2026-04-01', status: 'Pending', priority: 'High', category: 'Core', owner: '总经理（示例）' },
       { id: 'task-cert-005', title: '确认是否已有竞对介入', deadline: '2026-04-02', status: 'Pending', priority: 'High', category: 'Core', owner: '咨询顾问1（示例）' },
       { id: 'task-cert-006', title: '补审计划与资料清单', deadline: '2026-04-05', status: 'Pending', priority: 'High', category: 'Core', owner: '交付负责人（示例）' }
     ],
@@ -1035,7 +1035,7 @@ export const seedDemoData = () => {
             date: `${thisMonth}-18`,
             method: '电话',
             content: '完成方案确认并进入签约',
-            operator: '老板（示例）',
+            operator: '总经理（示例）',
             result: '已转化为收入项目'
           }
         ],
@@ -1049,7 +1049,7 @@ export const seedDemoData = () => {
         sourceType: 'lead',
         sourceRef: leadId,
         projectMode: 'delivery',
-        manager: '老板（示例）',
+        manager: '总经理（示例）',
         progress: 100,
         status: Status.Completed,
         paymentStatus: 'paid',
@@ -1076,7 +1076,7 @@ export const seedDemoData = () => {
             status: 'Completed',
             priority: 'High',
             category: 'Core',
-            owner: '老板（示例）'
+            owner: '总经理（示例）'
           }
         ],
         settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' },

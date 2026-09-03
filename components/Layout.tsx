@@ -110,16 +110,23 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const roleToPersona: Record<RoleID, DashboardPersona> = {
     ADMIN: 'boss',
-    SYS_ADMIN: 'boss',
     /*
-      总助看老板工作台，不看销售工作台。
+      2026-09-02：系统管理员不再看总经理工作台。
+
+      原来映射到 'boss'，于是头像下面写着「老板」——
+      而这个账号是技术负责人，不是老板；他要看的也不是这个月签了几单，
+      是服务健不健康、AI 花了多少钱、有没有异常登录。
+    */
+    SYS_ADMIN: 'sysadmin',
+    /*
+      总助看总经理工作台，不看销售工作台。
 
       改名前 MANAGER 被映射到 'sales'，于是总助打开系统看到的是
       「我的线索 / 我的合同 / 个人转化率」——他不拥有线索，这些数永远是 0。
-      他真正要盯的是老板工作台下半部分的「团队产能与执行」：
+      他真正要盯的是总经理工作台下半部分的「团队产能与执行」：
       人均在制项目数、项目延误率、本周日志覆盖率。
 
-      老板工作台上的内容都在总助的读权限内（readScope=ALL，且有 CONTRACT_VIEW_AMOUNT），
+      总经理工作台上的内容都在总助的读权限内（readScope=ALL，且有 CONTRACT_VIEW_AMOUNT），
       不存在越权显示。他仍然不能确认到账、不能碰结算——那是动作权限管的，与看板无关。
     */
     MANAGER: 'boss',
@@ -129,15 +136,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   };
   /*
     视角显示名。这里是**看板视角**的名字，不是角色名——
-    四个看板（老板/销售/顾问/财务）和六个角色不是一一对应
-    （总助看老板看板、系统管理员也看老板看板）。
-    所以它不能直接取 SYSTEM_ROLES，是独立的一组标签。
+    五个看板（总经理/销售/顾问/财务/系统管理员）和六个角色不是一一对应
+    （总助看总经理看板）。所以它不能直接取 SYSTEM_ROLES，是独立的一组标签。
   */
   const personaDisplayName: Record<DashboardPersona, string> = {
-    boss: '老板',
+    // 键名 boss 保留（写在 URL / localStorage / current_role 里，改了旧值全失效），
+    // 只改显示名：公司里这个角色的正式称呼是总经理，不是老板。
+    boss: '总经理',
     sales: '销售',
     consultant: '咨询顾问',
-    finance: '财务'
+    finance: '财务',
+    sysadmin: '系统管理员'
   };
 
   const getPageTitle = () => {
@@ -170,12 +179,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const formatViewDisplayName = (value: string) => normalizeDisplayLabel(value);
   const hasLedgerGuideTag = (tags?: string[]) => (tags || []).some(tag => String(tag).includes('台账指导'));
   const currentUserDisplayName = formatIdentityDisplayName(currentUser.name) || currentUser.name;
-  const currentRoleDisplayName = personaDisplayName[currentViewPersona] || '老板';
+  const currentRoleDisplayName = personaDisplayName[currentViewPersona] || '总经理';
   const availableRoles = SYSTEM_ROLES.filter(r => currentUser.roles.includes(r.id));
   const isFinanceOnlyIdentity = currentUser.roles.length === 1 && currentUser.roles[0] === 'FINANCE';
 
   /*
-    视角切换只给老板和系统管理员。
+    视角切换只给总经理和系统管理员。
 
     ── 为什么不给其他人 ──────────────────────────────────────────
     原来的判断是 viewOptions.length > 1，于是一个只有「咨询顾问」角色的同事
@@ -186,7 +195,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     选完顶部还写「当前视角：销售」。一个顾问点进去，会以为自己能变成销售，
     或者以为公司给了他更大的权限。等他发现点了没用，第一反应是"系统坏了"。
 
-    ── 为什么老板和系统管理员留着 ────────────────────────────────
+    ── 为什么总经理和系统管理员留着 ────────────────────────────────
     他们要能看到各个角色分别看到什么、有哪些功能，才好判断权限配得对不对。
     这是**巡检工具**，不是身份切换 —— 权限始终按账号本身的角色判定，
     服务端 enforce 模式下切视角也拿不到多余的数据。
@@ -205,11 +214,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
     if (canSwitchView) {
       /*
-        巡检账号要能看**全部四个工作台**，不只是自己拥有的角色。
+        巡检账号要能看**全部工作台**，不只是自己拥有的角色。
 
         系统管理员账号只有 SYS_ADMIN 一个角色，只按 availableRoles 生成的话
         就只有一项，菜单直接不显示 —— 而这个账号恰恰是最需要
-        「顾问看到的是什么样、财务看到的是什么样」的那个。
+        「总经理看到的是什么样、顾问看到的是什么样」的那个。
 
         没有对应角色的用 persona 模式，只换工作台不动权限，标注「仅看板」。
         标注很重要：不写的话会以为是"以顾问身份预览"，

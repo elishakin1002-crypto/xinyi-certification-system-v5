@@ -457,7 +457,7 @@ const AIChatWidget = () => {
           return 'convert_signal';
         }
         if (actionData.diagnose) {
-          if (activeRole !== 'ADMIN') { sys('❌ 系统自我诊断/自愈仅限管理员（老板视角）使用。'); return 'denied'; }
+          if (activeRole !== 'ADMIN') { sys('❌ 系统自我诊断/自愈仅限总经理与系统管理员使用。'); return 'denied'; }
           try {
             const rep = await fetch('/api/admin/diagnose', { credentials: 'include' }).then((r) => r.json());
             if (!rep.ok) { sys(`诊断失败：${rep.message || '未知错误'}`); return 'diagnose'; }

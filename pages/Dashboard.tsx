@@ -21,6 +21,7 @@ import {
 import { useApp } from '../context/AppContext';
 import { AggregatedReminder, Reminder, DashboardPersona, Status } from '../types';
 import { useLocation, useNavigate } from 'react-router-dom';
+import SysAdminBoard from './dashboard/SysAdminBoard';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
 import { AiProposalQueue } from '../components/AiProposalQueue';
 import BossDashboard from './dashboard/BossDashboard';
@@ -77,10 +78,11 @@ type PersonaPlan = {
 };
 
 const PERSONA_LABEL: Record<DashboardPersona, string> = {
-  boss: '老板视角',
+  boss: '总经理视角',
   sales: '销售视角',
   consultant: '咨询师视角',
-  finance: '财务视角'
+  finance: '财务视角',
+  sysadmin: '系统管理员视角'
 };
 
 const PERSONA_PLAN: Record<DashboardPersona, PersonaPlan> = {
@@ -111,6 +113,19 @@ const PERSONA_PLAN: Record<DashboardPersona, PersonaPlan> = {
     aiDefaultOpen: { opportunity: false, risk: false, intel: false },
     taskKeywords: ['到款', '回款', '开票', '结算', '催款', '应收', '实收'],
     alertKeywords: ['回款异常', '结算异常', '超期', '逾期', '金额缺失', '无法完结', '应收']
+  },
+  /*
+    系统管理员**不走这套业务工作台**，下面这份配置只是为了满足类型完整性。
+    真正渲染的是 SysAdminBoard —— 见本文件里对 persona === 'sysadmin' 的分支。
+    他关心的是服务健不健康、AI 花了多少钱、有没有异常登录，
+    而不是这个月签了几单。
+  */
+  sysadmin: {
+    taskDefaultView: 'aggregated',
+    chartCollapsed: true,
+    aiDefaultOpen: { opportunity: false, risk: false, intel: false },
+    taskKeywords: [],
+    alertKeywords: []
   }
 };
 
@@ -1008,6 +1023,18 @@ const Dashboard = () => {
   ]);
 
   const roleHint = PERSONA_LABEL[persona];
+
+  /*
+    系统管理员走完全不同的一块看板。
+
+    分支放在**所有 hook 之后**：React 不允许条件性地跳过 hook，
+    提前 return 会让 hook 调用次数在两次渲染间不一致，
+    表现是切换视角时整页崩溃（而且报错信息完全指不到这里）。
+
+    代价是业务数据白算一遍。这块看板一天开几次，不值得为它做懒计算 ——
+    过早优化换来的是一个更容易出错的组件结构。
+  */
+  if (persona === 'sysadmin') return <SysAdminBoard />;
 
   return (
     <div className="p-6 space-y-6 animate-in fade-in duration-500">

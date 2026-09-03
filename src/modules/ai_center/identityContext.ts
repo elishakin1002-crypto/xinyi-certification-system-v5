@@ -24,7 +24,7 @@ import { AI_ACTION_PERMISSION, AI_ACTION_LABEL } from './actionPermissions';
  */
 
 const ROLE_NAME: Record<string, string> = {
-  ADMIN: '老板（总经理）',
+  ADMIN: '总经理',
   SYS_ADMIN: '系统管理员',
   MANAGER: '总经理助理',
   SALES: '销售',

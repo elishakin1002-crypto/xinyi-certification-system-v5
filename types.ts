@@ -29,7 +29,18 @@ export type CustomerVisibilityPolicy =
   | 'all'        // 全员可见
   | 'dedupe'     // 可查重：能搜到「已由某某跟进」，看不到联系方式与跟进记录
   | 'owner';     // 仅负责人可见
-export type DashboardPersona = 'boss' | 'sales' | 'consultant' | 'finance';
+/*
+  工作台视角。
+
+  'boss' 这个键名保留不动 —— 它写在 URL 查询参数、localStorage 和
+  app_state_latest 的 current_role 里，改键名会让所有人存着的旧值失效。
+  界面上的显示名已经从「老板」改成「总经理」，见 Layout / Dashboard 的显示表。
+
+  'sysadmin' 是 2026-09-02 新增：系统管理员看的东西和业务角色完全不同 ——
+  他关心的是服务健康、AI 花了多少钱、有没有异常登录，
+  而不是这个月签了几单。
+*/
+export type DashboardPersona = 'boss' | 'sales' | 'consultant' | 'finance' | 'sysadmin';
 
 export interface Role {
   id: RoleID;

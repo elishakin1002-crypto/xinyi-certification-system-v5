@@ -34,6 +34,7 @@ const batch3Router = require('./routes/batch3');
 const batch4Router = require('./routes/batch4');
 const batch5Router = require('./routes/batch5');
 const clientErrorsRouter = require('./routes/clientErrors');
+const sysadminOverviewRouter = require('./routes/sysadminOverview');   // 守卫在模块内部，见该文件
 const knowledgeRouter = require('./routes/knowledge');
 const remindersRouter = require('./routes/reminders');
 const uploadsRouter = require('./routes/uploads');
@@ -404,6 +405,7 @@ app.use(batch3Router);
 app.use(batch4Router);
 app.use(batch5Router);
 app.use(clientErrorsRouter);
+app.use(sysadminOverviewRouter);
 app.use(knowledgeRouter);
 app.use(remindersRouter);
 app.use(uploadsRouter);

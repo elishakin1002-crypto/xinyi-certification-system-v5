@@ -57,7 +57,8 @@ test('提示词里要写清用户是谁', () => {
   const { buildIdentityContext } = load();
   const ctx = buildIdentityContext({ name: '曾云俊', roles: ['ADMIN'] }, allowAll);
   assert.match(ctx, /曾云俊/, '没写姓名');
-  assert.match(ctx, /老板（总经理）/, '没写角色的中文名——「ADMIN」对用户没有意义');
+  // 2026-09-02：公司里这个角色的正式称呼统一成「总经理」，不再写「老板」
+  assert.match(ctx, /总经理/, '没写角色的中文名——「ADMIN」对用户没有意义');
   assert.match(ctx, /我是谁/, '没交代被问到身份时该怎么答');
 });
 

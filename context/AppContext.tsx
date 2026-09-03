@@ -199,10 +199,28 @@ const asObjectOrNull = <T extends object>(value: unknown): T | null => (
   value && typeof value === 'object' && !Array.isArray(value) ? (value as T) : null
 );
 const asStringOrNull = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+/*
+  ⚠️ 这张表在 components/Layout.tsx 里**还有一份**。
+  2026-09-02 改 SYS_ADMIN 的归属时只改了 Layout 那份，
+  类型检查才把这里揪出来 —— 靠 TypeScript 兜住是运气，不是设计。
+  以后动其中一份，记得两份一起改；tests/persona-mapping.test.js 会守住一致性。
+*/
 const ROLE_TO_PERSONA: Record<RoleID, DashboardPersona> = {
   ADMIN: 'boss',
-  SYS_ADMIN: 'boss',
-  MANAGER: 'sales',
+  // 系统管理员看运维看板，不看业务看板
+  SYS_ADMIN: 'sysadmin',
+  /*
+    总助看总经理工作台，不看销售工作台。
+
+    2026-08-24 在 Layout 那份表里改过，**但这份漏了** ——
+    而驱动 activePersona 的恰恰是这一份，所以那次修复从来没生效：
+    总助打开系统看到的一直是「我的线索 / 我的合同 / 个人转化率」，
+    她不拥有线索，这些数字永远是 0。
+
+    2026-09-02 由 tests/sysadmin-persona.test.js 的一致性检查发现。
+    这就是同一张表存两份的代价。
+  */
+  MANAGER: 'boss',
   SALES: 'sales',
   CONSULTANT: 'consultant',
   FINANCE: 'finance'
@@ -211,12 +229,15 @@ const PERSONA_TO_ROLE: Record<DashboardPersona, RoleID> = {
   boss: 'ADMIN',
   sales: 'MANAGER',
   consultant: 'CONSULTANT',
-  finance: 'FINANCE'
+  finance: 'FINANCE',
+  sysadmin: 'SYS_ADMIN'
 };
 const normalizePersona = (value?: string | null): DashboardPersona | null => {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'boss' || normalized === 'sales' || normalized === 'consultant' || normalized === 'finance') {
-    return normalized;
+  // 漏一个值的后果是「切过去没反应」——URL 上写着 persona=sysadmin，
+  // 这里认不出来就返回 null，页面悄悄退回默认视角，看起来像点击失效。
+  if (['boss', 'sales', 'consultant', 'finance', 'sysadmin'].includes(normalized)) {
+    return normalized as DashboardPersona;
   }
   return null;
 };
@@ -1955,7 +1976,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
               if (!reminders.some(r => r.id === remId)) {
                 upsertSystemReminder(remId, {
                   title: `🚨🚨 严重逾期预警`,
-                  content: `老板，项目【${project.name}】下的任务【${task.title}】已严重逾期 ${Math.abs(diffDays)} 天，请介入。`,
+                  content: `总经理，项目【${project.name}】下的任务【${task.title}】已严重逾期 ${Math.abs(diffDays)} 天，请介入。`,
                   date: today,
                   type: 'risk',
                   linkId: project.id,
