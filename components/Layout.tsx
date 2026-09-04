@@ -3,7 +3,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Sidebar from './Sidebar';
 import AIChatWidget from './AIChatWidget';
 import FeedbackModal from './FeedbackModal';
-import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare } from 'lucide-react';
+import MyAiUsage from './MyAiUsage';
+import OnboardingTour from './OnboardingTour';
+import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare, Compass } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { authService } from '../services/authService';
 import { dataService } from '../services/dataService';
@@ -35,6 +37,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
   const [isBellOpen, setIsBellOpen] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [replayTour, setReplayTour] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -664,6 +667,27 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                         </div>
                       )}
 
+                      {/*
+                        自己的 AI 用量。组件内部在低于 70% 时返回 null，
+                        所以平时这里什么都不会出现 —— 只有快满了才冒出来。
+                        放在账号菜单里而不是常驻头部：常驻会让人觉得自己在被计量。
+                      */}
+                      <div className="px-1 py-1"><MyAiUsage /></div>
+
+                      {/*
+                        重看引导。第一次登录时人最想做的是「赶紧看看这东西长什么样」，
+                        引导反而是干扰；等他用了两天遇到问题，才是真正想看的时候 ——
+                        那时候找不到入口，这个功能就白做了。
+                      */}
+                      <button
+                        type="button"
+                        onClick={() => { setReplayTour(true); setIsAccountMenuOpen(false); }}
+                        className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                      >
+                        <Compass className="w-4 h-4 shrink-0" />
+                        重看新手引导
+                      </button>
+
                       <button
                         type="button"
                         onClick={handleLogout}
@@ -685,6 +709,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </main>
         <AIChatWidget />
         <FeedbackModal open={isFeedbackOpen} onClose={() => setIsFeedbackOpen(false)} />
+        <OnboardingTour forceOpen={replayTour} onClose={() => setReplayTour(false)} />
       </div>
     </div>
   );

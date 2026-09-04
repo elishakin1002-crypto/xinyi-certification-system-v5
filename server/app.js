@@ -4356,6 +4356,38 @@ app.post('/api/notify/test', requireSessionRoles(['ADMIN', 'MANAGER'], 'NOTIFY_T
   这里能看到每个人调了多少次——那是很接近「监控员工」的数据，
   给总助或者其他人看没有必要，而权限一旦开出去就很难收回来。
 */
+/*
+  「我自己用了多少」—— 人人可查，不需要任何管理权限。
+
+  ── 为什么要单开一条，而不是让人去看 AI 配置中心 ──────────────
+  2026-09-04 把 AI 配置中心收窄成只给总经理和系统管理员之后，
+  顾问就完全看不到自己的用量了。
+
+  但**「不给配置权」不等于「不让人知道自己用了多少」**：
+  一个人不知道自己还剩多少，要么因为怕超额而不敢用（这套系统就白做了），
+  要么撞上限时莫名其妙被拦住，还以为是系统坏了。
+
+  ── 只返回自己的，不返回别人的 ────────────────────────────────
+  谁用得多是管理话题，不该让同事之间互相看见 ——
+  那会变成一种无形的比较压力，而用得多用得少本来就和绩效无关。
+*/
+app.get('/api/ai/my-usage', async (req, res) => {
+  try {
+    const aiUsage = require('./services/aiUsage');
+    const q = await aiUsage.checkQuota(req);
+    const limit = Number.isFinite(q.limit) ? q.limit : null;   // null = 不限量
+    return sendSuccess(res, {
+      used: q.used || 0,
+      limit,
+      // 百分比在服务端算好，前端不用关心 Infinity 这种边界
+      pct: limit ? Math.min(100, Math.round(((q.used || 0) / limit) * 100)) : 0,
+      unlimited: limit === null,
+    }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || '查询失败', {}, 500);
+  }
+});
+
 app.get('/api/ai/usage', requireSessionRoles(['ADMIN', 'SYS_ADMIN'], 'AI_USAGE_VIEW'), async (req, res) => {
   try {
     const { summary } = require('./services/aiUsage');

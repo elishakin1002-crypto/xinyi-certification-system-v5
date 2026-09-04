@@ -184,14 +184,26 @@ export const roleLabel = (roleId: RoleID, withCode = false): string => {
   return withCode && name !== roleId ? `${name}（${roleId}）` : name;
 };
 
+/*
+  ── NAV_AI_CENTER 只留给总经理和系统管理员（2026-09-04 收窄）──
+
+  在此之前**每个角色都有**，顾问、销售、财务都能打开 AI 配置中心。
+  那里面是模型选择、成本上限、提示词这类设置 ——
+  改错一个值影响的是全公司，而顾问既没有判断依据也不该承担这个责任。
+
+  **但「不给配置权」不等于「不让人知道自己用了多少」。**
+  额度透明是另一回事，而且更重要：一个人不知道自己还剩多少，
+  要么因为怕超额而不敢用，要么撞上限时莫名其妙被拦。
+  所以自己的用量单独做，见 components/MyAiUsage.tsx，人人可见。
+*/
 export const ROLE_PERMISSIONS: Record<RoleID, PermissionCode[]> = {
   ADMIN: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_FINANCE', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_STRATEGY', 'NAV_AI_CENTER'],
   SYS_ADMIN: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_FINANCE', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_STRATEGY', 'NAV_AI_CENTER'],
-  MANAGER: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_STRATEGY', 'NAV_AI_CENTER'],
+  MANAGER: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_STRATEGY'],
   // 销售可进交付看进度（客户会问证书什么时候下来），但动作权限里没有编辑类
-  SALES: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_AI_CENTER'],
-  CONSULTANT: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_AI_CENTER'],
-  FINANCE: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_FINANCE', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_AI_CENTER']
+  SALES: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_KNOWLEDGE', 'NAV_INTEL'],
+  CONSULTANT: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL'],
+  FINANCE: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_FINANCE', 'NAV_KNOWLEDGE', 'NAV_INTEL']
 };
 
 export const INTEL_REGIONS = ['温州', '苍南', '平阳', '龙港'] as const;
