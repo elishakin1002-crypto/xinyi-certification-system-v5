@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import React, { useState, useMemo} from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   Users, 
@@ -19,12 +19,23 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { ROLE_PERMISSIONS } from '../constants';
-import { PermissionCode } from '../types';
+import { PermissionCode, RoleID } from '../types';
 
 interface SidebarProps {
   onClose?: () => void;
   className?: string;
 }
+
+/*
+  看板视角 → 角色。和 AppContext 里那份保持同一套映射。
+  没有从 AppContext 导出复用，是因为那边是内部常量；
+  这里只读不写，重复一份比为它开一个导出面更省事。
+  两边不一致的后果只是预览显示不准，不影响权限。
+*/
+const PERSONA_TO_ROLE: Record<string, RoleID> = {
+  boss: 'ADMIN', sales: 'MANAGER', consultant: 'CONSULTANT',
+  finance: 'FINANCE', sysadmin: 'SYS_ADMIN',
+};
 
 const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
@@ -34,7 +45,35 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
     'audit': true
   });
   const { hasPermission, activeRole, currentUser } = useApp();
-  const inView = (permission: PermissionCode) => ROLE_PERMISSIONS[activeRole]?.includes(permission);
+  const location = useLocation();
+
+  /*
+    ── 预览视角时，侧边栏也要跟着变（2026-09-04 修）────────────
+
+    问题：巡检账号（总经理 / 系统管理员）切到「咨询顾问（仅看板）」，
+    **只有工作台变了，左边导航一动不动** ——
+    财务回款、战略管理、AI 配置中心照样列在那里。
+
+    于是这个「巡检」功能就废了一半：它本来是用来确认
+    「顾问打开系统到底看到什么」的，而看到的却不是顾问看到的那一套。
+
+    原因：切「仅看板」的视角只写了 URL 上的 ?persona=，没有动 activeRole，
+    而侧边栏是按 activeRole 过滤的。
+
+    ── 这不会放大任何权限 ────────────────────────────────────
+    下面每一项都是 hasPermission(真实权限) && inView(视角) 双重判断。
+    预览只会让菜单**变少**，不会变多 ——
+    切到「总经理视角」的顾问，仍然看不到财务，因为第一道闸拦着。
+  */
+  const previewPersona = useMemo(
+    () => new URLSearchParams(location.search).get('persona'),
+    [location.search],
+  );
+  const viewRole: RoleID = (previewPersona && PERSONA_TO_ROLE[previewPersona])
+    ? PERSONA_TO_ROLE[previewPersona]
+    : activeRole;
+
+  const inView = (permission: PermissionCode) => ROLE_PERMISSIONS[viewRole]?.includes(permission);
   const canManageEmployees = currentUser.roles.includes('ADMIN');
 
   const toggleGroup = (group: string) => {

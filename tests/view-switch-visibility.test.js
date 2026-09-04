@@ -84,3 +84,38 @@ test('改密页三个框由同一个开关控制', () => {
   );
   assert.doesNotMatch(src, /type="password"/, '还有没接上开关的密码框');
 });
+
+test('切视角时侧边栏也跟着变，不只是工作台', () => {
+  /*
+    2026-09-04 业务方发现：巡检账号切到「咨询顾问（仅看板）」，
+    **只有工作台变了，左边导航一动不动** ——
+    财务回款、战略管理、AI 配置中心照样列在那里。
+
+    于是这个巡检功能废了一半：它本来就是用来确认
+    「顾问打开系统到底看到什么」的，而看到的却不是顾问那一套。
+
+    原因：切「仅看板」只写了 URL 上的 ?persona=，没动 activeRole，
+    而侧边栏按 activeRole 过滤。
+  */
+  const src = read('components/Sidebar.tsx');
+  assert.match(src, /const previewPersona = useMemo/,
+    '侧边栏没有读预览视角');
+  assert.match(src, /ROLE_PERMISSIONS\[viewRole\]/,
+    '侧边栏还在按 activeRole 过滤，切视角不会变');
+  assert.doesNotMatch(src, /ROLE_PERMISSIONS\[activeRole\]\?\.includes/,
+    '还留着旧的按 activeRole 过滤');
+});
+
+test('预览只会让菜单变少，不会变多', () => {
+  /*
+    这是安全上的关键：预览是「换一副眼镜」，不是「换一个身份」。
+    每一项都必须 hasPermission(真实权限) && inView(视角) 双重判断 ——
+    只有前者会漏（顾问切到总经理视角就看到财务），
+    只有后者会假（看到菜单点进去却是空的）。
+  */
+  const src = read('components/Sidebar.tsx');
+  for (const nav of ['NAV_FINANCE', 'NAV_STRATEGY', 'NAV_AUDIT']) {
+    assert.match(src, new RegExp(`hasPermission\\('${nav}'\\) && inView\\('${nav}'\\)`),
+      `${nav} 没有做双重判断 —— 预览可能放大或伪造权限`);
+  }
+});
