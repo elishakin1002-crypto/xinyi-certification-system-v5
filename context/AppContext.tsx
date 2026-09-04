@@ -2,7 +2,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { detectStandards, buildPdcaTitle } from '../src/modules/knowledge/standards';
 import { Lead, Customer, Contract, ContractAttachment, Project, Settlement, Reminder, AuditIssue, Status, KnowledgeDoc, Vendor, ProjectTask, ServiceItem, RoleID, DashboardPersona, TaskTemplate, UserProfile, PermissionCode, FollowUpRecord, AuditNode, StrategicTask, Receivable, CertificateDetail, ProjectCategory, AIDecisionLog, AIAction, ActionCode, AIAllowedAction, AggregatedReminder, ReminderSeverity, ImportRecord, MarketSignal, ProjectWorkLog } from '../types';
-import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG } from '../constants';
+import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG, ROLE_TO_PERSONA, PERSONA_TO_ROLE } from '../constants';
 import { dataService } from '../services/dataService';
 import { aiService } from '../services/aiService';
 import { importService } from '../services/importService';
@@ -212,33 +212,6 @@ const asStringOrNull = (value: unknown): string | null => (typeof value === 'str
   类型检查才把这里揪出来 —— 靠 TypeScript 兜住是运气，不是设计。
   以后动其中一份，记得两份一起改；tests/persona-mapping.test.js 会守住一致性。
 */
-const ROLE_TO_PERSONA: Record<RoleID, DashboardPersona> = {
-  ADMIN: 'boss',
-  // 系统管理员看运维看板，不看业务看板
-  SYS_ADMIN: 'sysadmin',
-  /*
-    总助看总经理工作台，不看销售工作台。
-
-    2026-08-24 在 Layout 那份表里改过，**但这份漏了** ——
-    而驱动 activePersona 的恰恰是这一份，所以那次修复从来没生效：
-    总助打开系统看到的一直是「我的线索 / 我的合同 / 个人转化率」，
-    她不拥有线索，这些数字永远是 0。
-
-    2026-09-02 由 tests/sysadmin-persona.test.js 的一致性检查发现。
-    这就是同一张表存两份的代价。
-  */
-  MANAGER: 'boss',
-  SALES: 'sales',
-  CONSULTANT: 'consultant',
-  FINANCE: 'finance'
-};
-const PERSONA_TO_ROLE: Record<DashboardPersona, RoleID> = {
-  boss: 'ADMIN',
-  sales: 'MANAGER',
-  consultant: 'CONSULTANT',
-  finance: 'FINANCE',
-  sysadmin: 'SYS_ADMIN'
-};
 const normalizePersona = (value?: string | null): DashboardPersona | null => {
   const normalized = String(value || '').trim().toLowerCase();
   // 漏一个值的后果是「切过去没反应」——URL 上写着 persona=sysadmin，
@@ -406,12 +379,61 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     否则下次登录莫名其妙看到别人的菜单，还找不到怎么切回来。
     刷新页面自动回到本人视角。
   */
-  const [previewPersona, setPreviewPersona] = useState<DashboardPersona | null>(null);
+  /*
+    ── 开页时从 URL 认领一次（2026-09-04 修）────────────────────
+
+    上一版这里写死 null，而 URL 上还留着 ?persona=sales。
+    结果一刷新页面就分裂：
+      工作台按 URL 显示「销售视角」，侧边栏按 Context 回到系统管理员，
+      于是销售视角里赫然挂着「员工账号」「审计日志」。
+
+    同一件事有两个来源，就一定会有对不上的那一刻。
+    现在 Context 是唯一来源，URL 只在开页时当个种子 ——
+    刷新、收藏、直接贴链接进来，两边看到的都是同一个视角。
+  */
+  const [previewPersona, setPreviewPersona] = useState<DashboardPersona | null>(() => {
+    try {
+      // HashRouter：查询串在 # 里面，形如 #/dashboard?persona=sales
+      const hash = String(window.location.hash || '');
+      const q = hash.indexOf('?');
+      if (q < 0) return null;
+      return normalizePersona(new URLSearchParams(hash.slice(q + 1)).get('persona'));
+    } catch {
+      return null;   // 读不到就当没预览，回到本人视角 —— 权限的兜底方向永远是收紧
+    }
+  });
+
+  /*
+    URL 上出现 ?persona=xxx 时跟着换视角（贴链接、手动改地址栏都算）。
+
+    **只认「有参数」，不认「没参数」** —— 这是有意的：
+    预览中点任何一个菜单，导航链接都不带这个参数，
+    如果把「没参数」也当成一次切换，视角就会在点第一下时悄悄丢掉。
+    那正是 2026-09-04 第一版栽的跟头。
+  */
+  useEffect(() => {
+    const onHashChange = () => {
+      try {
+        const hash = String(window.location.hash || '');
+        const q = hash.indexOf('?');
+        if (q < 0) return;
+        const next = normalizePersona(new URLSearchParams(hash.slice(q + 1)).get('persona'));
+        if (next) setPreviewPersona((prev) => (prev === next ? prev : next));
+      } catch { /* 读不出就当没这回事，保持当前视角 */ }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   const VIEW_INSPECTOR_ROLES: RoleID[] = ['ADMIN', 'SYS_ADMIN'];
 
+  /*
+    视角来源只有一个：Context。参数留着是为了兼容旧链接，
+    但 Context 里有值时以 Context 为准 —— 否则内部导航把参数丢了之后，
+    工作台会悄悄退回本人视角，而侧边栏还停在预览上。
+  */
   const resolveDashboardPersona = (queryPersona?: string | null): DashboardPersona => {
-    const parsed = normalizePersona(queryPersona);
+    const parsed = previewPersona || normalizePersona(queryPersona);
     if (parsed) {
       const requiredRole = PERSONA_TO_ROLE[parsed];
       if (normalizedCurrentUser.roles.includes(requiredRole)) return parsed;

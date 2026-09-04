@@ -10,7 +10,7 @@ import { useApp } from '../context/AppContext';
 import { authService } from '../services/authService';
 import { dataService } from '../services/dataService';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { SYSTEM_ROLES } from '../constants';
+import { SYSTEM_ROLES , ROLE_TO_PERSONA} from '../constants';
 import { DashboardPersona, RoleID, AggregatedReminder } from '../types';
 import {
   buildGlobalSearchGroups,
@@ -115,32 +115,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
-  const roleToPersona: Record<RoleID, DashboardPersona> = {
-    ADMIN: 'boss',
-    /*
-      2026-09-02：系统管理员不再看总经理工作台。
-
-      原来映射到 'boss'，于是头像下面写着「老板」——
-      而这个账号是技术负责人，不是老板；他要看的也不是这个月签了几单，
-      是服务健不健康、AI 花了多少钱、有没有异常登录。
-    */
-    SYS_ADMIN: 'sysadmin',
-    /*
-      总助看总经理工作台，不看销售工作台。
-
-      改名前 MANAGER 被映射到 'sales'，于是总助打开系统看到的是
-      「我的线索 / 我的合同 / 个人转化率」——他不拥有线索，这些数永远是 0。
-      他真正要盯的是总经理工作台下半部分的「团队产能与执行」：
-      人均在制项目数、项目延误率、本周日志覆盖率。
-
-      总经理工作台上的内容都在总助的读权限内（readScope=ALL，且有 CONTRACT_VIEW_AMOUNT），
-      不存在越权显示。他仍然不能确认到账、不能碰结算——那是动作权限管的，与看板无关。
-    */
-    MANAGER: 'boss',
-    SALES: 'sales',
-    CONSULTANT: 'consultant',
-    FINANCE: 'finance'
-  };
   /*
     视角显示名。这里是**看板视角**的名字，不是角色名——
     五个看板（总经理/销售/顾问/财务/系统管理员）和六个角色不是一一对应
@@ -219,7 +193,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       key: `role-${role.id}`,
       mode: 'role' as const,
       roleId: role.id,
-      persona: roleToPersona[role.id],
+      persona: ROLE_TO_PERSONA[role.id],
       label: formatViewDisplayName(role.name)
     }));
 
@@ -262,7 +236,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       });
     }
     return base;
-  }, [availableRoles, roleToPersona, isFinanceOnlyIdentity, availablePersonas, canSwitchView]);
+  }, [availableRoles, isFinanceOnlyIdentity, availablePersonas, canSwitchView]);
   const sortedUsers = [...userProfiles].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
   const canSwitchCurrentUser = !isAuthRequired;
   const searchableScopes = useMemo(() => resolveSearchScopesByPermissions(userPermissions), [userPermissions]);

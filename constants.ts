@@ -1,6 +1,6 @@
 
 
-import { Lead, Customer, Contract, Project, Status, Role, TaskTemplate, Vendor, StrategicTask, RoleID, PermissionCode, UserProfile, RoleCapability, ServiceCatalogItem, ServiceWorkflowTemplate, ServiceCategory, ServiceDeliveryMode, ActionCode, SysAdminMode, CustomerVisibilityPolicy } from './types';
+import { Lead, Customer, Contract, Project, Status, Role, TaskTemplate, Vendor, StrategicTask, RoleID, PermissionCode, UserProfile, RoleCapability, ServiceCatalogItem, ServiceWorkflowTemplate, ServiceCategory, ServiceDeliveryMode, ActionCode, SysAdminMode, CustomerVisibilityPolicy, DashboardPersona } from './types';
 
 // --- 权限能力矩阵 (Capability Matrix) ---
 export const ROLE_CAPABILITIES: Record<RoleID, RoleCapability> = {
@@ -169,6 +169,46 @@ export const SYS_ADMIN_LIMITED_ACTIONS: ActionCode[] = [
  */
 export const CUSTOMER_VISIBILITY_POLICY: CustomerVisibilityPolicy =
   (String(import.meta.env?.VITE_CUSTOMER_VISIBILITY || '').trim() as CustomerVisibilityPolicy) || 'all';
+
+
+/*
+  ── 角色 ↔ 工作台视角（唯一的一份）─────────────────────────────
+
+  这张表在 AppContext 和 Sidebar 里各存过一份，被咬过三次：
+
+  ① 2026-08-24 改了 Layout 那份、漏了 AppContext 那份 ——
+     总助打开系统看到的一直是「我的线索 / 个人转化率」，
+     而她不拥有线索，那些数字永远是 0。
+  ② 2026-09-04 发现反向表还停在 sales: 'MANAGER' ——
+     切「销售视角」看到的其实是**总助的菜单**，
+     于是「销售视角」里赫然挂着员工账号和审计日志。
+  ③ Sidebar 又抄了第三份。
+
+  所以现在只写正向表，反向表**推导**出来 ——
+  两张表不可能再对不上。
+*/
+export const ROLE_TO_PERSONA: Record<RoleID, DashboardPersona> = {
+  ADMIN: 'boss',
+  SYS_ADMIN: 'sysadmin',   // 系统管理员看运维看板，不看业务看板
+  MANAGER: 'boss',         // 总助看总经理工作台，不看销售工作台
+  SALES: 'sales',
+  CONSULTANT: 'consultant',
+  FINANCE: 'finance'
+};
+
+/*
+  反向表：一个视角对应哪个角色。
+
+  boss 有两个角色指过来（总经理和总助），取**声明顺序里靠前**的那个 ——
+  也就是总经理。预览菜单上写的就是「总经理（仅看板）」，
+  取权限更大的那个才对得上标签。
+*/
+export const PERSONA_TO_ROLE: Record<DashboardPersona, RoleID> = (() => {
+  const out = {} as Record<DashboardPersona, RoleID>;
+  (Object.entries(ROLE_TO_PERSONA) as [RoleID, DashboardPersona][])
+    .forEach(([role, persona]) => { if (!out[persona]) out[persona] = role; });
+  return out;
+})();
 
 export const SYSTEM_ROLES: Role[] = [
   { id: 'ADMIN', name: '总经理', description: '全局视野，关注风险与利润' },

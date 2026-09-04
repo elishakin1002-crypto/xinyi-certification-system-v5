@@ -18,7 +18,7 @@ import {
   FileClock
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { ROLE_PERMISSIONS, ROLE_CAPABILITIES } from '../constants';
+import { ROLE_PERMISSIONS, ROLE_CAPABILITIES, PERSONA_TO_ROLE } from '../constants';
 import { ActionCode, PermissionCode, RoleID } from '../types';
 
 interface SidebarProps {
@@ -32,11 +32,6 @@ interface SidebarProps {
   这里只读不写，重复一份比为它开一个导出面更省事。
   两边不一致的后果只是预览显示不准，不影响权限。
 */
-const PERSONA_TO_ROLE: Record<string, RoleID> = {
-  boss: 'ADMIN', sales: 'MANAGER', consultant: 'CONSULTANT',
-  finance: 'FINANCE', sysadmin: 'SYS_ADMIN',
-};
-
 const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
     'crm': true,
@@ -161,7 +156,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
         )}
 
         {/* Delivery Group */}
-        {hasPermission('NAV_DELIVERY') && (
+        {/* 这一项原来漏了 inView —— 预览成财务时，项目交付照样挂在那儿 */}
+        {hasPermission('NAV_DELIVERY') && inView('NAV_DELIVERY') && (
         <div className="pt-2">
           <button 
             onClick={() => toggleGroup('delivery')}

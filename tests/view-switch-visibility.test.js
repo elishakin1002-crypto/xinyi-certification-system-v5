@@ -134,6 +134,20 @@ test('预览视角跨页面不丢', () => {
   const ctx = read('context/AppContext.tsx');
   assert.match(ctx, /const \[previewPersona, setPreviewPersona\] = useState/,
     '预览视角没有放进 Context');
+
+  /*
+    2026-09-04 又踩一次：Context 初始值写死 null，而 URL 上还留着 ?persona=sales。
+    一刷新页面就分裂 —— 工作台按 URL 显示销售视角，侧边栏按 Context 回到
+    系统管理员，于是「销售视角」里赫然挂着员工账号和审计日志。
+
+    同一件事有两个来源，就一定会有对不上的那一刻。
+  */
+  assert.match(ctx, /useState<DashboardPersona \| null>\(\(\) => \{/,
+    '开页时没有从 URL 认领视角 —— 刷新后工作台和侧边栏会各说各话');
+  assert.match(ctx, /window\.location\.hash/,
+    'HashRouter 的查询串在 # 里，不从 hash 读就永远读不到');
+  assert.match(ctx, /const parsed = previewPersona \|\| normalizePersona\(queryPersona\)/,
+    '工作台没有以 Context 为准 —— 内部导航丢掉参数后它会悄悄退回本人视角');
   assert.doesNotMatch(ctx, /localStorage[\s\S]{0,80}previewPersona/,
     '预览视角不该跨会话粘住 —— 下次登录看到别人的菜单还找不到怎么切回来');
 
@@ -174,4 +188,74 @@ test('系统管理员能管员工账号', () => {
   const owned = new Set(Array.from(caps.SYS_ADMIN?.actions || []));
   assert.ok(owned.has('EMPLOYEE_VIEW') && owned.has('AUTH_AUDIT_VIEW'),
     '权限矩阵里系统管理员没有这两项');
+});
+
+test('角色↔视角的映射只有一份，而且反向表是推导出来的', () => {
+  /*
+    2026-09-04：切「销售视角」，侧边栏里赫然挂着员工账号和审计日志。
+
+    原因不是权限漏了 —— 是 **「销售视角」根本不是销售**。
+    反向表里写的是 sales: 'MANAGER'，那是总助改名前的遗留
+    （总助曾经被显示成「销售」）。正向表 2026-08-24 修过，
+    反向表没跟着改，Sidebar 还抄了第三份。
+
+    于是「销售视角」实际展示的是总助的菜单 ——
+    而我当天刚给总助开了账号管理权限，两件事撞在一起。
+
+    同一张表被咬第三次了，所以现在只写正向表，反向表推导。
+  */
+  const c = read('constants.ts');
+  assert.match(c, /export const ROLE_TO_PERSONA/, '正向表没放进 constants');
+  assert.match(c, /export const PERSONA_TO_ROLE[^=]*= \(\(\) => \{/,
+    '反向表还是手写的 —— 手写就一定会和正向表对不上');
+  assert.match(c, /SALES: 'sales'/, '销售角色没对上销售视角');
+
+  // 另外两处不许再自己定义一份
+  for (const f of ['context/AppContext.tsx', 'components/Sidebar.tsx']) {
+    const src = read(f);
+    assert.doesNotMatch(src, /const (ROLE_TO_PERSONA|PERSONA_TO_ROLE)[^=]*=\s*\{/,
+      `${f} 又自己抄了一份映射表`);
+    assert.match(src, /PERSONA_TO_ROLE/, `${f} 应该从 constants 引用`);
+  }
+});
+
+test('销售视角看到的必须是销售的菜单', () => {
+  /*
+    直接算一遍：预览成销售时，侧边栏该显示哪些项。
+    这条测试盯的是「视角名和实际角色对得上」，
+    而不只是「代码长得像对的」。
+  */
+  const ts = require('typescript');
+  // constants.ts 里有 import.meta（Vite 的环境变量），new Function 认不了，先换掉
+  const src = read('constants.ts').replace(/import\.meta\.env/g, '({})');
+  const js = ts.transpileModule(src, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+  }).outputText;
+  const mod = { exports: {} };
+  // constants.ts 会 import 枚举（Status.Active 之类），给个万能替身顶上
+  const stub = new Proxy(function () {}, { get: () => stub, apply: () => stub });
+  new Function('exports', 'module', 'require', js)(mod.exports, mod, () => stub);
+  const { PERSONA_TO_ROLE, ROLE_PERMISSIONS, ROLE_CAPABILITIES } = mod.exports;
+
+  assert.equal(PERSONA_TO_ROLE.sales, 'SALES', '「销售视角」映射到的不是销售角色');
+  assert.equal(PERSONA_TO_ROLE.boss, 'ADMIN', '「总经理视角」应该映射到总经理');
+
+  const salesRole = PERSONA_TO_ROLE.sales;
+  const acts = ROLE_CAPABILITIES[salesRole].actions;
+  assert.ok(!acts.includes('EMPLOYEE_VIEW'), '销售视角不该看到员工账号');
+  assert.ok(!acts.includes('AUTH_AUDIT_VIEW'), '销售视角不该看到审计日志');
+  assert.ok(!ROLE_PERMISSIONS[salesRole].includes('NAV_AI_CENTER'), '销售视角不该看到 AI 配置中心');
+  assert.ok(!ROLE_PERMISSIONS[salesRole].includes('NAV_FINANCE'), '销售视角不该看到财务');
+});
+
+test('每一项导航都要做视角判断，不能漏', () => {
+  /*
+    漏一项的表现是：切成财务视角，项目交付还挂在那儿 ——
+    人会以为财务能看项目，而实际上不能。
+    比起权限漏洞，这种「预览说谎」更难发现，因为它不报错。
+  */
+  const src = read('components/Sidebar.tsx');
+  const gates = src.match(/hasPermission\('NAV_[A-Z_]+'\)(\s*&&\s*inView\('NAV_[A-Z_]+'\))?/g) || [];
+  const missing = gates.filter((g) => !g.includes('inView'));
+  assert.deepEqual(missing, [], `这些导航项没做视角判断：${missing.join('、')}`);
 });
