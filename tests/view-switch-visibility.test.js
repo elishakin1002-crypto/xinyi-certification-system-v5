@@ -138,7 +138,7 @@ test('预览视角跨页面不丢', () => {
     '预览视角不该跨会话粘住 —— 下次登录看到别人的菜单还找不到怎么切回来');
 
   const sidebar = read('components/Sidebar.tsx');
-  assert.match(sidebar, /previewPersona \} = useApp\(\)/,
+  assert.match(sidebar, /previewPersona[,\s][^=]*= useApp\(\)/,
     '侧边栏还在从 URL 读视角');
   assert.doesNotMatch(sidebar, /URLSearchParams\(location\.search\)\.get\('persona'\)/,
     '还留着从 URL 读的旧写法');
@@ -152,20 +152,26 @@ test('预览视角跨页面不丢', () => {
 test('系统管理员能管员工账号', () => {
   /*
     2026-09-04：系统管理员打开员工账号页看到
-    「当前账号没有员工账号管理权限」——**而管账号正是他的本职工作**：
-    新人开号、离职停用、忘密码重置、查审计日志。
-
-    服务端一直放行（SYS_ADMIN 有 EMPLOYEE_* 全套能力，
-    /api/auth/users 实测 200），只有前端这一行在拦。
+    「当前账号没有员工账号管理权限」——**而管账号正是他的本职工作**。
+    服务端一直放行（SYS_ADMIN 有 EMPLOYEE_* 全套，实测 200），只有前端在拦。
     「后端给了权限、前端不让点」这种不一致最难查，因为看日志一切正常。
+
+    修法不是把 SYS_ADMIN 补进那行角色判断 —— 那样下次给总助加权限
+    还得再回来改一遍。改成按动作判断，角色名单只留权限矩阵那一份。
   */
   const emp = read('pages/Employees.tsx');
-  assert.match(emp, /r === 'ADMIN' \|\| r === 'SYS_ADMIN'/,
-    '员工账号页仍只认 ADMIN，系统管理员进不去');
-  assert.doesNotMatch(emp, /const isAdmin = currentUser\.roles\.includes\('ADMIN'\);/,
-    '还留着只认 ADMIN 的旧判断');
+  assert.match(emp, /checkActionPermission\('EMPLOYEE_VIEW'\)\.allowed/,
+    '员工账号页没按动作判断');
+  assert.doesNotMatch(emp, /const isAdmin = currentUser\.roles\./,
+    '还留着按角色名单判断的旧写法');
 
-  const sidebar = read('components/Sidebar.tsx');
-  assert.match(sidebar, /canManageEmployees = currentUser\.roles\.some/,
-    '侧边栏入口仍只给 ADMIN');
+  const audit = read('pages/AuthAuditLogs.tsx');
+  assert.match(audit, /checkActionPermission\('AUTH_AUDIT_VIEW'\)\.allowed/,
+    '审计日志页没按动作判断');
+
+  const { loadCapabilities } = require('../server/authz/authorize');
+  const caps = loadCapabilities();
+  const owned = new Set(Array.from(caps.SYS_ADMIN?.actions || []));
+  assert.ok(owned.has('EMPLOYEE_VIEW') && owned.has('AUTH_AUDIT_VIEW'),
+    '权限矩阵里系统管理员没有这两项');
 });

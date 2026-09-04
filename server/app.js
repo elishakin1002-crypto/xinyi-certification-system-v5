@@ -161,14 +161,46 @@ const AUTH_MANAGEMENT_ACTIONS = Object.freeze([
   'AUTH_AUDIT_VIEW'
 ]);
 
-const AUTH_ACTIONS_BY_ROLE = Object.freeze({
-  ADMIN: new Set(AUTH_MANAGEMENT_ACTIONS),
-  SYS_ADMIN: new Set(AUTH_MANAGEMENT_ACTIONS),
-  MANAGER: new Set(),
-  SALES: new Set(),
-  CONSULTANT: new Set(),
-  FINANCE: new Set()
-});
+/*
+  ── 从权限矩阵推导，不再手抄一份（2026-09-04 改）─────────────
+
+  这里原来是硬编码的第三份角色名单（前两份在 constants.ts 的
+  ROLE_CAPABILITIES 和 components/Sidebar.tsx）。
+
+  2026-09-04 给总助开账号管理权限时，只改了 constants.ts，
+  这一份没动 —— 结果会是**菜单看得见、每个请求 403**。
+  跟之前「服务端放行、前端说没权限」是同一个病，只是方向反过来。
+  三份名单同步靠人记，迟早会漏，所以这份改成推导。
+
+  推不出来就退回只给 ADMIN / SYS_ADMIN 的兜底 ——
+  **权限的兜底方向永远是收紧**：宁可总助暂时开不了号来问一句，
+  也不能因为解析失败把账号管理权限敞给所有人。
+*/
+const AUTH_ACTIONS_BY_ROLE = (() => {
+  const fallback = () => Object.freeze({
+    ADMIN: new Set(AUTH_MANAGEMENT_ACTIONS),
+    SYS_ADMIN: new Set(AUTH_MANAGEMENT_ACTIONS),
+    MANAGER: new Set(),
+    SALES: new Set(),
+    CONSULTANT: new Set(),
+    FINANCE: new Set()
+  });
+  try {
+    const { loadCapabilities } = require('./authz/authorize');
+    const caps = loadCapabilities() || {};
+    const out = {};
+    for (const [role, conf] of Object.entries(caps)) {
+      const owned = new Set(Array.from(conf?.actions || []));
+      out[role] = new Set(AUTH_MANAGEMENT_ACTIONS.filter((a) => owned.has(a)));
+    }
+    // ADMIN 一定有全套；没有就说明解析出错了，别拿一份空表当真
+    if (out.ADMIN && out.ADMIN.size === AUTH_MANAGEMENT_ACTIONS.length) return Object.freeze(out);
+    throw new Error('ADMIN 没拿到全套账号管理动作，权限矩阵多半没解析对');
+  } catch (error) {
+    console.warn('[authz] 账号管理权限无法从权限矩阵推导，退回收紧兜底:', error?.message);
+    return fallback();
+  }
+})();
 
 const hasAuthManagementAction = (user, action) => (
   normalizeRoles(user).some((role) => AUTH_ACTIONS_BY_ROLE[role]?.has(action))
@@ -527,13 +559,36 @@ const findAuthUserById = async (userId) => {
   return users.find((user) => String(user?.id || '') === id) || null;
 };
 
-const rejectIfNonAdminManagingAdmin = (res, { actorUser, targetUser, operation }) => {
-  const actorIsAdmin = normalizeRoles(actorUser).includes('ADMIN');
-  if (actorIsAdmin || !normalizeRoles(targetUser).includes('ADMIN')) return false;
+/*
+  ── 不能动比自己权限高的账号（2026-09-04 扩）─────────────────
+
+  2026-09-04 给总助（MANAGER）开了账号管理权限：新人开号、离职停用、
+  忘记密码重置，这些活本来就是她干的。但这同时开出一条提权路径 ——
+  **她可以重置总经理的密码，然后用新密码登进去。**
+  权限矩阵拦不住这个：重置密码这个动作本身是给她的，
+  出问题的是「对谁做」。
+
+  原来这里只认 ADMIN。而系统管理员账号（admin / 金恩来）的角色是
+  SYS_ADMIN，**一个 ADMIN 都没有** —— 也就是说旧规则下总助能重置
+  系统管理员的密码，而那是权限最大的账号。这不是理论风险，是漏的。
+
+  所以规则改成：**ADMIN 和 SYS_ADMIN 都算高权账号，
+  只有高权账号能动高权账号。**
+
+  提示语写中文并说清原因 —— 总助看到 "Only ADMIN can reset password
+  for ADMIN accounts" 只会来问我这是什么意思。
+*/
+const PRIVILEGED_ROLES = ['ADMIN', 'SYS_ADMIN'];
+const isPrivilegedAccount = (user) =>
+  normalizeRoles(user).some((r) => PRIVILEGED_ROLES.includes(r));
+
+const rejectIfTouchingPrivilegedAccount = (res, { actorUser, targetUser, operation }) => {
+  if (isPrivilegedAccount(actorUser) || !isPrivilegedAccount(targetUser)) return false;
   sendFail(
     res,
     ERROR_CODES.NO_PERMISSION,
-    `Only ADMIN can ${operation} ADMIN accounts`,
+    `这是总经理／系统管理员的账号，只有他们本人这一级能${operation}。`
+      + '（否则改掉他们的密码就能登进去，等于绕过了所有权限设置）',
     { requiredRole: 'ADMIN' },
     403
   );
@@ -685,8 +740,12 @@ app.post('/api/auth/users', requireAuthActionSession('EMPLOYEE_CREATE'), async (
   try {
     const actorIsAdmin = normalizeRoles(req.authUser).includes('ADMIN');
     const requestedRoles = getRequestedRoles(req.body || {});
-    if (!actorIsAdmin && requestedRoles.includes('ADMIN')) {
-      return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Only ADMIN can grant ADMIN role', { requiredRole: 'ADMIN' }, 403);
+    // 授出高权角色（ADMIN / SYS_ADMIN）只有高权账号能做。
+    // 改角色本来就要 EMPLOYEE_UPDATE_ROLE（总助没有），这是第二道。
+    const grantingPrivileged = requestedRoles.some((r) => PRIVILEGED_ROLES.includes(r));
+    if (!isPrivilegedAccount(req.authUser) && grantingPrivileged) {
+      return sendFail(res, ERROR_CODES.NO_PERMISSION,
+        '只有总经理／系统管理员能把账号提升到这一级', { requiredRole: 'ADMIN' }, 403);
     }
     const user = await createUser(req.body || {});
     await recordAuthAuditLog({
@@ -717,7 +776,7 @@ app.patch('/api/auth/users/:id', requireAuthSession, async (req, res) => {
     const actorIsAdmin = normalizeRoles(req.authUser).includes('ADMIN');
     const targetUser = await findAuthUserById(req.params.id);
     if (!targetUser) return sendFail(res, ERROR_CODES.NOT_FOUND, 'user not found', {}, 404);
-    if (rejectIfNonAdminManagingAdmin(res, { actorUser: req.authUser, targetUser, operation: 'update' })) return;
+    if (rejectIfTouchingPrivilegedAccount(res, { actorUser: req.authUser, targetUser, operation: '修改' })) return;
     const requestedRoles = getRequestedRoles(req.body || {});
     if (!actorIsAdmin && requestedRoles.includes('ADMIN')) {
       return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Only ADMIN can grant ADMIN role', { requiredRole: 'ADMIN' }, 403);
@@ -773,6 +832,11 @@ app.delete('/api/auth/users/:id', requireAuthActionSession('EMPLOYEE_DISABLE'), 
     if (id === String(req.authUser?.id || '')) {
       return sendFail(res, ERROR_CODES.PARAM_ERROR, '不能删除自己的账号', {}, 400);
     }
+    // 高权账号（总经理/系统管理员）只有同级能删
+    const targetUser = await findAuthUserById(id);
+    if (!targetUser) return sendFail(res, ERROR_CODES.NOT_FOUND, '账号不存在', {}, 404);
+    if (rejectIfTouchingPrivilegedAccount(res, { actorUser: req.authUser, targetUser, operation: '删除' })) return;
+
     const r = await deleteUserIfUnused(id);
     if (!r.ok) return sendFail(res, ERROR_CODES.NO_PERMISSION, r.reason, {}, 409);
     await appendAuthAuditLog({
@@ -789,7 +853,7 @@ app.post('/api/auth/users/:id/reset-password', requireAuthActionSession('EMPLOYE
   try {
     const targetUser = await findAuthUserById(req.params.id);
     if (!targetUser) return sendFail(res, ERROR_CODES.NOT_FOUND, 'user not found', {}, 404);
-    if (rejectIfNonAdminManagingAdmin(res, { actorUser: req.authUser, targetUser, operation: 'reset password for' })) return;
+    if (rejectIfTouchingPrivilegedAccount(res, { actorUser: req.authUser, targetUser, operation: '重置密码' })) return;
 
     const user = await resetUserPassword(req.params.id, req.body?.password);
     if (!user) return sendFail(res, ERROR_CODES.NOT_FOUND, 'user not found', {}, 404);

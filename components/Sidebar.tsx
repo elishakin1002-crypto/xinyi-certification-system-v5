@@ -18,8 +18,8 @@ import {
   FileClock
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { ROLE_PERMISSIONS } from '../constants';
-import { PermissionCode, RoleID } from '../types';
+import { ROLE_PERMISSIONS, ROLE_CAPABILITIES } from '../constants';
+import { ActionCode, PermissionCode, RoleID } from '../types';
 
 interface SidebarProps {
   onClose?: () => void;
@@ -44,7 +44,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
     'finance': true,
     'audit': true
   });
-  const { hasPermission, activeRole, currentUser, previewPersona } = useApp();
+  const { hasPermission, activeRole, currentUser, previewPersona, checkActionPermission } = useApp();
 
   /*
     ── 预览视角时，侧边栏也要跟着变（2026-09-04 修）────────────
@@ -69,12 +69,32 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
     : activeRole;
 
   const inView = (permission: PermissionCode) => ROLE_PERMISSIONS[viewRole]?.includes(permission);
+  /** 动作版的 inView：这个视角的角色有没有这个动作 */
+  const actionInView = (action: ActionCode) =>
+    Boolean(ROLE_CAPABILITIES[viewRole]?.actions?.includes(action));
+
   /*
-    账号管理入口：总经理和系统管理员都要有。
-    只给 ADMIN 的话，系统管理员连入口都看不到 ——
-    而新人开号、离职停用、重置密码本来就是他的活。
+    ── 账号管理 / 审计日志入口（2026-09-04 改）──────────────────
+
+    原来写的是 currentUser.roles.some(r => r === 'ADMIN' || r === 'SYS_ADMIN')，
+    有两个毛病：
+
+    1）**绕过了视角预览。**其他每一项都是 hasPermission && inView 双闸，
+       只有这两项直接读真实角色。结果是切到「顾问视角」时，
+       导航里照样挂着「员工账号」「审计日志」——
+       看上去像是所有人都能看到，其实同事那边是看不到的，
+       但巡检功能本来就是用来确认「同事看到什么」的，它骗了人。
+
+    2）**又写死了一份角色名单。**权限矩阵里已经有 EMPLOYEE_VIEW /
+       AUTH_AUDIT_VIEW 了，这里再列一遍角色，两份必然漂移 ——
+       这个月给总助加账号管理权限，就得记得回来改这里，没人会记得。
+
+    现在两项都按动作判断：真实权限一闸，预览视角一闸。
   */
-  const canManageEmployees = currentUser.roles.some((r) => r === 'ADMIN' || r === 'SYS_ADMIN');
+  const canManageEmployees =
+    checkActionPermission('EMPLOYEE_VIEW').allowed && actionInView('EMPLOYEE_VIEW');
+  const canViewAuthAudit =
+    checkActionPermission('AUTH_AUDIT_VIEW').allowed && actionInView('AUTH_AUDIT_VIEW');
 
   const toggleGroup = (group: string) => {
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
@@ -234,16 +254,16 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
       {/* Settings */}
       <div className="p-4 border-t border-gray-800 flex-shrink-0">
         {canManageEmployees && (
-          <>
-            <NavLink to="/employees" className={navClass} onClick={handleLinkClick}>
-              <UserCog className="w-5 h-5 mr-3" />
-              员工账号
-            </NavLink>
-            <NavLink to="/auth-audit" className={navClass} onClick={handleLinkClick}>
-              <FileClock className="w-5 h-5 mr-3" />
-              审计日志
-            </NavLink>
-          </>
+          <NavLink to="/employees" className={navClass} onClick={handleLinkClick}>
+            <UserCog className="w-5 h-5 mr-3" />
+            员工账号
+          </NavLink>
+        )}
+        {canViewAuthAudit && (
+          <NavLink to="/auth-audit" className={navClass} onClick={handleLinkClick}>
+            <FileClock className="w-5 h-5 mr-3" />
+            审计日志
+          </NavLink>
         )}
         {hasPermission('NAV_AI_CENTER') && inView('NAV_AI_CENTER') && (
           <NavLink to="/ai-center" className={navClass} onClick={handleLinkClick}>

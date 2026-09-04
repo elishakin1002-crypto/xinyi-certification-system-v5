@@ -38,7 +38,7 @@ const metadataSummary = (metadata: Record<string, unknown>) => {
 };
 
 const AuthAuditLogs: React.FC = () => {
-  const { currentUser } = useApp();
+  const { currentUser, checkActionPermission } = useApp();
   const [logs, setLogs] = useState<AuthAuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -50,7 +50,15 @@ const AuthAuditLogs: React.FC = () => {
     而「谁改了权限、谁重置了谁的密码」正是他该盯的东西。
     服务端的 AUTH_AUDIT_VIEW 在 SYS_ADMIN 的能力清单里，一直是放行的。
   */
-  const isAdmin = currentUser.roles.some((r) => r === 'ADMIN' || r === 'SYS_ADMIN');
+  /*
+    按**动作**判断，不再列角色名单。
+
+    这里先后写错过两次：一次是 roles.includes('ADMIN')，把系统管理员
+    挡在门外；改成 ADMIN||SYS_ADMIN 之后，给总助加权限时又得回来改一遍。
+    权限矩阵里已经有 AUTH_AUDIT_VIEW 了，这里再维护一份角色名单，
+    两份迟早对不上 —— 而对不上的表现就是「服务端放行、界面说没权限」。
+  */
+  const isAdmin = checkActionPermission('AUTH_AUDIT_VIEW').allowed;
   const latestLogs = useMemo(() => logs.slice(0, 100), [logs]);
 
   const loadLogs = async () => {

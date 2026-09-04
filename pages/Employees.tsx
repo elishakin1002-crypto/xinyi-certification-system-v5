@@ -58,7 +58,7 @@ const toPayload = (form: FormState): EmployeeAccountInput => ({
 });
 
 const Employees: React.FC = () => {
-  const { currentUser } = useApp();
+  const { currentUser, checkActionPermission } = useApp();
   const [users, setUsers] = useState<EmployeeAccount[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editingUserId, setEditingUserId] = useState('');
@@ -83,7 +83,15 @@ const Employees: React.FC = () => {
     结果是「后端给了权限、前端不让点」——这种不一致最难查，
     因为看日志一切正常。
   */
-  const isAdmin = currentUser.roles.some((r) => r === 'ADMIN' || r === 'SYS_ADMIN');
+  /*
+    按**动作**判断，不再列角色名单。
+
+    这里先后写错过两次：一次是 roles.includes('ADMIN')，把系统管理员
+    挡在门外；改成 ADMIN||SYS_ADMIN 之后，给总助加权限时又得回来改一遍。
+    权限矩阵里已经有 EMPLOYEE_VIEW 了，这里再维护一份角色名单，
+    两份迟早对不上 —— 而对不上的表现就是「服务端放行、界面说没权限」。
+  */
+  const isAdmin = checkActionPermission('EMPLOYEE_VIEW').allowed;
   const editingUser = useMemo(() => users.find(user => user.id === editingUserId) || null, [editingUserId, users]);
   const sortedUsers = useMemo(
     () => [...users].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),

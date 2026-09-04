@@ -59,6 +59,21 @@ export const ROLE_CAPABILITIES: Record<RoleID, RoleCapability> = {
         「能改不能建」这种缺口不是设计，是漏了。
       */
       'LEAD_CREATE',
+      /*
+        ── 总助管账号（2026-09-04 补）──────────────────────────
+        新人入职开号、离职停用、忘记密码重置 —— 这些活在信义就是总助干的。
+        原来她一项都没有，每次都得找老板或找系统管理员。
+
+        **唯独不给 EMPLOYEE_UPDATE_ROLE（改角色）。**
+        不是不信任，是这一项能给自己加 ADMIN —— 一个动作就把
+        「管资料不碰钱」的边界抹掉了。角色调整本来就是低频事，
+        由总经理或系统管理员来做，多问一句的成本远小于权限失控。
+
+        另有一道服务端硬闸：她不能对总经理/系统管理员的账号
+        重置密码或停用 —— 否则改掉老板的密码就能登进去。见 server/app.js。
+      */
+      'EMPLOYEE_VIEW', 'EMPLOYEE_CREATE', 'EMPLOYEE_UPDATE',
+      'EMPLOYEE_DISABLE', 'EMPLOYEE_RESET_PASSWORD', 'AUTH_AUDIT_VIEW',
       'KNOWLEDGE_WRITE', 'REMINDER_WRITE',
       'CUSTOMER_EDIT', 'LEAD_EDIT', 'CONTRACT_EDIT',
       // 总助可指派线索和项目归属；合同归属牵扯金额，留给老板/财务
