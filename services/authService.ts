@@ -129,6 +129,17 @@ export const authService = {
     const body = await parseJson<{ user: EmployeeAccount }>(res);
     return body.data.user;
   },
+  /**
+   * 删除账号。服务端只放行「从没产生过任何记录」的账号 ——
+   * 有历史的会返回 409 和一句说明，这里把那句话原样抛给界面。
+   */
+  deleteUser: async (userId: string): Promise<void> => {
+    const res = await fetch(`/api/auth/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+    await parseJson<{ deleted: string }>(res);
+  },
   changePassword: async (currentPassword: string, newPassword: string): Promise<AuthPayload> => {
     const res = await fetch('/api/auth/change-password', {
       method: 'POST',

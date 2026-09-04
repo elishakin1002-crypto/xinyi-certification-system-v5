@@ -127,9 +127,69 @@ test('看过就不再自动弹，但内容更新后会再弹一次', () => {
     '看完没有记下版本号');
 });
 
-test('系统管理员不走业务引导', () => {
-  // 他要的是「系统管理能力对照」，不是「怎么录线索」
+test('系统管理员也有引导，但讲的是系统不是业务', () => {
+  /*
+    最初这里断言的是「SYS_ADMIN 不该有引导」—— 想法是他不需要学怎么录线索。
+    结果是账号菜单里的「重看新手引导」**点了毫无反应**：
+    getTour 返回 null，组件直接 return null，连个提示都没有。
+
+    一个点了没反应的菜单项，比没有这个菜单项更糟 ——
+    人会以为系统坏了。所以给他一份讲系统管理的引导。
+  */
   const src = read('src/modules/onboarding/steps.ts');
   const block = src.slice(src.indexOf('export const TOURS'), src.indexOf('export const getTour'));
-  assert.ok(!/\n  SYS_ADMIN: \{/.test(block), '系统管理员不该走业务引导');
+  assert.match(block, /\n  SYS_ADMIN: \{/, '系统管理员没有引导，重看按钮会点了没反应');
+
+  const sys = block.slice(block.indexOf('\n  SYS_ADMIN: {'));
+  const body = sys.slice(0, sys.indexOf('\n  },\n  ') + 5);
+  assert.doesNotMatch(body, /录线索|跟进客户|报价/, '系统管理员的引导不该讲业务流程');
+
+  // 多角色的人（我自己既是 ADMIN 又是 SYS_ADMIN）优先看系统管理那份
+  const order = src.slice(src.indexOf('export const getTour'));
+  assert.match(order, /\['SYS_ADMIN'/, 'SYS_ADMIN 应该排在角色优先级第一位');
+});
+
+// ── 删除账号 ───────────────────────────────────────────────────
+
+test('能删错误，不能删历史', () => {
+  /*
+    建错的测试账号会永远躺在名单里，每次看名单都要多花一秒确认「这是干嘛的」。
+    但删掉有活动记录的账号，business_events 里「是谁做的」就成了孤儿 ——
+    而追加式账本存在的全部意义就是事后查得出谁做的。
+  */
+  const store = read('server/authStore.js');
+  assert.match(store, /const deleteUserIfUnused = async/, '没有删除账号的方法');
+
+  const fn = store.slice(store.indexOf('const deleteUserIfUnused'),
+                          store.indexOf('module.exports'));
+  for (const t of ['business_events', 'contracts', 'projects', 'ai_usage_log']) {
+    assert.ok(fn.includes(t), `删除前没检查 ${t} —— 会删出孤儿记录`);
+  }
+  assert.match(fn, /停用/, '拒绝时没告诉人该改用停用');
+});
+
+test('删除接口要鉴权，而且不能删自己', () => {
+  const app = read('server/app.js');
+  assert.match(app, /app\.delete\('\/api\/auth\/users\/:id'/, '没有删除接口');
+
+  const route = app.slice(app.indexOf("app.delete('/api/auth/users/:id'"),
+                          app.indexOf("app.delete('/api/auth/users/:id'") + 1400);
+  assert.match(route, /requireAuthActionSession\('EMPLOYEE_DISABLE'\)/,
+    '删除接口没鉴权 —— 任何人都能删账号');
+  assert.match(route, /不能删除自己的账号/,
+    '删自己会当场登不进来，而且几乎总是误操作');
+  assert.match(route, /EMPLOYEE_DELETE/, '删除没写审计日志');
+});
+
+test('前端不预判能不能删，把服务端的理由原样显示', () => {
+  /*
+    能不能删的依据在服务端（有没有记录），前端拿不到。
+    猜一个只会猜错，灰掉的按钮还不告诉人为什么灰。
+  */
+  const src = read('pages/Employees.tsx');
+  assert.match(src, /setPendingDelete\(user\)/, '列表里没有删除按钮');
+  assert.match(src, /user\.id !== currentUser\.id/, '自己那行也显示了删除键');
+  assert.match(src, /err instanceof Error \? err\.message : '删除失败'/,
+    '没把服务端的拒绝理由显示出来');
+  assert.match(src, /pendingDelete && \(/, '删除没有确认步骤');
 });

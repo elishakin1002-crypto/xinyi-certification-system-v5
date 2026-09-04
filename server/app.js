@@ -19,6 +19,7 @@ const {
   createUser,
   updateUser,
   resetUserPassword,
+  deleteUserIfUnused,
   changeOwnPassword,
   appendAuthAuditLog,
   listAuthAuditLogs
@@ -755,6 +756,32 @@ app.patch('/api/auth/users/:id', requireAuthSession, async (req, res) => {
     const message = error?.message || 'update user failed';
     const conflict = /already exists/i.test(message);
     return sendFail(res, conflict ? ERROR_CODES.DATA_CONFLICT : ERROR_CODES.PARAM_ERROR, message, {}, conflict ? 409 : 400);
+  }
+});
+
+/*
+  删除账号。**只删从没干过事的** —— 见 authStore.deleteUserIfUnused 的注释。
+
+  权限用 EMPLOYEE_DISABLE 而不是新开一个：
+  删除的破坏力不高于停用（因为有活动痕迹的根本删不掉），
+  为它单开一个动作码只会让权限表更难读。
+*/
+app.delete('/api/auth/users/:id', requireAuthActionSession('EMPLOYEE_DISABLE'), async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    // 不能删自己 —— 删完当场没法登录，而且这几乎总是误操作
+    if (id === String(req.authUser?.id || '')) {
+      return sendFail(res, ERROR_CODES.PARAM_ERROR, '不能删除自己的账号', {}, 400);
+    }
+    const r = await deleteUserIfUnused(id);
+    if (!r.ok) return sendFail(res, ERROR_CODES.NO_PERMISSION, r.reason, {}, 409);
+    await appendAuthAuditLog({
+      action: 'EMPLOYEE_DELETE', actorUserId: req.authUser?.id, actorName: req.authUser?.name,
+      targetUserId: id, detail: `删除未使用账号 ${r.name}/${r.username}`,
+    }).catch(() => {});
+    return sendSuccess(res, { deleted: id }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || '删除失败', {}, 500);
   }
 });
 

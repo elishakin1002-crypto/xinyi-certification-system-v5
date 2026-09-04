@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, KeyRound, Loader2, Plus, RefreshCw, Save, ShieldCheck, UserPlus } from 'lucide-react';
+import { Check, KeyRound, Loader2, Plus, RefreshCw, Save, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { ACTION_META, ACTION_GROUPS, ROLE_CAPABILITIES, SYSTEM_ROLES } from '../constants';
 import { useApp } from '../context/AppContext';
 import { RoleID, ActionCode } from '../types';
@@ -64,6 +64,8 @@ const Employees: React.FC = () => {
   const [editingUserId, setEditingUserId] = useState('');
   const [resetUserId, setResetUserId] = useState('');
   const [resetPassword, setResetPassword] = useState('');
+  /** 待确认删除的账号。删除不可撤销，所以一定要走一次确认 */
+  const [pendingDelete, setPendingDelete] = useState<EmployeeAccount | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -164,6 +166,34 @@ const Employees: React.FC = () => {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  /*
+    删除账号。
+
+    界面上**不预判**能不能删 —— 判断依据在服务端（有没有操作记录、
+    有没有名下的合同项目），前端拿不到，猜一个只会猜错。
+    所以按钮一直显示，删不掉时把服务端那句解释原样显示出来：
+    「这个账号名下还有 X 条…请改用停用」。
+    人看到的是原因，不是一个灰掉的按钮。
+  */
+  const handleDelete = async () => {
+    if (!pendingDelete) return;
+    setIsSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await authService.deleteUser(pendingDelete.id);
+      setUsers(prev => prev.filter(u => u.id !== pendingDelete.id));
+      setMessage(`账号 ${pendingDelete.name} 已删除`);
+      setPendingDelete(null);
+      if (editingUserId === pendingDelete.id) resetForm();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败');
+      setPendingDelete(null);
     } finally {
       setIsSaving(false);
     }
@@ -303,6 +333,16 @@ const Employees: React.FC = () => {
                             <KeyRound className="w-3.5 h-3.5 mr-1" />
                             重置
                           </button>
+                          {/* 不给自己显示删除键 —— 删完当场登不进来，而且这几乎总是误点 */}
+                          {user.id !== currentUser.id && (
+                            <button
+                              onClick={() => setPendingDelete(user)}
+                              title="只能删除从没产生过任何记录的账号"
+                              className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 bg-white text-xs font-bold text-gray-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -529,6 +569,50 @@ const Employees: React.FC = () => {
           )}
         </aside>
       </div>
+
+      {/*
+        删除确认。
+
+        写清楚**会发生什么**和**什么时候该用停用**，而不是干巴巴问一句
+        「确定删除吗？」—— 那种提示所有人都是闭着眼点确定的。
+      */}
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <div className="text-sm font-black text-gray-900">删除账号</div>
+            </div>
+            <div className="px-5 py-4 space-y-3 text-sm text-gray-700 leading-relaxed">
+              <p>
+                将要删除 <span className="font-black text-gray-900">{pendingDelete.name}</span>
+                （{pendingDelete.username || pendingDelete.email}）。
+              </p>
+              <p className="text-xs text-gray-500">
+                只有<span className="font-bold">从没产生过任何记录</span>的账号能删 ——
+                建错的测试号属于这种。已经干过活的账号会被拒绝，
+                因为删掉之后他做过的事就查不出是谁做的了；
+                那种情况请改用「停用」：人进不来，历史还在。
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3.5 bg-gray-50 border-t border-gray-100">
+              <button
+                onClick={() => setPendingDelete(null)}
+                className="px-3 h-9 rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-200"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={isSaving}
+                className="inline-flex items-center px-4 h-9 rounded-lg bg-red-600 text-white text-xs font-black hover:bg-red-700 disabled:opacity-60"
+              >
+                {isSaving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 mr-1.5" />}
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1183,6 +1183,61 @@ const getAuthHealth = async () => {
   return { ...backend, users: store.users.length };
 };
 
+
+/**
+ * 删除账号 —— **只删从没干过事的**。
+ *
+ * ── 为什么不能随便删 ──────────────────────────────────────────
+ * 账号 id 被 business_events（操作账本）、合同负责人、项目负责人、
+ * 工作日志引用着。删掉之后那些记录的「是谁做的」就成了孤儿 ——
+ * 而追加式账本存在的全部意义就是「事后查得出谁做的」。
+ *
+ * 所以正常的离职处理是**停用**：人进不来了，但他做过的事still查得到。
+ *
+ * ── 那为什么还要留删除 ────────────────────────────────────────
+ * 建错的测试账号会永远躺在名单里。它没有任何历史可保护，
+ * 却让每次看名单的人多花一秒确认「这个是干嘛的」。
+ *
+ * 规则因此很简单：**能删错误，不能删历史。**
+ * 有任何活动痕迹的账号一律拒绝，并说清为什么、该改用停用。
+ */
+const deleteUserIfUnused = async (userId) => {
+  await initAuthStore();
+  const id = String(userId || '').trim();
+  if (!id) throw new Error('user id is required');
+  if (!(backend.mode === 'postgres' && pool)) throw new Error('仅 PostgreSQL 模式支持删除账号');
+
+  const row = (await pool.query('SELECT id, name, username, email FROM auth_users WHERE id = $1', [id])).rows?.[0];
+  if (!row) return { ok: false, reason: '账号不存在' };
+
+  // 逐项数活动痕迹。表可能不存在（老环境），所以每一项独立兜住，
+  // 数不到就当 0 —— 但这会让判断偏向「允许删」，所以下面还会再确认一次登录记录。
+  const countSafe = async (sql, params) => {
+    try { return Number((await pool.query(sql, params)).rows?.[0]?.n || 0); }
+    catch { return 0; }
+  };
+  const traces = {
+    操作记录: await countSafe('SELECT count(*)::int n FROM business_events WHERE actor_user_id = $1', [id]),
+    合同: await countSafe('SELECT count(*)::int n FROM contracts WHERE owner_user_id = $1', [id]),
+    项目: await countSafe('SELECT count(*)::int n FROM projects WHERE owner_user_id = $1', [id]),
+    线索: await countSafe('SELECT count(*)::int n FROM leads WHERE owner_user_id = $1', [id]),
+    工作日志: await countSafe('SELECT count(*)::int n FROM project_work_logs WHERE operator_user_id = $1', [id]),
+    AI调用: await countSafe('SELECT count(*)::int n FROM ai_usage_log WHERE actor_user_id = $1', [id]),
+  };
+  const used = Object.entries(traces).filter(([, n]) => n > 0);
+  if (used.length > 0) {
+    return {
+      ok: false,
+      reason: `这个账号名下还有 ${used.map(([k, n]) => `${k} ${n} 条`).join('、')}。`
+        + '删掉之后这些记录就查不出是谁做的了 —— 请改用「停用」：人进不来，但历史还在。',
+    };
+  }
+
+  await pool.query('DELETE FROM auth_sessions WHERE user_id = $1', [id]);
+  await pool.query('DELETE FROM auth_users WHERE id = $1', [id]);
+  return { ok: true, name: row.name, username: row.username || row.email || row.id };
+};
+
 module.exports = {
   AUTH_STORE_PATH,
   hashPassword,
@@ -1195,6 +1250,7 @@ module.exports = {
   createUser,
   updateUser,
   resetUserPassword,
+  deleteUserIfUnused,
   changeOwnPassword,
   appendAuthAuditLog,
   listAuthAuditLogs

@@ -54,6 +54,63 @@ const FEEDBACK_END: OnboardStep = {
 };
 
 export const TOURS: Partial<Record<RoleID, OnboardTour>> = {
+  /*
+    系统管理员的引导和业务角色不同：**别人学「怎么干活」，他学「怎么看系统好不好」**。
+
+    2026-09-04 之前这里是空的，理由是「他要的是那份能力对照，不是怎么录线索」。
+    但后果是账号菜单里那个「重看新手引导」**点了什么都不发生** ——
+    一个点了没反应的菜单项，比没有这个菜单项更糟：
+    人会以为系统坏了，而且不知道该不该再点一次。
+  */
+  SYS_ADMIN: {
+    version: 1,
+    intro: '你是系统管理员。这套系统对你来说是**四个问题**：\n\n'
+      + '现在有事吗 / 谁在用 / 花了多少钱 / 我能做什么。\n\n'
+      + '工作台就是按这四个问题排的。',
+    steps: [
+      {
+        route: '/dashboard', target: 'sysadmin-errors',
+        title: '今日错误：三秒内要能判断有没有事',
+        body: '**有未处理的错误，整块会变红。** 不用去数字里找 ——\n\n'
+          + '这些错误是同事踩到但**没有开口说**的：他不确定算不算 bug，'
+          + '说清楚要费半天口舌，绕过去比报告快。所以系统自己记。\n\n'
+          + '判断轻重看**影响人数**，不是次数：一个人碰 100 次多半是他卡住反复试，'
+          + '3 个人各碰 1 次说明所有人都会踩。',
+      },
+      {
+        route: '/dashboard', target: 'sysadmin-feedback',
+        title: '同事主动反馈：机器抓不到的那一半',
+        body: '自动采集能抓到崩溃和报错，抓不到「**能用，但结果不是我要的**」。\n\n'
+          + '那一类只有人能说，而且往往是最要紧的。\n\n'
+          + '**「我不知道怎么操作」这一类要特别看** —— 它说的是设计问题，'
+          + '不是使用者的问题，而且一个人不会用通常意味着还有几个没说。',
+      },
+      {
+        route: '/employees', target: 'nav-employees',
+        title: '员工账号与审计日志：你的本职',
+        body: '新人开号、离职停用、忘密码重置，都在这里。\n\n'
+          + '**账号只能停用不能随便删** —— 删了他名下的操作记录就成了孤儿，'
+          + '审计链断掉。只有从没产生过任何记录的账号（比如建错的测试号）才允许删除。\n\n'
+          + '隔壁「审计日志」记着谁改了权限、谁重置了谁的密码。',
+      },
+      {
+        target: 'view-switch',
+        title: '切换视角：确认权限配得对不对',
+        body: '点头像 → 切换视角，能看顾问、财务、销售各自打开系统是什么样。\n\n'
+          + '**这是巡检工具，不是换身份**：权限一点不变，只是换一副眼镜。'
+          + '菜单只会变少不会变多 —— 你切到财务视角，看到的仍然是你有权限的那部分。',
+      },
+      {
+        target: 'ai-chat',
+        title: 'AI 助手能读到系统真实状态',
+        body: '**只有你的 AI 能看到系统数据**（错误、AI 花费、在线登录、数据库规模）。'
+          + '顾问的 AI 看不到这些。\n\n'
+          + '所以可以直接问「系统现在有什么问题」「昨天 AI 花了多少」「谁在线」。\n\n'
+          + '它会引用真实数字；**没有数据时会明说没有，不会编** —— 这一点比答得出来更重要。',
+      },
+    ],
+  },
+
   CONSULTANT: {
     version: 1,
     intro: '你是咨询顾问。这套系统对你来说，主要解决三件事：\n\n'
@@ -206,11 +263,15 @@ export const TOURS: Partial<Record<RoleID, OnboardTour>> = {
   },
 };
 
-/** 系统管理员不走业务引导 —— 他要的是那份「系统管理能力对照」，不是「怎么录线索」。 */
+/**
+ * 一人多角色时给哪一套。
+ *
+ * SYS_ADMIN 排第一：他要看的是「系统好不好」，
+ * 而不是「怎么录线索」—— 后者对他没用。
+ */
 export const getTour = (roles: RoleID[] | undefined): OnboardTour | null => {
   const list = Array.isArray(roles) ? roles : [];
-  // 一人多角色时按这个优先级：先给他"主业"那套
-  const order: RoleID[] = ['ADMIN', 'MANAGER', 'FINANCE', 'CONSULTANT', 'SALES'];
+  const order: RoleID[] = ['SYS_ADMIN', 'ADMIN', 'MANAGER', 'FINANCE', 'CONSULTANT', 'SALES'];
   for (const r of order) {
     if (list.includes(r) && TOURS[r]) return TOURS[r]!;
   }

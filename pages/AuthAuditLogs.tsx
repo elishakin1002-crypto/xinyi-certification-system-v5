@@ -43,7 +43,14 @@ const AuthAuditLogs: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const isAdmin = currentUser.roles.includes('ADMIN');
+  /*
+    和 Employees.tsx 同一个漏网点（2026-09-04 一起修）。
+
+    只认 ADMIN 的话，系统管理员看不了审计日志 ——
+    而「谁改了权限、谁重置了谁的密码」正是他该盯的东西。
+    服务端的 AUTH_AUDIT_VIEW 在 SYS_ADMIN 的能力清单里，一直是放行的。
+  */
+  const isAdmin = currentUser.roles.some((r) => r === 'ADMIN' || r === 'SYS_ADMIN');
   const latestLogs = useMemo(() => logs.slice(0, 100), [logs]);
 
   const loadLogs = async () => {
