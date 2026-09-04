@@ -69,7 +69,19 @@ const Employees: React.FC = () => {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  const isAdmin = currentUser.roles.includes('ADMIN');
+  /*
+    ── 系统管理员必须能管账号（2026-09-04 修）────────────────────
+
+    原来只认 ADMIN（总经理）。于是系统管理员打开员工账号页看到的是
+    「当前账号没有员工账号管理权限」——**而管账号正是他的本职工作**：
+    新人入职开号、离职停用、有人忘密码重置、查审计日志。
+
+    服务端一直是放行的（SYS_ADMIN 的能力清单里有 EMPLOYEE_* 全套，
+    /api/auth/users 实测返回 200），只有前端这一行在拦。
+    结果是「后端给了权限、前端不让点」——这种不一致最难查，
+    因为看日志一切正常。
+  */
+  const isAdmin = currentUser.roles.some((r) => r === 'ADMIN' || r === 'SYS_ADMIN');
   const editingUser = useMemo(() => users.find(user => user.id === editingUserId) || null, [editingUserId, users]);
   const sortedUsers = useMemo(
     () => [...users].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),

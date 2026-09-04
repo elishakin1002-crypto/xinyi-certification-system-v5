@@ -56,6 +56,13 @@ export interface AppContextType {
   activePersona: DashboardPersona;
   availablePersonas: DashboardPersona[];
   resolveDashboardPersona: (queryPersona?: string | null) => DashboardPersona;
+  /*
+    预览视角（巡检用）。放在 Context 而不是 URL：
+    URL 上的 ?persona= 只挂在工作台地址上，点进别的页面就丢了 ——
+    切到「咨询顾问」看两眼、一点合同管理，菜单又变回全量，巡检等于白做。
+  */
+  previewPersona: DashboardPersona | null;
+  setPreviewPersona: (p: DashboardPersona | null) => void;
   userPermissions: PermissionCode[];
   hasPermission: (permission: PermissionCode) => boolean;
   
@@ -394,6 +401,13 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
 
     换句话说：这是换一副眼镜，不是换一个身份。
   */
+  /*
+    不写 localStorage 是有意的：预览是个临时动作，不该跨会话粘住，
+    否则下次登录莫名其妙看到别人的菜单，还找不到怎么切回来。
+    刷新页面自动回到本人视角。
+  */
+  const [previewPersona, setPreviewPersona] = useState<DashboardPersona | null>(null);
+
   const VIEW_INSPECTOR_ROLES: RoleID[] = ['ADMIN', 'SYS_ADMIN'];
 
   const resolveDashboardPersona = (queryPersona?: string | null): DashboardPersona => {
@@ -4625,7 +4639,8 @@ ${receivableLines}
     <AppContext.Provider value={{
       leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, vendors, marketSignals, projectWorkLogs,
       currentUser: normalizedCurrentUser, userProfiles, isAuthRequired: authRequired, switchUser, updateUserProfile, addUserProfile, deleteUserProfile,
-      activeRole, setActiveRole, activePersona, availablePersonas, resolveDashboardPersona, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
+      activeRole, setActiveRole, activePersona, availablePersonas, resolveDashboardPersona,
+      previewPersona, setPreviewPersona, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
       addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, updateProjectWorkLog, deleteProjectWorkLog,
       createFollowUpProjectFromLead,
       createFollowUpProjectFromCustomer,

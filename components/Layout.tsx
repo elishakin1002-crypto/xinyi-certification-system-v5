@@ -104,6 +104,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     aggregatedReminders,
     markRemindersRead,
     markAllRemindersRead,
+    previewPersona,
+    setPreviewPersona,
     leads,
     customers,
     contracts,
@@ -167,7 +169,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const unreadReminders = visibleReminders.filter(r => !r.isRead);
   const queryPersona = useMemo(() => new URLSearchParams(location.search).get('persona'), [location.search]);
-  const currentViewPersona = resolveDashboardPersona(queryPersona || activePersona);
+  /*
+    视角来源优先级：Context 里的预览 > URL 参数（兼容旧链接）> 本人角色。
+    Context 排第一，是因为它跨页面不丢 —— 而 URL 参数一点导航就没了。
+  */
+  const currentViewPersona = resolveDashboardPersona(previewPersona || queryPersona || activePersona);
   const normalizeDisplayLabel = (value: string) => String(value || '').replace(/\s*[（(]\s*示例\s*[)）]\s*/g, '').trim();
   /*
     2026-08-24 移除了「把 交付负责人 显示成 销售」的改名。
@@ -446,8 +452,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const handleSelectView = (option: ViewOption) => {
     if (option.mode === 'role' && option.roleId) {
       setActiveRole(option.roleId);
+      setPreviewPersona(null);          // 切回真实角色，清掉预览
       updatePersonaQuery(null);
     } else {
+      // 预览：写进 Context，这样点到任何页面都还在这个视角
+      setPreviewPersona(option.persona);
       if (location.pathname === '/dashboard') updatePersonaQuery(option.persona);
       else navigate(`/dashboard?persona=${option.persona}`);
     }

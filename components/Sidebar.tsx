@@ -1,6 +1,6 @@
 
-import React, { useState, useMemo} from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import React, { useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   Users, 
@@ -44,8 +44,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
     'finance': true,
     'audit': true
   });
-  const { hasPermission, activeRole, currentUser } = useApp();
-  const location = useLocation();
+  const { hasPermission, activeRole, currentUser, previewPersona } = useApp();
 
   /*
     ── 预览视角时，侧边栏也要跟着变（2026-09-04 修）────────────
@@ -65,16 +64,17 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
     预览只会让菜单**变少**，不会变多 ——
     切到「总经理视角」的顾问，仍然看不到财务，因为第一道闸拦着。
   */
-  const previewPersona = useMemo(
-    () => new URLSearchParams(location.search).get('persona'),
-    [location.search],
-  );
   const viewRole: RoleID = (previewPersona && PERSONA_TO_ROLE[previewPersona])
     ? PERSONA_TO_ROLE[previewPersona]
     : activeRole;
 
   const inView = (permission: PermissionCode) => ROLE_PERMISSIONS[viewRole]?.includes(permission);
-  const canManageEmployees = currentUser.roles.includes('ADMIN');
+  /*
+    账号管理入口：总经理和系统管理员都要有。
+    只给 ADMIN 的话，系统管理员连入口都看不到 ——
+    而新人开号、离职停用、重置密码本来就是他的活。
+  */
+  const canManageEmployees = currentUser.roles.some((r) => r === 'ADMIN' || r === 'SYS_ADMIN');
 
   const toggleGroup = (group: string) => {
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));

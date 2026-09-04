@@ -98,7 +98,9 @@ test('切视角时侧边栏也跟着变，不只是工作台', () => {
     而侧边栏按 activeRole 过滤。
   */
   const src = read('components/Sidebar.tsx');
-  assert.match(src, /const previewPersona = useMemo/,
+  // 2026-09-04：预览视角从 URL 改到 Context（URL 参数跨页面会丢），
+  // 所以这里断言的是「读到了预览视角」，不再限定它从哪来。
+  assert.match(src, /previewPersona/,
     '侧边栏没有读预览视角');
   assert.match(src, /ROLE_PERMISSIONS\[viewRole\]/,
     '侧边栏还在按 activeRole 过滤，切视角不会变');
@@ -118,4 +120,52 @@ test('预览只会让菜单变少，不会变多', () => {
     assert.match(src, new RegExp(`hasPermission\\('${nav}'\\) && inView\\('${nav}'\\)`),
       `${nav} 没有做双重判断 —— 预览可能放大或伪造权限`);
   }
+});
+
+test('预览视角跨页面不丢', () => {
+  /*
+    2026-09-04 第一版把预览视角放在 URL 的 ?persona= 上。
+    工作台是对的，但**点进任何别的页面就丢了** —— 导航链接不带这个参数。
+    切到「咨询顾问」看两眼、一点「合同管理」，左边菜单又变回全量，
+    巡检等于白做。
+
+    改成放 Context：单页应用内导航不会丢。
+  */
+  const ctx = read('context/AppContext.tsx');
+  assert.match(ctx, /const \[previewPersona, setPreviewPersona\] = useState/,
+    '预览视角没有放进 Context');
+  assert.doesNotMatch(ctx, /localStorage[\s\S]{0,80}previewPersona/,
+    '预览视角不该跨会话粘住 —— 下次登录看到别人的菜单还找不到怎么切回来');
+
+  const sidebar = read('components/Sidebar.tsx');
+  assert.match(sidebar, /previewPersona \} = useApp\(\)/,
+    '侧边栏还在从 URL 读视角');
+  assert.doesNotMatch(sidebar, /URLSearchParams\(location\.search\)\.get\('persona'\)/,
+    '还留着从 URL 读的旧写法');
+
+  const layout = read('components/Layout.tsx');
+  assert.match(layout, /setPreviewPersona\(option\.persona\)/, '切视角时没有写进 Context');
+  assert.match(layout, /setPreviewPersona\(null\);\s*\/\/ 切回真实角色/,
+    '切回真实角色时没有清掉预览');
+});
+
+test('系统管理员能管员工账号', () => {
+  /*
+    2026-09-04：系统管理员打开员工账号页看到
+    「当前账号没有员工账号管理权限」——**而管账号正是他的本职工作**：
+    新人开号、离职停用、忘密码重置、查审计日志。
+
+    服务端一直放行（SYS_ADMIN 有 EMPLOYEE_* 全套能力，
+    /api/auth/users 实测 200），只有前端这一行在拦。
+    「后端给了权限、前端不让点」这种不一致最难查，因为看日志一切正常。
+  */
+  const emp = read('pages/Employees.tsx');
+  assert.match(emp, /r === 'ADMIN' \|\| r === 'SYS_ADMIN'/,
+    '员工账号页仍只认 ADMIN，系统管理员进不去');
+  assert.doesNotMatch(emp, /const isAdmin = currentUser\.roles\.includes\('ADMIN'\);/,
+    '还留着只认 ADMIN 的旧判断');
+
+  const sidebar = read('components/Sidebar.tsx');
+  assert.match(sidebar, /canManageEmployees = currentUser\.roles\.some/,
+    '侧边栏入口仍只给 ADMIN');
 });
