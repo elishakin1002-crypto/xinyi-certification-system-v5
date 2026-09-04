@@ -817,6 +817,23 @@ const DEEPSEEK_MODEL = String(process.env.DEEPSEEK_MODEL || 'deepseek-chat').tri
 */
 const DEEPSEEK_VISION_MODEL = String(process.env.DEEPSEEK_VISION_MODEL || 'deepseek-v4-flash-vision-exp').trim();
 
+/*
+  ── 对话专用模型：快的那个 ────────────────────────────────────
+
+  2026-09-04 实测（同一句短问题）：
+    deepseek-v4-pro    10.4 秒
+    deepseek-v4-flash   2.0 秒
+
+  pro 是推理模型，慢是它的特性，不是故障。但对话场景**慢就是坏**：
+  管理员问「系统现在有什么问题」，提示词里带着 1800 tokens 的系统状态，
+  pro 要跑二三十秒，直接撞上前端 30 秒超时 —— 用户看到的是「AI 请求超时」，
+  完全看不出是模型选错了。
+
+  flash 同时还便宜 3 倍（输入 0.44 vs 1.32 每百万）。
+  **对话用 flash、重活（合同解析、战略分析）用 pro**，两头都合适。
+*/
+const DEEPSEEK_CHAT_MODEL = String(process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-v4-flash').trim();
+
 const AI_PROVIDER_TIMEOUT_MS = Math.max(8000, Number(process.env.AI_PROVIDER_TIMEOUT_MS || 45000));
 
 const USER_AGENT = 'XinyiIntelBot/5.0 (+https://xinyi.local)';
@@ -3985,8 +4002,12 @@ app.post('/api/ai/chat', async (req, res) => {
       }
     }
 
+    /*
+      对话默认走 flash。用户显式指定了模型就听他的。
+      DEFAULT_MODEL（Kimi）只在没有 DeepSeek key 时才轮得到。
+    */
     const result = await meteredAI(req, {
-      requestedModel: model || DEFAULT_MODEL,
+      requestedModel: model || (DEEPSEEK_API_KEY ? DEEPSEEK_CHAT_MODEL : DEFAULT_MODEL),
       messages
     }, { endpoint: '/api/ai/chat', feature: allowWeb ? 'chat_web' : 'chat' });
 

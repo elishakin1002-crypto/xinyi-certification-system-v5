@@ -33,6 +33,7 @@ export interface SysAdminSnapshot {
   ai?: {
     month?: { calls?: number; failures?: number; tokens?: number | string };
     today?: { calls?: number; tokens?: number | string };
+    byDay?: Array<{ day?: string; calls?: number; tokens?: number | string }>;
     byUser?: Array<{ name?: string; calls?: number; tokens?: number | string }>;
   };
   security?: {
@@ -94,6 +95,17 @@ export const buildSysAdminContext = (s: SysAdminSnapshot | null | undefined): st
       + `；今天 ${n(t?.calls)} 次、${n(t?.tokens).toLocaleString('zh-CN')} tokens。`);
     L.push('（价格参考：DeepSeek 峰时约 ¥10/百万 tokens，Kimi 约 ¥40/百万。'
       + '全公司日上限 200 万 tokens，撞上说明有功能在反复调用，不是有人用得多。）');
+    /*
+      按天列出来，AI 才答得了「昨天花了多少」「今天是不是异常」。
+      判断异常靠的是和前几天比，不是和某个绝对数字比 ——
+      所以这里给的是序列，不是一个「日均」。
+    */
+    const bd = s.ai?.byDay || [];
+    if (bd.length > 0) {
+      L.push('近 7 天按天：' + bd.map((d) => `${d.day} ${n(d.calls)}次/${n(d.tokens).toLocaleString('zh-CN')}`).join('　'));
+      L.push('（问「昨天/某天花了多少」时用这一行。判断今天是否异常，和前几天比，不要和绝对值比。）');
+    }
+
     const bu = s.ai?.byUser || [];
     if (bu.length > 0) {
       L.push('本月按人：' + bu.slice(0, 5).map((u) => `${u.name} ${n(u.tokens).toLocaleString('zh-CN')}`).join('、'));

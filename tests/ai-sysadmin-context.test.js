@@ -79,3 +79,46 @@ test('系统状态有缓存，不是每句话查一次库', () => {
   assert.match(w, /sysSnapshotAtRef/, '没有缓存时间戳');
   assert.match(w, /< 60_000/, '缓存窗口不是 60 秒');
 });
+
+test('按天用量：「昨天花了多少」要答得上来', () => {
+  /*
+    2026-09-04 管理员问「昨天 AI 花了多少」，AI 答「系统里没有昨天单独的口径」。
+    它没有编，这一点是对的 —— 但**「昨天花了多少」本来就是个合理的问题**，
+    答不上来是数据缺口，不是提问方式不对。
+
+    顺带解决更重要的一件事：判断异常要看趋势不看总量。
+    「本月 ¥180」说明不了什么，「今天是平时的 8 倍」才是要立刻查的信号。
+  */
+  const api = read('server/routes/sysadminOverview.js');
+  assert.match(api, /byDay: await all\(/, '接口没有按天统计');
+  assert.match(api, /CURRENT_DATE - 6/, '按天窗口不是 7 天');
+  assert.match(api, /Asia\/Shanghai/,
+    '没有按北京时间分天 —— 用 UTC 分的话「昨天」会差 8 小时');
+
+  const ctx = read('src/modules/ai_center/sysadminContext.ts');
+  assert.match(ctx, /近 7 天按天/, '上下文里没有把按天数据给 AI');
+  assert.match(ctx, /和前几天比，不要和绝对值比/,
+    '没告诉模型怎么判断异常 —— 它会拿一个绝对数字下结论');
+});
+
+test('对话走快模型，重活才用推理模型', () => {
+  /*
+    2026-09-04 实测同一句短问题：
+      deepseek-v4-pro    10.4 秒
+      deepseek-v4-flash   2.0 秒
+
+    pro 是推理模型，慢是特性不是故障。但对话场景**慢就是坏**：
+    管理员问「系统现在有什么问题」，提示词带着 1800 tokens 系统状态，
+    pro 要跑二三十秒，直接撞上前端 30 秒超时，
+    用户看到的是「AI 请求超时」，完全看不出是模型选错了。
+
+    flash 还便宜 3 倍。两头都合适。
+  */
+  const app = read('server/app.js');
+  assert.match(app, /DEEPSEEK_CHAT_MODEL.*'deepseek-v4-flash'/,
+    '对话没有单独的快模型');
+  assert.match(app, /requestedModel: model \|\| \(DEEPSEEK_API_KEY \? DEEPSEEK_CHAT_MODEL/,
+    '对话接口没有改用快模型');
+  assert.match(app, /const DEEPSEEK_MODEL = String\(process\.env\.DEEPSEEK_MODEL/,
+    '重活用的 pro 不该被一起改掉');
+});

@@ -81,6 +81,23 @@ router.get('/api/admin/sysadmin-overview', requireOpsRole, async (req, res) => {
         today: await one(`
           SELECT COUNT(*)::int AS calls, COALESCE(SUM(total_tokens), 0)::bigint AS tokens
             FROM ai_usage_log WHERE created_at >= CURRENT_DATE`),
+        /*
+          按天分布（近 7 天）。
+
+          2026-09-04 管理员问「昨天 AI 花了多少」，AI 只能答「没有这个口径」——
+          它没编，这是对的，但**「昨天花了多少」本来就是个合理的问题**，
+          答不上来是数据缺口，不是提问方式不对。
+
+          顺带解决另一件更重要的事：**判断异常要看趋势，不是看总量。**
+          「本月 ¥180」说明不了什么，「今天是平时的 8 倍」才是要立刻查的信号。
+        */
+        byDay: await all(`
+          SELECT to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'MM-DD') AS day,
+                 COUNT(*)::int AS calls,
+                 COALESCE(SUM(total_tokens), 0)::bigint AS tokens
+            FROM ai_usage_log
+           WHERE created_at >= CURRENT_DATE - 6
+           GROUP BY 1 ORDER BY 1 DESC`),
         byUser: await all(`
           SELECT COALESCE(NULLIF(actor_name, ''), '(未知)') AS name,
                  COUNT(*)::int AS calls, COALESCE(SUM(total_tokens), 0)::bigint AS tokens

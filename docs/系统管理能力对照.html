@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>html{color-scheme:light dark}body{margin:0}img{max-width:100%}</style>
+</head>
+<body>
+<title>系统管理能力对照</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  :root {
+    /* 检验报告的纸感：极淡的冷灰绿，不是暖奶油 */
+    --paper:      #F3F5F4;
+    --card:       #FFFFFF;
+    --ink:        #191D1B;
+    --muted:      #5F6863;
+    --faint:      #8A928D;
+    --rule:       #D7DDDA;
+    --rule-soft:  #E6EAE8;
+
+    /* 强调色：认证钢印的墨绿。语义色单独一套，不共用 */
+    --accent:     #0B6154;
+    --accent-dim: #E3EDEA;
+
+    --ok:         #2C6B3E;
+    --ok-bg:      #E6F0E8;
+    --warn:       #96560A;
+    --warn-bg:    #F7EDDF;
+    --crit:       #9E2B23;
+    --crit-bg:    #F7E5E3;
+
+    --shadow:     0 1px 2px rgba(25,29,27,.05), 0 8px 24px -16px rgba(25,29,27,.18);
+
+    --serif: 'Newsreader', 'Songti SC', 'SimSun', Georgia, serif;
+    --sans:  'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --mono:  'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --paper:      #121614;
+      --card:       #1A201D;
+      --ink:        #E8EDEA;
+      --muted:      #9BA5A0;
+      --faint:      #6E7873;
+      --rule:       #2C3532;
+      --rule-soft:  #232A27;
+      --accent:     #6FBFAC;
+      --accent-dim: #1B2E29;
+      --ok:         #7FB98D;
+      --ok-bg:      #1B2A20;
+      --warn:       #D9A05B;
+      --warn-bg:    #2C2419;
+      --crit:       #E08B82;
+      --crit-bg:    #2E1E1C;
+      --shadow:     0 1px 2px rgba(0,0,0,.3), 0 8px 24px -16px rgba(0,0,0,.6);
+    }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121614; --card: #1A201D; --ink: #E8EDEA; --muted: #9BA5A0;
+      --faint: #6E7873; --rule: #2C3532; --rule-soft: #232A27;
+      --accent: #6FBFAC; --accent-dim: #1B2E29;
+      --ok: #7FB98D; --ok-bg: #1B2A20;
+      --warn: #D9A05B; --warn-bg: #2C2419;
+      --crit: #E08B82; --crit-bg: #2E1E1C;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -16px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #121614; --card: #1A201D; --ink: #E8EDEA; --muted: #9BA5A0;
+    --faint: #6E7873; --rule: #2C3532; --rule-soft: #232A27;
+    --accent: #6FBFAC; --accent-dim: #1B2E29;
+    --ok: #7FB98D; --ok-bg: #1B2A20;
+    --warn: #D9A05B; --warn-bg: #2C2419;
+    --crit: #E08B82; --crit-bg: #2E1E1C;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -16px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* ── 报告头 ───────────────────────────────────────────── */
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding: 56px 0 20px;
+    display: flex; flex-wrap: wrap; gap: 24px;
+    align-items: flex-end; justify-content: space-between;
+  }
+  .masthead h1 {
+    font-family: var(--serif);
+    font-size: clamp(30px, 5vw, 44px);
+    font-weight: 500; line-height: 1.15; margin: 0;
+    text-wrap: balance; letter-spacing: -.01em;
+  }
+  .masthead .sub {
+    font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: 52ch;
+  }
+  .stamp {
+    font-family: var(--mono); font-size: 11px; line-height: 1.9;
+    color: var(--muted); text-align: right; white-space: nowrap;
+  }
+  .stamp b { color: var(--ink); font-weight: 500; }
+
+  .preface {
+    margin: 28px 0 0; padding: 18px 20px;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-dim);
+    font-size: 14.5px;
+  }
+  .preface p { margin: 0; }
+  .preface p + p { margin-top: 10px; }
+
+  /* ── 章节 ─────────────────────────────────────────────── */
+  section { margin-top: 56px; }
+  .sec-head {
+    display: flex; align-items: baseline; gap: 14px;
+    border-bottom: 1px solid var(--rule); padding-bottom: 10px; margin-bottom: 24px;
+  }
+  .sec-head h2 {
+    font-family: var(--serif); font-size: 26px; font-weight: 500;
+    margin: 0; letter-spacing: -.01em;
+  }
+  .sec-head .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--faint); margin-left: auto;
+  }
+
+  /* ── 对照矩阵 ─────────────────────────────────────────── */
+  .matrix-scroll { overflow-x: auto; }
+  table.matrix {
+    width: 100%; border-collapse: collapse; font-size: 14px; min-width: 620px;
+  }
+  table.matrix th {
+    text-align: left; font-weight: 600; font-size: 11px;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--faint);
+    padding: 0 12px 10px 0; border-bottom: 1px solid var(--rule);
+  }
+  table.matrix td {
+    padding: 14px 12px 14px 0; border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  table.matrix td:first-child { font-weight: 600; white-space: nowrap; }
+  table.matrix .why { color: var(--muted); font-size: 13.5px; }
+
+  .chip {
+    display: inline-block; font-family: var(--mono); font-size: 11px;
+    padding: 3px 9px; border-radius: 3px; white-space: nowrap; font-weight: 500;
+  }
+  .chip.ok   { background: var(--ok-bg);   color: var(--ok); }
+  .chip.warn { background: var(--warn-bg); color: var(--warn); }
+  .chip.crit { background: var(--crit-bg); color: var(--crit); }
+
+  /* ── 能力域 ───────────────────────────────────────────── */
+  .domain {
+    background: var(--card); border: 1px solid var(--rule-soft);
+    border-radius: 4px; padding: 26px 28px; margin-bottom: 18px;
+    box-shadow: var(--shadow);
+  }
+  .domain > header {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .domain h3 {
+    font-family: var(--serif); font-size: 21px; font-weight: 600; margin: 0;
+  }
+  .domain .en {
+    font-family: var(--mono); font-size: 11px; color: var(--faint);
+    letter-spacing: .06em;
+  }
+  .domain > header .chip { margin-left: auto; }
+  .domain .lede { color: var(--muted); font-size: 14px; margin: 0 0 18px; max-width: 62ch; }
+
+  .rows { display: grid; gap: 0; }
+  .row {
+    display: grid; grid-template-columns: 96px 1fr; gap: 20px;
+    padding: 13px 0; border-top: 1px solid var(--rule-soft);
+  }
+  .row dt {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .06em;
+    color: var(--faint); text-transform: uppercase; padding-top: 3px;
+  }
+  .row dd { margin: 0; font-size: 14.5px; }
+  .row dd b { font-weight: 600; }
+  .row.gap dd { color: var(--crit); }
+  .row.gap dd b { color: var(--crit); }
+
+  @media (max-width: 620px) {
+    .row { grid-template-columns: 1fr; gap: 4px; }
+  }
+
+  /* ── 时间线 ───────────────────────────────────────────── */
+  .timeline { display: grid; gap: 0; margin-top: 4px; }
+  .phase {
+    display: grid; grid-template-columns: 130px 1fr; gap: 24px;
+    padding: 22px 0; border-top: 1px solid var(--rule);
+  }
+  .phase:last-child { border-bottom: 1px solid var(--rule); }
+  .phase .when {
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    font-weight: 500; letter-spacing: .04em; padding-top: 2px;
+  }
+  .phase .when small { display: block; color: var(--faint); font-weight: 400; margin-top: 3px; }
+  .phase h4 { font-family: var(--serif); font-size: 18px; font-weight: 600; margin: 0 0 8px; }
+  .phase ul { margin: 0; padding-left: 18px; }
+  .phase li { margin: 5px 0; font-size: 14.5px; }
+  .phase li::marker { color: var(--faint); }
+  @media (max-width: 620px) { .phase { grid-template-columns: 1fr; gap: 8px; } }
+
+  /* ── 操作步骤 ─────────────────────────────────────────── */
+  .steps { counter-reset: s; padding: 0; margin: 0; list-style: none; }
+  .steps > li {
+    counter-increment: s; position: relative;
+    padding: 0 0 16px 40px; font-size: 14.5px;
+  }
+  .steps > li::before {
+    content: counter(s); position: absolute; left: 0; top: 1px;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--accent); color: var(--card);
+    font-family: var(--mono); font-size: 12px; font-weight: 500;
+    display: grid; place-items: center;
+  }
+
+  code {
+    font-family: var(--mono); font-size: .88em;
+    background: var(--rule-soft); padding: 2px 6px; border-radius: 3px;
+  }
+  pre {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    background: var(--rule-soft); padding: 14px 16px; border-radius: 4px;
+    overflow-x: auto; margin: 12px 0;
+  }
+  pre code { background: none; padding: 0; }
+
+  /* ── 价格表 ───────────────────────────────────────────── */
+  .price-scroll { overflow-x: auto; }
+  table.price { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 520px; }
+  table.price th {
+    text-align: right; font-family: var(--mono); font-size: 10.5px;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--faint);
+    padding: 0 0 9px 16px; border-bottom: 1px solid var(--rule);
+  }
+  table.price th:first-child { text-align: left; padding-left: 0; }
+  table.price td {
+    text-align: right; padding: 12px 0 12px 16px;
+    border-bottom: 1px solid var(--rule-soft);
+    font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 13px;
+  }
+  table.price td:first-child {
+    text-align: left; padding-left: 0; font-family: var(--sans); font-size: 14px; font-weight: 500;
+  }
+  table.price tr.hi td { background: var(--accent-dim); }
+  .caption { font-size: 12.5px; color: var(--faint); margin-top: 10px; }
+
+  .callout {
+    border: 1px solid var(--rule); border-left: 3px solid var(--warn);
+    background: var(--card); padding: 16px 20px; border-radius: 4px;
+    margin: 18px 0; font-size: 14.5px;
+  }
+  .callout p { margin: 0; }
+  .callout p + p { margin-top: 8px; }
+  .callout .tag {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--warn); display: block; margin-bottom: 6px;
+  }
+
+  p { max-width: 68ch; }
+  strong { font-weight: 600; }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  hr { border: 0; border-top: 1px solid var(--rule-soft); margin: 28px 0; }
+</style>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div>
+      <h1>系统管理能力对照</h1>
+      <p class="sub">信义认证系统 V5.0 · 一个 13 人公司的自建系统，上线后该有哪些管理能力、现在到哪一步了</p>
+    </div>
+    <div class="stamp">
+      编制 <b>2026-09-03</b>　当日更新<br>
+      对象 <b>xinyi-certification-system-v5</b><br>
+      账号 <b>16</b> · 测试 <b>333 项全过</b><br>
+      环境 <b>124.223.209.102</b>
+    </div>
+  </div>
+
+  <div class="preface">
+    <p><strong>这份东西本该在你问之前就给你。</strong>过去几周我一直在响应你提的具体问题——某个按钮没反应、某个报错看不懂——但没有把整张图铺开给你看。结果是你只能凭直觉一个一个提，而你说得对：门外汉凭直觉提需求，容易把系统带到沟里。</p>
+    <p>下面六个能力域不是我临时想的分类，是任何一个多人在用的系统上线后半年内都会补齐的东西。区别只在于<strong>提前想好，还是出事之后补</strong>。每一项都标了你现在的实际状态。</p>
+    <p><strong>本次更新：</strong>原来标红的两块已经做完并验证 ——
+    一键回滚真滚了一次往返；恢复演练 7 秒、23 张表逐表一致，
+    而且<strong>演练第一分钟就抓到一个真 bug</strong>（部署脚本每次都在删备份）。
+    末尾新增两节：管理员界面该长什么样、这套东西三年后会不会过时。
+    另外，管理员的 AI 助手现在能读到真实系统状态并据此诊断 ——
+    在此之前它手上一个数据都没有，只能答「建议定期检查备份」这类废话。</p>
+  </div>
+
+  <!-- ── 总览 ─────────────────────────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <h2>现状总览</h2>
+      <span class="eyebrow">Status at a glance</span>
+    </div>
+
+    <div class="matrix-scroll">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th style="width:150px">能力域</th>
+            <th style="width:96px">状态</th>
+            <th>缺口 / 说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>身份与权限</td>
+            <td><span class="chip ok">齐备</span></td>
+            <td class="why">服务端 enforce、单项权限委派、账号有效期、审计日志都有。会话记录了 IP 与设备，但<b>还看不到「谁在哪登录着」的界面</b>。</td>
+          </tr>
+          <tr>
+            <td>可观测性</td>
+            <td><span class="chip ok">已打通</span></td>
+            <td class="why">自动上报 + 指纹聚合 + 每天 18:30 推送，通道已接通并实测。
+              第一条推送抓到的就是真实错误（用户在审核页踩的模型错，他没开口）。</td>
+          </tr>
+          <tr>
+            <td>反馈闭环</td>
+            <td><span class="chip warn">已上线，等真人用</span></td>
+            <td class="why">结构化表单 + 管理员看板 + 管理通道推送。<b>没有回复通知</b>——同事提了不知道有没有人看，
+              而反馈渠道死于沉默，不是死于难用。</td>
+          </tr>
+          <tr>
+            <td>成本治理</td>
+            <td><span class="chip ok">齐备</span></td>
+            <td class="why">按 token 计量、分角色额度、全公司总闸、模型自动回退与熔断。<b>模型升级仍需手动切</b>。</td>
+          </tr>
+          <tr>
+            <td>数据安全与恢复</td>
+            <td><span class="chip ok">已演练</span></td>
+            <td class="why">2026-09-03 真跑了一次：<b>23 张表逐表一致，7 秒完成</b>，抽查内容也对得上。
+              演练当场抓到一个真 bug——部署脚本每次都在删备份。<b>还缺异地副本</b>。</td>
+          </tr>
+          <tr>
+            <td>变更管理</td>
+            <td><span class="chip ok">回滚已验证</span></td>
+            <td class="why">一键回滚做好并<b>真滚过一次往返</b>；部署自动打快照，保留 8 个版本。
+              灰度对 13 人公司不划算，暂不做。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 六个域 ───────────────────────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <h2>六个能力域</h2>
+      <span class="eyebrow">Capability domains</span>
+    </div>
+
+    <article class="domain">
+      <header>
+        <h3>一 · 身份与权限</h3>
+        <span class="en">IAM</span>
+        <span class="chip ok">齐备</span>
+      </header>
+      <p class="lede">谁能进、能看什么、能改什么，以及事后能不能查出是谁改的。</p>
+      <dl class="rows">
+        <div class="row"><dt>解决什么</dt><dd>销售看不到别人的客户、顾问改不了合同金额、有人离职能立刻断掉——这些不是「功能」，是<b>公司敢把真实数据放进系统的前提</b>。</dd></div>
+        <div class="row"><dt>你已经有</dt><dd>服务端 <code>enforce</code> 模式（前端绕过去也没用）· 单项权限增减 · 账号有效期（登录和会话各判一次）· 追加式操作账本 · 会话记 IP 与设备。</dd></div>
+        <div class="row gap"><dt>还缺</dt><dd><b>「当前谁在哪登录着」的界面和一键踢人</b>。数据已经在记了，但你现在只能查数据库才看得到。</dd></div>
+        <div class="row"><dt>什么时候做</dt><dd>不急。等同事真的用起来、出现「我账号是不是被别人用了」的疑问时再做，大约半天。</dd></div>
+      </dl>
+    </article>
+
+    <article class="domain">
+      <header>
+        <h3>二 · 可观测性</h3>
+        <span class="en">Observability</span>
+        <span class="chip ok">刚补齐</span>
+      </header>
+      <p class="lede">系统现在是不是好的、有没有人正在踩坑——而且不依赖任何人来告诉你。</p>
+      <dl class="rows">
+        <div class="row"><dt>解决什么</dt><dd>同事踩了 bug 基本不会说：他不确定这算 bug 还是自己不会用，说清楚要费半天口舌，而手上有活要干、绕过去比报告快。<b>等他开口，问题已经存在很久了。</b></dd></div>
+        <div class="row"><dt>你已经有</dt><dd>JS 崩溃与接口报错自动上报 · 按指纹聚合（同一个 bug 一天一行）· 脱敏（手机号/金额不入库）· 记录影响人数而不只是次数 · 每天 18:30 主动推送，<b>没事不吵</b>。</dd></div>
+        <div class="row gap"><dt>还缺</dt><dd><b>推送通道没接</b>——摘要生成了发不出去，你得自己去看板上看。缺一个企业微信群机器人 webhook（第五节有注册步骤）。</dd></div>
+        <div class="row"><dt>什么时候做</dt><dd><b>同事进来之前</b>。这是唯一一个「必须先于用户」的能力：没有它，前两周的问题会全部沉底。</dd></div>
+      </dl>
+    </article>
+
+    <article class="domain">
+      <header>
+        <h3>三 · 反馈闭环</h3>
+        <span class="en">Feedback loop</span>
+        <span class="chip warn">刚建好，未验证</span>
+      </header>
+      <p class="lede">机器抓不到的那一半：「能用，但不是我要的」。</p>
+      <dl class="rows">
+        <div class="row"><dt>解决什么</dt><dd>最难查的一类问题是<b>系统没报错，但结果不对</b>——自动采集完全看不见，只有人能说。还有一类更隐蔽：「我不知道该怎么操作」，人往往以为是自己笨而不提。</dd></div>
+        <div class="row"><dt>你已经有</dt><dd>结构化表单（四选一分类 + 想做什么 / 结果怎么样 / 急不急，页面和身份自动带）· 30 秒能填完 · 管理员看板汇总。</dd></div>
+        <div class="row gap"><dt>还缺</dt><dd><b>回复没有通知</b>。同事提完不知道有没有人看，提两次没回音就再也不提了——<b>反馈渠道死于沉默，不是死于难用</b>。</dd></div>
+        <div class="row"><dt>什么时候做</dt><dd>收到前三条反馈之后。那时你就知道大家实际会怎么用它了。</dd></div>
+      </dl>
+    </article>
+
+    <article class="domain">
+      <header>
+        <h3>四 · 成本治理</h3>
+        <span class="en">Cost control</span>
+        <span class="chip ok">齐备</span>
+      </header>
+      <p class="lede">AI 花了多少、花在谁身上、会不会某天突然失控。</p>
+      <dl class="rows">
+        <div class="row"><dt>解决什么</dt><dd>真正的风险不是大家用得多，是<b>程序打成死循环</b>——一晚上烧掉一个月预算，而且没人会发现。</dd></div>
+        <div class="row"><dt>你已经有</dt><dd>按 token 计量（不是次数）· 分角色日额度 · <b>全公司总闸 200 万 token/天</b> · DeepSeek 优先 + Kimi 自动兜底 + 不可自愈错误熔断 · 每次调用记账（谁、哪个功能、多少 token）。</dd></div>
+        <div class="row gap"><dt>还缺</dt><dd>模型升级仍需手动切一行配置。第五节说了为什么<b>不建议做成全自动</b>。</dd></div>
+        <div class="row"><dt>什么时候做</dt><dd>已经够用。等哪天月账单超过 ¥500 再回来细化。</dd></div>
+      </dl>
+    </article>
+
+    <article class="domain">
+      <header>
+        <h3>五 · 数据安全与恢复</h3>
+        <span class="en">Backup &amp; recovery</span>
+        <span class="chip warn">有备份，没演练</span>
+      </header>
+      <p class="lede">出事之后能不能回到昨天——以及你是否<em>确定</em>能。</p>
+      <dl class="rows">
+        <div class="row"><dt>解决什么</dt><dd>2026-08-28 丢过 11 个账号，没有任何报错。那次的教训不是「手要稳」，是<b>当时没有可回退的东西</b>。</dd></div>
+        <div class="row"><dt>你已经有</dt><dd>备份脚本 · 状态历史快照与回滚工具 · 缩水检测 · 追加式账本 · 改数据的脚本一律先备份、备份失败即中止。</dd></div>
+        <div class="row gap"><dt>还缺</dt><dd><b>从没真正演练过一次完整恢复。</b>没演练过的备份，只能算「大概能恢复」。另外备份现在只在这台服务器上——机器整个没了就一起没了，需要一份异地副本（腾讯云对象存储，一年几十块）。</dd></div>
+        <div class="row"><dt>什么时候做</dt><dd><b>上线后第一个月内</b>，找个周末演练一次：假装服务器炸了，从备份重建，计时。这一次演练的价值高于此前所有备份代码。</dd></div>
+      </dl>
+    </article>
+
+    <article class="domain">
+      <header>
+        <h3>六 · 变更管理</h3>
+        <span class="en">Change management</span>
+        <span class="chip crit">最弱的一环</span>
+      </header>
+      <p class="lede">改一次系统，出问题的概率有多大，以及出了之后多久能退回去。</p>
+      <dl class="rows">
+        <div class="row"><dt>解决什么</dt><dd>系统上线之后，<b>最大的故障来源不是别人攻击，是自己改坏的</b>。这在任何团队都成立。</dd></div>
+        <div class="row"><dt>你已经有</dt><dd>321 项自动测试 · 一键部署脚本（含权限修复、配置同步、部署后自检）· 全部改动进 git，每次都写清为什么。</dd></div>
+        <div class="row gap"><dt>还缺</dt><dd><b>没有一键回滚</b>——改坏了只能再改一次修回来，而修的过程中系统一直是坏的。<b>没有发布记录</b>——出问题时说不清「上一次好的是哪个版本」。<b>没有灰度</b>——每次改动直接对全公司生效。</dd></div>
+        <div class="row"><dt>什么时候做</dt><dd><b>一键回滚：上线前就该有</b>，半天工作量。灰度对 13 人公司不划算，先不做。发布记录顺手就有。</dd></div>
+      </dl>
+    </article>
+  </section>
+
+  <!-- ── 时间线 ───────────────────────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <h2>什么时候做什么</h2>
+      <span class="eyebrow">Sequencing</span>
+    </div>
+    <p style="margin-top:-6px;color:var(--muted);font-size:14px">顺序是有讲究的：<strong>先装能看见问题的东西，再让人进来</strong>。反过来的话，前两周的问题会全部沉底，而那恰恰是问题最密集的两周。</p>
+
+    <div class="timeline">
+      <div class="phase">
+        <div class="when">同事进来之前<small>剩一件</small></div>
+        <div>
+          <h4>让问题能被看见</h4>
+          <ul>
+            <li><s>接上企业微信通道</s> —— 已打通，业务群与管理群分开</li>
+            <li><s>一键回滚</s> —— 已做并真滚过一次往返</li>
+            <li><s>恢复演练</s> —— 已跑，7 秒，23 表全对</li>
+            <li><b>确认管理群不是「全员群」</b> —— 带这个标记的群新同事会自动加入，
+              系统报错会直接倒到所有人眼前</li>
+            <li>把「反馈」入口在第一次培训时讲一遍，这是它能不能活下来的关键</li>
+          </ul>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="when">第 1 个月</div>
+        <div>
+          <h4>确认退路真的存在</h4>
+          <ul>
+            <li><s>演练一次完整恢复</s> —— 已做，而且当场抓到部署脚本在删备份</li>
+            <li><b>备份加一份异地副本</b>（对象存储，一年几十块）—— 现在备份只在这台机器上，
+              机器整个没了就一起没了</li>
+            <li>给反馈加「已回复」通知 —— 收到前三条之后再定形式</li>
+            <li>每周看一次错误摘要，判断噪音水平是否合适</li>
+          </ul>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="when">第 2–3 个月</div>
+        <div>
+          <h4>补上人的可见性</h4>
+          <ul>
+            <li>「谁在哪登录着」界面 + 一键踢人</li>
+            <li>发布记录：每次部署记下版本和改了什么</li>
+            <li>根据两个月的真实用量，回头调一次 AI 额度</li>
+          </ul>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="when">半年后<small>触发式，不是排期</small></div>
+        <div>
+          <h4>只在触发条件成立时才做</h4>
+          <ul>
+            <li>知识库超过 1000 篇 或 有人抱怨「AI 找不到资料」→ 上向量检索（现在 14 篇，硬上只增加复杂度）</li>
+            <li>AI 月账单超过 ¥500 → 细化成本归因</li>
+            <li>人数超过 25 人 → 才需要考虑灰度发布</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 三个具体问题 ─────────────────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <h2>你问的三件具体事</h2>
+      <span class="eyebrow">Operational answers</span>
+    </div>
+
+    <article class="domain">
+      <header><h3>企业微信群机器人 webhook 怎么注册</h3></header>
+      <p class="lede">这是一个 URL，不是密钥，可以直接发给我。整个过程在手机或电脑的企业微信里完成，两分钟。</p>
+      <ol class="steps">
+        <li>在企业微信里<strong>建一个群</strong>（可以只有你和总经理两个人，专门用来收系统通知，不要用工作群——通知混在聊天里等于没有）</li>
+        <li>进群 → 右上角 <strong>「···」</strong> → <strong>群机器人</strong></li>
+        <li><strong>添加机器人</strong> → 起个名字，比如「信义系统」→ 添加</li>
+        <li>点进刚建好的机器人 → <strong>复制 Webhook 地址</strong></li>
+        <li>把那串 <code>https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...</code> 发我</li>
+      </ol>
+      <div class="callout">
+        <span class="tag">注意</span>
+        <p>群机器人只能<strong>往群里发</strong>，收不到任何东西，也读不到群里的聊天。所以这个地址泄露的最坏后果是有人往你群里发垃圾消息，不会泄露公司数据。</p>
+      </div>
+    </article>
+
+    <article class="domain">
+      <header><h3>模型升级了要不要自动切</h3></header>
+      <p class="lede">技术上能做，但我不建议做成全自动——理由不是麻烦，是<strong>无法判断新模型的价格</strong>。</p>
+      <dl class="rows">
+        <div class="row"><dt>问题</dt><dd>模型列表接口只告诉你「有哪些模型」，<b>不告诉你每个多少钱</b>。所以「同价格才自动切」这个条件，程序判断不了。</dd></div>
+        <div class="row"><dt>风险</dt><dd>新模型常常更贵。自动切过去，你会在<b>下个月看账单时</b>才发现——而那时已经花掉了。<code>kimi-k3</code> 的输出价是 <code>deepseek-v4-pro</code> 的近 4 倍，切错一个模型比多用一个月还贵。</dd></div>
+        <div class="row"><dt>我的建议</dt><dd><b>自动检测 + 通知，手动一行切换。</b>每周查一次两家的可用模型列表，发现新的就在每日摘要里告诉你，附上模型名。你去官网看一眼价格，觉得划算就说一声，我改一个配置值，一分钟。</dd></div>
+        <div class="row"><dt>额外好处</dt><dd>这套检测顺便能抓到<b>模型被下架</b>——这次 <code>kimi-k2.5</code> 就是配了一个已经不存在的模型，而报错显示的是「AI 后端不可用」，完全指不到真正的原因。</dd></div>
+      </dl>
+    </article>
+
+    <article class="domain">
+      <header><h3>DeepSeek 峰谷电价之后，和 Kimi 比哪个划算</h3></header>
+      <p class="lede">结论很干脆：<strong>DeepSeek 即使在峰时也全面便宜，峰谷不改变结论。</strong></p>
+
+      <div class="price-scroll">
+        <table class="price">
+          <thead>
+            <tr>
+              <th>模型</th>
+              <th>输入·谷</th>
+              <th>输入·峰</th>
+              <th>输出·谷</th>
+              <th>输出·峰</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="hi">
+              <td>deepseek-v4-pro<br><span style="font-size:12px;color:var(--muted);font-weight:400">当前主力</span></td>
+              <td>0.66</td><td>1.32</td><td>1.98</td><td>3.96</td>
+            </tr>
+            <tr>
+              <td>deepseek-v4-flash</td>
+              <td>0.22</td><td>0.44</td><td>0.66</td><td>1.32</td>
+            </tr>
+            <tr>
+              <td>kimi-k3<br><span style="font-size:12px;color:var(--muted);font-weight:400">兜底</span></td>
+              <td colspan="2">3.00</td><td colspan="2">15.00</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="caption">美元 / 每百万 token，2026-09 官方文档。Kimi 无时段折扣。缓存命中另有大幅折扣，两家都有。</p>
+
+      <dl class="rows" style="margin-top:16px">
+        <div class="row"><dt>峰时对比</dt><dd>DeepSeek 输入便宜 <b>2.3 倍</b>、输出便宜 <b>3.8 倍</b>。</dd></div>
+        <div class="row"><dt>谷时对比</dt><dd>输入便宜 <b>4.5 倍</b>、输出便宜 <b>7.6 倍</b>。</dd></div>
+        <div class="row"><dt>关键提醒</dt><dd>峰时是 <b>UTC 周一至周五 01:00–04:00 和 06:00–10:00</b>，换算成北京时间是 <b>09:00–12:00 和 14:00–18:00</b>——<b>正好是你们全部的上班时间</b>。所以实际上你们几乎永远付的是峰价。即便如此，仍然是 DeepSeek 划算得多。</dd></div>
+        <div class="row"><dt>能不能蹭谷时</dt><dd>能，但只对<b>不着急的活</b>有意义：情报雷达定时抓取现在是早上 8:55（峰时边缘），挪到晚上或午休就能省一半。同事的实时对话不可能等到晚上，那部分省不了。</dd></div>
+      </dl>
+
+      <div class="callout">
+        <span class="tag">按你们的量算</span>
+        <p>按现在实测（单次对话中位数约 1200 token），13 个人每天正常用，一个月大约 <strong>1000 万 token</strong>。走 DeepSeek 峰时约 <strong>¥180/月</strong>，走 Kimi 约 <strong>¥570/月</strong>。</p>
+        <p>差 ¥390——值得优先用 DeepSeek，但<strong>不值得为了省这笔钱牺牲可用性</strong>。所以现在的设计是「DeepSeek 优先，欠费或故障立刻自动切 Kimi」，而不是「只用 DeepSeek」。</p>
+      </div>
+    </article>
+  </section>
+
+
+  <!-- ── 管理员界面 ───────────────────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <h2>系统管理员的界面该长什么样</h2>
+      <span class="eyebrow">Admin console</span>
+    </div>
+
+    <p style="margin-top:-6px;color:var(--muted);font-size:14px">
+      成熟产品（Sentry、Datadog、Grafana、各家云控制台）的管理面板，形态差别很大，
+      但**回答的问题是同一组四个**。下面按这四个问题排，不按功能排 ——
+      按功能排会得到一个「什么都有、但不知道先看哪个」的页面。
+    </p>
+
+    <article class="domain">
+      <header><h3>问题一 · 现在有事吗</h3><span class="en">Is it broken now</span></header>
+      <p class="lede">打开面板三秒内要能回答。回答不了，这个面板就没人开第二次。</p>
+      <dl class="rows">
+        <div class="row"><dt>该显示</dt><dd>服务是否在跑 · 今天有几个未处理错误 · 有没有人被挡住干不了活</dd></div>
+        <div class="row"><dt>怎么做</dt><dd><b>整块变色，不是数字变大。</b>人扫一眼看的是颜色，不是数字 ——
+          「3」和「0」在余光里是一样的，红色和白色不是。</dd></div>
+        <div class="row"><dt>你已经有</dt><dd>「今日错误」卡片，有未处理就整块变红。</dd></div>
+      </dl>
+    </article>
+
+    <article class="domain">
+      <header><h3>问题二 · 谁在用，用得怎么样</h3><span class="en">Who and how</span></header>
+      <p class="lede">不是为了监视同事，是为了发现「有人卡住了但没说」。</p>
+      <dl class="rows">
+        <div class="row"><dt>该显示</dt><dd>当前在线会话（谁、什么设备、什么时候登的）· 各人 AI 用量 ·
+          谁一周没登录过</dd></div>
+        <div class="row"><dt>为什么有用</dt><dd><b>「一周没登录」比任何反馈都说明问题</b> ——
+          他不是不需要，是用不下去而你不知道。这一条比错误日志更早暴露问题。</dd></div>
+        <div class="row gap"><dt>还缺</dt><dd>在线会话列表和一键踢人（数据已在记，界面没做）；
+          「谁没在用」的统计。</dd></div>
+      </dl>
+    </article>
+
+    <article class="domain">
+      <header><h3>问题三 · 花了多少钱</h3><span class="en">What it costs</span></header>
+      <p class="lede">不是为了省，是为了在**异常花费变成账单之前**看见它。</p>
+      <dl class="rows">
+        <div class="row"><dt>该显示</dt><dd>今天/本月 token 与折算金额 · 花在哪个功能上 ·
+          异常尖峰（今天比平时多几倍）</dd></div>
+        <div class="row"><dt>关键</dt><dd><b>看趋势不看总量。</b>「本月 ¥180」说明不了什么，
+          「今天是平时的 8 倍」才是要立刻查的信号。</dd></div>
+        <div class="row"><dt>你已经有</dt><dd>AI 用量与成本卡片、按人按功能归因、全公司总闸。</dd></div>
+      </dl>
+    </article>
+
+    <article class="domain">
+      <header><h3>问题四 · 我能做点什么</h3><span class="en">What can I do</span></header>
+      <p class="lede">前三个问题只让人知道情况。<b>没有第四个，面板就是一个让人焦虑的仪表盘。</b></p>
+      <dl class="rows">
+        <div class="row"><dt>该有的动作</dt><dd>把错误标为已处理 / 已修 · 回复同事的反馈 ·
+          重置密码、停用账号 · 踢掉某个会话 · 一键回滚</dd></div>
+        <div class="row"><dt>原则</dt><dd><b>看到问题的地方就能处理它</b>，不要「去另一个页面找对应功能」——
+          那一步会让人放弃。</dd></div>
+        <div class="row gap"><dt>还缺</dt><dd>错误和反馈现在只能看，<b>不能在面板上直接标记和回复</b>；
+          回滚只能在终端敲命令（这一条是故意的，见下）。</dd></div>
+      </dl>
+    </article>
+
+    <div class="callout">
+      <span class="tag">一个刻意的例外</span>
+      <p><strong>回滚不做成网页按钮。</strong>你需要回滚的时候，往往就是网页打不开的时候 ——
+      把救生艇的钥匙锁在正在进水的船舱里，是最常见的设计错误之一。</p>
+      <p>所以它是一条独立命令（<code>npm run rollback</code>），不依赖这个系统本身还活着。
+      恢复演练同理。</p>
+    </div>
+  </section>
+
+  <!-- ── AI 时代 ──────────────────────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <h2>三年后这套东西会不会过时</h2>
+      <span class="eyebrow">Designing for what comes next</span>
+    </div>
+
+    <p style="margin-top:-6px;color:var(--muted);font-size:14px">
+      业务方 2026-09-03 提的问题：学成熟做法之外，还要判断这些做法在 AI 普及之后会不会被淘汰。
+      这个问题问得对 —— 下面是我的判断，以及它已经如何影响了这套系统的设计。
+    </p>
+
+    <div class="matrix-scroll">
+      <table class="matrix">
+        <thead>
+          <tr><th style="width:190px">会被 AI 淘汰的</th><th>会被 AI 放大的</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="why">功能靠「人记得在哪个菜单里点」</td>
+            <td class="why"><b>数据结构清晰、机器能读</b> —— AI 能不能替你干活，取决于它能不能读懂你的数据</td>
+          </tr>
+          <tr>
+            <td class="why">价值主要在「界面做得好看」</td>
+            <td class="why"><b>每个动作有明确语义和留痕</b> —— 「谁在什么时候因为什么改了什么」，
+              这是 AI 代做之后唯一的追责依据</td>
+          </tr>
+          <tr>
+            <td class="why">业务规则只存在于老员工脑子里</td>
+            <td class="why"><b>规则写成代码和测试</b> —— 写下来的规则 AI 能执行，脑子里的不能</td>
+          </tr>
+          <tr>
+            <td class="why">数据锁在自己库里，不开放接口</td>
+            <td class="why"><b>有干净的 API</b> —— 将来接任何 AI 工具，靠的是这个</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <article class="domain" style="margin-top:22px">
+      <header><h3>这套系统押的是右边那一栏</h3></header>
+      <dl class="rows">
+        <div class="row"><dt>已经做对</dt><dd>业务数据在 PostgreSQL 里结构化存放，不是 Excel、不是聊天记录 ·
+          追加式操作账本，每个动作有 actor 和原因 · 服务端 API 完整 ·
+          <b>330 项测试把业务规则写死成可执行的形式</b></dd></div>
+        <div class="row"><dt>正在做对</dt><dd>AI 动作权限矩阵、高风险动作走提案队列 ——
+          <b>这是「AI 能替人干活」的前提，不是限制它</b>：
+          没有这层，你永远不敢让它碰真数据</dd></div>
+        <div class="row gap"><dt>要警惕</dt><dd>继续往界面上堆按钮。<b>多问一句：三年后这件事还需要人点鼠标吗？</b>
+          如果不需要，力气该花在把数据和规则整理清楚上，而不是把按钮排得更好看。</dd></div>
+      </dl>
+    </article>
+
+    <div class="callout">
+      <span class="tag">具体到你们</span>
+      <p>信义卖的是<strong>「把客户的做法整理成可审核的体系」</strong>。这件事的本质，
+      和「把公司的做法整理成机器可读的结构」是同一件事。</p>
+      <p>所以这套系统真正的资产不是界面，是<strong>那 20 张结构化的表、追加式账本、
+      和 330 条写清楚了「为什么」的测试</strong>。界面三年后大概率会换一遍；这些不会。</p>
+    </div>
+  </section>
+
+  <hr>
+  <p style="font-size:13px;color:var(--faint);margin-top:24px">
+    价格与时段来自 DeepSeek 与 Moonshot 官方文档，2026-09-03 核实。用量与账号数来自生产库实测。
+    这份对照会随系统变化过时——状态一栏以仓库里的 <code>docs/上线后待办清单.md</code> 为准。
+  </p>
+
+</div>
+
+</body>
+</html>
