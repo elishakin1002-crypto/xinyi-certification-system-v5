@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Sidebar from './Sidebar';
 import AIChatWidget from './AIChatWidget';
+import VersionWatcher from './VersionWatcher';
 import FeedbackModal from './FeedbackModal';
 import MyAiUsage from './MyAiUsage';
 import OnboardingTour from './OnboardingTour';
@@ -213,6 +214,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       const covered = new Set(base.map(item => item.persona));
       (Object.keys(personaDisplayName) as DashboardPersona[]).forEach(persona => {
         if (covered.has(persona)) return;
+        /*
+          「系统管理员」视角只给系统管理员本人（2026-09-05）。
+
+          它不是一个业务视角，是运维看板：今日错误、AI 花了多少钱、
+          谁在线、数据库多大。总经理点进去看到的是一屏他既不需要、
+          也无从判断的技术指标 —— 而**看不懂的数字会引起没必要的担心**，
+          「今日错误 3 种」在他眼里可能就是「系统是不是要崩了」。
+
+          除了本人，谁都不给，包括总经理。
+        */
+        if (persona === 'sysadmin'
+          && !currentUser.roles.includes('SYS_ADMIN')) return;
         base.push({
           key: `persona-${persona}`,
           mode: 'persona' as const,
@@ -237,7 +250,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       });
     }
     return base;
-  }, [availableRoles, isFinanceOnlyIdentity, availablePersonas, canSwitchView]);
+  }, [availableRoles, isFinanceOnlyIdentity, availablePersonas, canSwitchView, currentUser.roles]);
   const sortedUsers = [...userProfiles].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
   const canSwitchCurrentUser = !isAuthRequired;
   const searchableScopes = useMemo(() => resolveSearchScopesByPermissions(userPermissions), [userPermissions]);
@@ -711,6 +724,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           {children}
         </main>
         <AIChatWidget />
+        <VersionWatcher />
         <FeedbackModal open={isFeedbackOpen} onClose={() => setIsFeedbackOpen(false)} />
         <OnboardingTour forceOpen={replayTour} onClose={() => setReplayTour(false)} />
       </div>

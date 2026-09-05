@@ -444,6 +444,16 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
   const resolveDashboardPersona = (queryPersona?: string | null): DashboardPersona => {
     const parsed = previewPersona || normalizePersona(queryPersona);
     if (parsed) {
+      /*
+        运维看板只给系统管理员本人，总经理也不给（2026-09-05）。
+
+        菜单里已经不列它了，但地址栏敲 ?persona=sysadmin 还是能进 ——
+        菜单挡得住误点，挡不住好奇，而这两种都会让人看到一屏
+        自己既不需要也无从判断的技术指标。
+      */
+      if (parsed === 'sysadmin' && !normalizedCurrentUser.roles.includes('SYS_ADMIN')) {
+        return activePersona;
+      }
       const requiredRole = PERSONA_TO_ROLE[parsed];
       if (normalizedCurrentUser.roles.includes(requiredRole)) return parsed;
       if (normalizedCurrentUser.roles.some((r) => VIEW_INSPECTOR_ROLES.includes(r))) return parsed;

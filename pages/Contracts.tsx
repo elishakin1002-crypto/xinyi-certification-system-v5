@@ -1,7 +1,7 @@
 
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search, FileSpreadsheet } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { aiService } from '../services/aiService'; 
 import { IngestionUploader } from '../components/IngestionUploader';
@@ -9,6 +9,7 @@ import { Receivable, Lead, Status, Contract, ContractAttachment, KnowledgeDoc } 
 import { extractTextFromDocx, extractTextFromPdf, renderPdfPagesAsImages } from '../services/documentParsers';
 import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
+import { buildImportPlan, ContractImportPlan, HISTORY_IMPORT_TAG } from '../src/modules/contractImport';
 import { Badge, SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 
 const Contracts = () => {
@@ -965,16 +966,99 @@ const Contracts = () => {
     };
   })();
 
+  /*
+    ── 历史合同批量导入（2026-09-05）──────────────────────────
+
+    新签合同默认「同时创建交付项目」，那是对的：签了就要交付。
+    但历史合同是已经做完的事 —— 顺手建项目的话，项目列表里会凭空
+    多出几百个「进行中」的僵尸项目，把在制项目数、派活看板、
+    项目延误率全部污染，而这些数字正是用来判断「现在忙不忙」的。
+
+    靠人记得每次取消那个勾不行：几百条里漏一次就得手工清理。
+    所以这条路**在代码层面就不建项目**（addContract 第二个参数写死 false），
+    不是靠勾选框。
+  */
+  const [importPlan, setImportPlan] = useState<ContractImportPlan | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState('');
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePickImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImportResult('');
+    try {
+      const XLSX = (window as any).XLSX;
+      if (!XLSX) { alert('表格解析组件没加载出来，刷新页面再试一次。'); return; }
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet) as Record<string, unknown>[];
+      if (rows.length === 0) { alert('这个表格里没有数据行（第一行会被当成表头）。'); return; }
+      setImportPlan(buildImportPlan(rows, contracts.map(c => ({
+        contractNo: c.contractNo, customerName: c.customerName, amount: c.amount, signDate: c.signDate
+      }))));
+    } catch (err) {
+      console.error(err);
+      alert('这个文件读不出来，确认是 .xlsx 或 .csv，而且第一行是表头。');
+    }
+  };
+
+  const runImport = async () => {
+    if (!importPlan || importPlan.ready.length === 0) return;
+    setIsImporting(true);
+    let done = 0;
+    const failed: string[] = [];
+    for (const row of importPlan.ready) {
+      const result = addContract({
+        title: row.title,
+        customerName: row.customerName,
+        amount: row.amount,
+        signDate: row.signDate,
+        contractNo: row.contractNo,
+        contactPerson: row.contactPerson,
+        serviceLine: row.serviceLine,
+        remarks: [HISTORY_IMPORT_TAG, row.remarks].filter(Boolean).join(' '),
+        owner: currentUser.name,
+      }, false);   // ← 第二个参数 false：历史合同不建项目
+      if (result.ok) done += 1;
+      else failed.push(`第 ${row.rowNo} 行 ${row.customerName}：${result.reason || '未知原因'}`);
+    }
+    setIsImporting(false);
+    setImportPlan(null);
+    setImportResult(
+      `导入完成：成功 ${done} 条${failed.length ? `，失败 ${failed.length} 条 —— ${failed.slice(0, 3).join('；')}` : ''}。`
+      + '这些合同不会生成交付项目。'
+    );
+  };
+
   return (
     <div className="p-6">
        <div className="mb-6 flex justify-between items-center">
            <div><h1 className="text-2xl font-bold text-gray-900">合同管理</h1><p className="text-sm text-gray-500 mt-1">管理合同详情、回款节点与执行状态</p></div>
-           <button
-             onClick={openContractModal}
-             className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 flex items-center shadow-sm whitespace-nowrap transition-all active:scale-95"
-           >
-             <Plus className="w-4 h-4 mr-2" /> 录入合同
-           </button>
+           <div className="flex items-center gap-2">
+             <input
+               ref={importInputRef}
+               type="file"
+               accept=".xlsx,.xls,.csv"
+               onChange={handlePickImportFile}
+               className="hidden"
+             />
+             <button
+               onClick={() => importInputRef.current?.click()}
+               title="从 Excel 批量导入已经做完的老合同，不会生成交付项目"
+               className="bg-white text-gray-700 border border-gray-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-50 flex items-center shadow-sm whitespace-nowrap"
+             >
+               <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" /> 导入历史合同
+             </button>
+             <button
+               onClick={openContractModal}
+               className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 flex items-center shadow-sm whitespace-nowrap transition-all active:scale-95"
+             >
+               <Plus className="w-4 h-4 mr-2" /> 录入合同
+             </button>
+           </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
@@ -1546,6 +1630,102 @@ const Contracts = () => {
               )}
             </div>
           </div>
+        </div>
+      )}
+      {/*
+        ── 导入前先看清楚（2026-09-05）────────────────────────
+
+        几百条的操作，**撤销的成本远高于确认的成本**：
+        导错了要一条条删，而多看一眼只花三秒。
+        所以先给出「能导 / 重复 / 有问题」三个数，再让人点。
+
+        有问题的行原样列出行号和客户名，人能直接回表格里改那一行 ——
+        只说「3 行有问题」等于没说。
+      */}
+      {importPlan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+            <div className="px-5 py-4 border-b border-gray-100 shrink-0">
+              <h3 className="text-sm font-black text-gray-900">导入历史合同</h3>
+              <p className="text-xs font-bold text-gray-500 mt-0.5">
+                共读到 {importPlan.totalRows} 行。<span className="text-emerald-700">这些合同不会生成交付项目。</span>
+              </p>
+            </div>
+
+            <div className="px-5 py-4 overflow-y-auto grow space-y-4">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+                  <div className="text-2xl font-black text-emerald-700 tabular-nums">{importPlan.ready.length}</div>
+                  <div className="text-[11px] font-black text-emerald-700">可以导入</div>
+                </div>
+                <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                  <div className="text-2xl font-black text-gray-600 tabular-nums">{importPlan.duplicates.length}</div>
+                  <div className="text-[11px] font-black text-gray-500">重复，跳过</div>
+                </div>
+                <div className="rounded-xl border border-amber-100 bg-amber-50 p-3">
+                  <div className="text-2xl font-black text-amber-700 tabular-nums">{importPlan.problems.length}</div>
+                  <div className="text-[11px] font-black text-amber-700">读不出来</div>
+                </div>
+              </div>
+
+              {importPlan.problems.length > 0 && (
+                <div>
+                  <p className="text-xs font-black text-gray-700 mb-1.5">这些行读不出来，导入时会跳过：</p>
+                  <ul className="space-y-1 text-xs font-bold text-gray-500">
+                    {importPlan.problems.slice(0, 12).map(x => (
+                      <li key={x.rowNo}>第 {x.rowNo} 行 · {x.label} —— {x.reason}</li>
+                    ))}
+                    {importPlan.problems.length > 12 && <li>…… 还有 {importPlan.problems.length - 12} 行</li>}
+                  </ul>
+                </div>
+              )}
+
+              {importPlan.duplicates.length > 0 && (
+                <div>
+                  <p className="text-xs font-black text-gray-700 mb-1.5">这些已经在系统里了：</p>
+                  <ul className="space-y-1 text-xs font-bold text-gray-400">
+                    {importPlan.duplicates.slice(0, 6).map(x => (
+                      <li key={x.rowNo}>第 {x.rowNo} 行 · {x.label} —— {x.reason}</li>
+                    ))}
+                    {importPlan.duplicates.length > 6 && <li>…… 还有 {importPlan.duplicates.length - 6} 条</li>}
+                  </ul>
+                </div>
+              )}
+
+              {importPlan.ready.length === 0 && (
+                <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs font-bold text-gray-500">
+                  没有可以导入的行。表格里至少要有「客户名称」「合同金额」「签订日期」这三列，
+                  列名叫「客户」「金额」「签约日期」也认。
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 px-5 py-3.5 bg-gray-50 border-t border-gray-100 shrink-0">
+              <button
+                onClick={() => setImportPlan(null)}
+                className="px-3 h-9 rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-200"
+              >
+                取消
+              </button>
+              <button
+                onClick={runImport}
+                disabled={isImporting || importPlan.ready.length === 0}
+                className="inline-flex items-center px-4 h-9 rounded-lg bg-blue-600 text-white text-xs font-black hover:bg-blue-700 disabled:opacity-60"
+              >
+                {isImporting && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                导入这 {importPlan.ready.length} 条
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importResult && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl border border-emerald-200 bg-white px-4 py-3 shadow-lg">
+          <span className="text-sm font-bold text-gray-800">{importResult}</span>
+          <button onClick={() => setImportResult('')} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
     </div>

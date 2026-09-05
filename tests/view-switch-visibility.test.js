@@ -286,3 +286,38 @@ test('合法视角名单从映射表推导，不再手抄', () => {
   const missing = typed.filter((p) => !mapped.has(p));
   assert.deepEqual(missing, [], `这些视角没有角色映射到它，切过去会没反应：${missing.join('、')}`);
 });
+
+test('运维视角只给系统管理员本人，总经理也不给', () => {
+  /*
+    它不是业务视角，是运维看板：今日错误、AI 花了多少钱、谁在线、
+    数据库多大。总经理点进去看到的是一屏他既不需要、也无从判断的
+    技术指标 —— 而**看不懂的数字会引起没必要的担心**，
+    「今日错误 3 种」在他眼里可能就是「系统是不是要崩了」。
+  */
+  const layout = read('components/Layout.tsx');
+  assert.match(layout, /persona === 'sysadmin'\s*\n?\s*&& !currentUser\.roles\.includes\('SYS_ADMIN'\)\) return;/,
+    '视角菜单里没有把运维视角对其他人隐藏');
+
+  // 菜单挡得住误点，挡不住地址栏
+  const ctx = read('context/AppContext.tsx');
+  assert.match(ctx, /parsed === 'sysadmin' && !normalizedCurrentUser\.roles\.includes\('SYS_ADMIN'\)/,
+    '地址栏敲 ?persona=sysadmin 还能进运维看板');
+});
+
+test('发了新版会提醒刷新，而不是让人以为功能没做', () => {
+  /*
+    2026-09-05 同一件事发生三次：部署上线了，用户那边看到的还是旧的，
+    于是「这个功能没做」和「浏览器没拿到新包」看起来一模一样。
+
+    服务端是对的（index.html 是 no-store、没有 Service Worker），
+    但标签页一直开着不刷新，页面就一直是旧的 ——
+    而没有人会在用系统的时候想到「我该刷新一下」。
+  */
+  const src = read('components/VersionWatcher.tsx');
+  assert.match(src, /cache: 'no-store'/, '取新版本时没绕开缓存，等于白取');
+  assert.match(src, /visibilitychange/, '切回标签页时没有立刻检查');
+  assert.doesNotMatch(src, /location\.reload\(\);\s*\n\s*\}, \[/,
+    '不能自动刷新 —— 会把人正在填的表单冲掉');
+  assert.match(src, /setDismissed\(true\)/, '不能关掉的提示就是骚扰');
+  assert.match(read('components/Layout.tsx'), /<VersionWatcher \/>/, '没挂上去');
+});
