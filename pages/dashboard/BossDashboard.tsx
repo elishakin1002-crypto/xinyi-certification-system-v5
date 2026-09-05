@@ -38,7 +38,7 @@ const BossDashboard: React.FC<Props> = ({ overviewCards, teamCards }) => {
   return (
     <div className="space-y-6">
       {/* 顶部经营指标 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div data-onboard="boss-kpi" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {overviewCards.map(card => {
           if (isOverdueCard(card.id)) {
             return (
@@ -79,7 +79,7 @@ const BossDashboard: React.FC<Props> = ({ overviewCards, teamCards }) => {
       </div>
 
       {/* 团队产能与执行 */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+      <div data-onboard="team-capacity" className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
           <div>
             <h2 className="text-lg font-black text-gray-900 flex items-center">

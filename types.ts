@@ -40,7 +40,17 @@ export type CustomerVisibilityPolicy =
   他关心的是服务健康、AI 花了多少钱、有没有异常登录，
   而不是这个月签了几单。
 */
-export type DashboardPersona = 'boss' | 'sales' | 'consultant' | 'finance' | 'sysadmin';
+/*
+  工作台视角。
+
+  manager（总助）2026-09-05 补：她原来映射到 'boss'，因为她看的确实是
+  总经理那套工作台（她不拥有线索，销售那套数字对她永远是 0）。
+  但这让**视角切换里根本没有「总助」这一项** —— 而她的菜单和总经理不一样
+  （不碰钱、不能改角色），巡检时看不到她那一份，等于有个角色没人验过。
+
+  所以给她独立的 persona：工作台内容仍与总经理相同，但菜单按她的角色收窄。
+*/
+export type DashboardPersona = 'boss' | 'manager' | 'sales' | 'consultant' | 'finance' | 'sysadmin';
 
 export interface Role {
   id: RoleID;

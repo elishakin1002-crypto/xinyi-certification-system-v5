@@ -952,7 +952,7 @@ ${ragContext}
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end pointer-events-none md:pointer-events-none">
+    <div data-onboard="ai-chat" className="fixed bottom-6 right-6 z-50 flex flex-col items-end pointer-events-none md:pointer-events-none">
       <div className={`bg-white flex flex-col border border-gray-200 overflow-hidden shadow-2xl transition-all duration-300 ease-in-out transform origin-bottom-right ${isOpen ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-90 pointer-events-none'} fixed inset-0 w-full h-full rounded-none z-[60] md:absolute md:bottom-[4.5rem] md:right-0 md:w-[480px] md:h-[700px] md:max-h-[calc(100vh-8rem)] md:rounded-2xl md:inset-auto md:z-50`}>
         {/* Header V5.0 */}
         <div className={`p-4 flex justify-between items-center text-white shrink-0 bg-gradient-to-r from-indigo-700 to-blue-800 shadow-lg`}> 

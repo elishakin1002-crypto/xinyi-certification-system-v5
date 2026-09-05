@@ -57,9 +57,9 @@ const KIND_LABEL: Record<string, string> = {
 
 const num = (v: unknown) => Number(v || 0).toLocaleString('zh-CN');
 
-const Card: React.FC<{ title: string; icon: React.ReactNode; tone?: 'normal' | 'alert'; children: React.ReactNode; action?: React.ReactNode }> =
-  ({ title, icon, tone = 'normal', children, action }) => (
-  <div className={`bg-white rounded-2xl border p-5 ${tone === 'alert' ? 'border-red-200' : 'border-gray-100'}`}>
+const Card: React.FC<{ title: string; icon: React.ReactNode; tone?: 'normal' | 'alert'; children: React.ReactNode; action?: React.ReactNode; dataOnboard?: string }> =
+  ({ title, icon, tone = 'normal', children, action, dataOnboard }) => (
+  <div data-onboard={dataOnboard} className={`bg-white rounded-2xl border p-5 ${tone === 'alert' ? 'border-red-200' : 'border-gray-100'}`}>
     <div className="flex items-center justify-between mb-4">
       <div className="flex items-center gap-2">
         <span className={tone === 'alert' ? 'text-red-500' : 'text-gray-400'}>{icon}</span>
@@ -155,7 +155,7 @@ const SysAdminBoard: React.FC = () => {
         有未处理错误就整块变红 —— 不靠人去逐个数字比对，
         看板的第一职责是「一眼看出有没有事」。
       */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div data-onboard="sysadmin-errors" className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card title="今日错误" icon={<AlertTriangle className="w-4 h-4" />} tone={hasErrors ? 'alert' : 'normal'}>
           <div className="flex items-end gap-6">
             <Stat label="种类" value={errs?.today.kinds ?? '—'} tone={hasErrors ? 'alert' : 'muted'} />
@@ -231,6 +231,7 @@ const SysAdminBoard: React.FC = () => {
         自动采集看不见，只有人能说。
       */}
       <Card
+        dataOnboard="sysadmin-feedback"
         title="同事主动反馈"
         icon={<MessageSquare className="w-4 h-4" />}
         tone={fb.some(f => f.severity === 'blocked' && f.status === 'new') ? 'alert' : 'normal'}

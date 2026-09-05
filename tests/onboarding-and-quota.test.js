@@ -193,3 +193,53 @@ test('前端不预判能不能删，把服务端的理由原样显示', () => {
     '没把服务端的拒绝理由显示出来');
   assert.match(src, /pendingDelete && \(/, '删除没有确认步骤');
 });
+
+test('引导要指到具体位置，不能只在导航栏跳', () => {
+  /*
+    2026-09-05 反馈：「只会在左侧导航栏里跳动，却没有解释到哪，就指向哪里」。
+
+    查下来 steps.ts 里的 target 字段**从头到尾是死代码** ——
+    组件只弹了个居中的框，一次都没用过它，界面上连一个锚点都没挂。
+
+    人读引导时脑子里在问的是「它说的那个东西在屏幕哪儿」。
+    这个问题不回答，讲得再有道理也落不了地。
+  */
+  const src = read('components/OnboardingTour.tsx');
+  assert.match(src, /data-onboard="\$\{targetSel\}"/, '组件没有按 target 找元素');
+  assert.match(src, /getBoundingClientRect/, '没有量元素位置，就没法指');
+  assert.match(src, /scrollIntoView/, '元素在屏幕外时没有滚动过去');
+  assert.match(src, /ring-4 ring-blue-500/, '没有高亮描边');
+  assert.match(src, /cardPos/, '说明气泡没有贴到元素旁边');
+});
+
+test('指不到的时候要明说，不能假装指到了', () => {
+  /*
+    元素可能因为权限、折叠、还没渲染而不在页面上。
+    这时候照着找找不到，人会以为是自己眼瞎或者系统坏了。
+  */
+  const src = read('components/OnboardingTour.tsx');
+  assert.match(src, /这一块现在不在屏幕上/, '找不到元素时没有任何说明');
+  assert.match(src, /if \(!el\) \{ setRect\(null\); return; \}/, '找不到元素时没有安全退回');
+});
+
+test('引导里写的每个 target，界面上都真的挂了锚点', () => {
+  /*
+    这是死代码最容易复发的地方：steps.ts 里写个 target 很容易，
+    忘了去界面上挂 data-onboard 也没人会发现 —— 因为它不报错，
+    只是安静地退回居中弹窗，看起来「差不多能用」。
+  */
+  const fs2 = require('node:fs');
+  const steps = read('src/modules/onboarding/steps.ts');
+  const targets = [...new Set([...steps.matchAll(/target: '([a-z0-9-]+)'/g)].map((m) => m[1]))];
+  assert.ok(targets.length >= 10, '解析 target 失败，测试要跟着结构改');
+
+  const walk = (dir) => fs2.readdirSync(path.resolve(root, dir), { withFileTypes: true })
+    .flatMap((e) => e.isDirectory()
+      ? (e.name === 'node_modules' ? [] : walk(`${dir}/${e.name}`))
+      : (/\.tsx?$/.test(e.name) ? [`${dir}/${e.name}`] : []));
+  const all = ['components', 'pages', 'src'].flatMap(walk).map(read).join('\n');
+
+  const missing = targets.filter((t) => !all.includes(`data-onboard="${t}"`)
+    && !all.includes(`dataOnboard="${t}"`));
+  assert.deepEqual(missing, [], `这些 target 在界面上找不到锚点：${missing.join('、')}`);
+});

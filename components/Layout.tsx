@@ -124,6 +124,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     // 键名 boss 保留（写在 URL / localStorage / current_role 里，改了旧值全失效），
     // 只改显示名：公司里这个角色的正式称呼是总经理，不是老板。
     boss: '总经理',
+    manager: '总助',
     sales: '销售',
     consultant: '咨询顾问',
     finance: '财务',
@@ -557,6 +558,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
              */}
              {currentViewPersona !== 'sysadmin' && (
                <button
+                 data-onboard="feedback"
                  onClick={() => setIsFeedbackOpen(true)}
                  aria-label="反馈问题"
                  title="反馈问题"
@@ -602,6 +604,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
              <div className="relative pl-2 border-l border-gray-100">
                 <button
                   type="button"
+                  data-onboard="view-switch"
                   onClick={() => { setIsAccountMenuOpen(!isAccountMenuOpen); setIsRoleMenuOpen(false); setIsUserMenuOpen(false); }}
                   className="flex items-center space-x-3 rounded-xl px-2 py-1 transition-colors hover:bg-gray-50"
                   aria-haspopup="menu"

@@ -79,20 +79,25 @@ type PersonaPlan = {
 
 const PERSONA_LABEL: Record<DashboardPersona, string> = {
   boss: '总经理视角',
+  manager: '总助视角',
   sales: '销售视角',
   consultant: '咨询师视角',
   finance: '财务视角',
   sysadmin: '系统管理员视角'
 };
 
+const BOSS_PLAN: PersonaPlan = {
+  taskDefaultView: 'aggregated',
+  chartCollapsed: false,
+  aiDefaultOpen: { opportunity: true, risk: true, intel: false },
+  taskKeywords: [],
+  alertKeywords: []
+};
+
 const PERSONA_PLAN: Record<DashboardPersona, PersonaPlan> = {
-  boss: {
-    taskDefaultView: 'aggregated',
-    chartCollapsed: false,
-    aiDefaultOpen: { opportunity: true, risk: true, intel: false },
-    taskKeywords: [],
-    alertKeywords: []
-  },
+  boss: BOSS_PLAN,
+  // 总助和总经理看同一套看板 —— 她关心团队产能和延误，不是「我的线索」
+  manager: BOSS_PLAN,
   sales: {
     taskDefaultView: 'aggregated',
     chartCollapsed: true,
@@ -1023,6 +1028,12 @@ const Dashboard = () => {
   ]);
 
   const roleHint = PERSONA_LABEL[persona];
+  /*
+    总助看的是总经理那套看板 —— 她统筹派活、盯项目节点，关心的是
+    团队产能和延误，不是「我的线索」（她不拥有线索，那些数字永远是 0）。
+    菜单已经按她的角色收窄了，看板内容不必再分一套。
+  */
+  const usesBossBoard = persona === 'boss' || persona === 'manager';
 
   /*
     系统管理员走完全不同的一块看板。
@@ -1046,7 +1057,7 @@ const Dashboard = () => {
       </div>
 
       {/* A. 顶部 KPI（按视角切换） */}
-      {persona === 'boss' ? (
+      {usesBossBoard ? (
         <BossDashboard
           overviewCards={bossOverviewCards.map(card => ({
             id: card.id,
@@ -1153,7 +1164,7 @@ const Dashboard = () => {
 
       {/* E. 风险与异常（统计 + 明细合并） */}
       <RiskPanel
-        statCards={persona === 'boss' ? bossRiskCards : []}
+        statCards={usesBossBoard ? bossRiskCards : []}
         alerts={riskAlertItems}
         onStatClick={route => openDashboardRoute(navigate, route)}
         onAlertClick={alert => {

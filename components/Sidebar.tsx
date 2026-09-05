@@ -123,7 +123,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
 
       <nav className="flex-1 overflow-y-auto px-2 py-4 space-y-1 no-scrollbar">
         {/* Workspace */}
-        <NavLink to="/dashboard" className={navClass} onClick={handleLinkClick}>
+        <NavLink data-onboard="nav-dashboard" to="/dashboard" className={navClass} onClick={handleLinkClick}>
           <LayoutDashboard className="w-5 h-5 mr-3" />
           工作台
         </NavLink>
@@ -145,11 +145,11 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
           {expandedGroups['crm'] && (
             <div className="mt-1 space-y-1 pl-4">
               {hasPermission('NAV_INTEL') && inView('NAV_INTEL') && (
-                <NavLink to="/intel" className={navClass} onClick={handleLinkClick}>情报雷达</NavLink>
+                <NavLink data-onboard="nav-intel" to="/intel" className={navClass} onClick={handleLinkClick}>情报雷达</NavLink>
               )}
-              <NavLink to="/leads" className={navClass} onClick={handleLinkClick}>线索管理</NavLink>
-              <NavLink to="/customers" className={navClass} onClick={handleLinkClick}>客户管理</NavLink>
-              <NavLink to="/contracts" className={navClass} onClick={handleLinkClick}>合同管理</NavLink>
+              <NavLink data-onboard="nav-leads" to="/leads" className={navClass} onClick={handleLinkClick}>线索管理</NavLink>
+              <NavLink data-onboard="nav-customers" to="/customers" className={navClass} onClick={handleLinkClick}>客户管理</NavLink>
+              <NavLink data-onboard="nav-contracts" to="/contracts" className={navClass} onClick={handleLinkClick}>合同管理</NavLink>
             </div>
           )}
         </div>
@@ -172,7 +172,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
           
           {expandedGroups['delivery'] && (
             <div className="mt-1 space-y-1 pl-4">
-              <NavLink to="/projects" className={navClass} onClick={handleLinkClick}>项目管理</NavLink>
+              <NavLink data-onboard="nav-projects" to="/projects" className={navClass} onClick={handleLinkClick}>项目管理</NavLink>
             </div>
           )}
         </div>
@@ -194,8 +194,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
           
           {expandedGroups['finance'] && (
             <div className="mt-1 space-y-1 pl-4">
-              <NavLink to="/finance" end className={navClass} onClick={handleLinkClick}>回款概览</NavLink>
-              <NavLink to="/finance/settlements" className={navClass} onClick={handleLinkClick}>顾问结算</NavLink>
+              <NavLink data-onboard="nav-finance" to="/finance" end className={navClass} onClick={handleLinkClick}>回款概览</NavLink>
+              <NavLink data-onboard="nav-settlements" to="/finance/settlements" className={navClass} onClick={handleLinkClick}>顾问结算</NavLink>
             </div>
           )}
         </div>
@@ -216,7 +216,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
           </button>
            {expandedGroups['audit'] && (
             <div className="mt-1 space-y-1 pl-4">
-              <NavLink to="/audit" className={navClass} onClick={handleLinkClick}>
+              <NavLink data-onboard="nav-audit" to="/audit" className={navClass} onClick={handleLinkClick}>
                 <ClipboardCheck className="w-4 h-4 mr-3" />
                 不符合项管理
               </NavLink>
@@ -228,7 +228,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
          {/* Knowledge */}
          {hasPermission('NAV_KNOWLEDGE') && inView('NAV_KNOWLEDGE') && (
          <div className="pt-2">
-           <NavLink to="/knowledge" className={navClass} onClick={handleLinkClick}>
+           <NavLink data-onboard="nav-knowledge" to="/knowledge" className={navClass} onClick={handleLinkClick}>
             <BookOpen className="w-5 h-5 mr-3" />
             知识中心
           </NavLink>
@@ -238,7 +238,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
          {/* Strategy */}
          {hasPermission('NAV_STRATEGY') && inView('NAV_STRATEGY') && (
          <div className="pt-2">
-           <NavLink to="/strategy" className={navClass} onClick={handleLinkClick}>
+           <NavLink data-onboard="nav-strategy" to="/strategy" className={navClass} onClick={handleLinkClick}>
             <Target className="w-5 h-5 mr-3" />
             战略管理
           </NavLink>
@@ -250,19 +250,19 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
       {/* Settings */}
       <div className="p-4 border-t border-gray-800 flex-shrink-0">
         {canManageEmployees && (
-          <NavLink to="/employees" className={navClass} onClick={handleLinkClick}>
+          <NavLink data-onboard="nav-employees" to="/employees" className={navClass} onClick={handleLinkClick}>
             <UserCog className="w-5 h-5 mr-3" />
             员工账号
           </NavLink>
         )}
         {canViewAuthAudit && (
-          <NavLink to="/auth-audit" className={navClass} onClick={handleLinkClick}>
+          <NavLink data-onboard="nav-auth-audit" to="/auth-audit" className={navClass} onClick={handleLinkClick}>
             <FileClock className="w-5 h-5 mr-3" />
             审计日志
           </NavLink>
         )}
         {hasPermission('NAV_AI_CENTER') && inView('NAV_AI_CENTER') && (
-          <NavLink to="/ai-center" className={navClass} onClick={handleLinkClick}>
+          <NavLink data-onboard="nav-ai-center" to="/ai-center" className={navClass} onClick={handleLinkClick}>
             <Settings className="w-5 h-5 mr-3" />
             AI 配置中心
           </NavLink>

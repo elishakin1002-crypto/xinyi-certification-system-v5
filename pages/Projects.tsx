@@ -1760,7 +1760,7 @@ const Projects = () => {
            </div>
         </div>
 
-        <div className="order-4 bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-5">
+        <div data-onboard="work-log" className="order-4 bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-5">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
               <h3 className="font-black text-gray-900 flex items-center gap-2">
