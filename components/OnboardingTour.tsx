@@ -227,34 +227,46 @@ export const OnboardingTour: React.FC<{
       ref={cardRef}
       style={anchored ? cardPos() : undefined}
       className={[
-        'bg-white shadow-2xl overflow-hidden pointer-events-auto flex flex-col',
+        'bg-white border border-gray-200 shadow-xl overflow-hidden pointer-events-auto flex flex-col',
         anchored ? 'rounded-2xl z-[72]' : '',
         !anchored && isMobile ? 'rounded-t-2xl w-full max-h-[70vh]' : '',
         !anchored && !isMobile ? 'rounded-2xl w-full max-w-md max-h-[calc(100vh-24px)]' : '',
       ].join(' ')}
     >
-      <div className="flex items-center justify-between px-5 py-3.5 bg-blue-600 text-white shrink-0">
-        <div className="flex items-center gap-2">
-          <Compass className="w-4 h-4" />
-          <span className="text-sm font-black">新手引导</span>
-        </div>
+      {/*
+        ── 外观跟系统其他地方一致（2026-09-05 改）──────────────
+
+        原来是一条实心蓝的标题栏。系统里所有卡片都是白底、细边、
+        圆角、蓝色只用在强调上 —— 一整条蓝在这里显得像另一个软件贴上来的弹窗，
+        而引导恰恰是新人对这套系统的第一印象。
+
+        现在改成和别处一样：白底细边，「新手引导」缩成一个小标签。
+      */}
+      <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-3 shrink-0">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-black text-blue-700">
+          <Compass className="w-3.5 h-3.5" />
+          新手引导
+        </span>
         {/* 跳过键放最显眼的右上角。藏跳过键换来的「完成率」是假的 */}
-        <button onClick={finish} className="text-xs font-bold text-white/80 hover:text-white flex items-center gap-1">
+        <button
+          onClick={finish}
+          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        >
           跳过 <X className="w-3.5 h-3.5" />
         </button>
       </div>
 
-      <div className="px-6 py-5 overflow-y-auto grow">
+      <div className="px-5 pb-1 overflow-y-auto grow">
         {isIntro ? (
           <>
-            <p className="text-xs font-black text-blue-600 mb-3">{currentUser?.name}，欢迎</p>
+            <h3 className="text-[17px] font-black leading-snug text-gray-900 mb-2">{currentUser?.name}，欢迎</h3>
             <div className="text-sm text-gray-800 leading-relaxed prose-sm">
               <ReactMarkdown>{tour.intro}</ReactMarkdown>
             </div>
           </>
         ) : (
           <>
-            <p className="text-[11px] font-black text-gray-400 mb-2">
+            <p className="text-[11px] font-black text-gray-400 mb-1.5">
               第 {i} 步 / 共 {total} 步
               {/*
                 指不到的时候明说，而不是假装指到了。
@@ -265,7 +277,7 @@ export const OnboardingTour: React.FC<{
                 <span className="ml-2 font-bold text-gray-300">（这一块现在不在屏幕上）</span>
               )}
             </p>
-            <h3 className="text-lg font-black text-gray-900 mb-3">{step!.title}</h3>
+            <h3 className="text-[17px] font-black leading-snug text-gray-900 mb-2">{step!.title}</h3>
             {/* 手机上导航是收起来的，先告诉他要点哪儿才能看到 */}
             {viaMenu && (
               <p className="mb-3 flex items-start gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">
@@ -280,7 +292,7 @@ export const OnboardingTour: React.FC<{
         )}
       </div>
 
-      <div className="flex items-center justify-between px-5 py-3.5 border-t border-gray-100 bg-gray-50 shrink-0">
+      <div className="flex items-center justify-between gap-3 px-5 py-3.5 mt-2 border-t border-gray-100 shrink-0">
         <div className="flex gap-1">
           {Array.from({ length: total + 1 }).map((_, n) => (
             <span key={n} className={`h-1.5 rounded-full transition-all ${

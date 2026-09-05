@@ -258,7 +258,7 @@ test('引导框永远完整露在屏幕里，按钮不会被挤出去', () => {
   assert.match(src, /Math\.abs\(h - cardH\) > 4/, '没有死区，高度会来回跳成无限循环');
   assert.match(src, /const h = Math\.min\(cardH, maxH\)/, '没有用实测高度夹进视口');
   assert.match(src, /overflow-y-auto grow/, '正文不能滚动，内容长了还是会顶出按钮');
-  assert.match(src, /border-t border-gray-100 bg-gray-50 shrink-0/,
+  assert.match(src, /border-t border-gray-100 shrink-0/,
     '按钮那一条要 shrink-0 固定在底部，不能跟着内容一起被压缩');
 });
 
@@ -286,4 +286,21 @@ test('手机上是底部抽屉，不是把电脑版缩小', () => {
     '可见性判断没检查和视口有没有交集，会被平移到屏幕外的元素骗过去');
   assert.match(read('components/Layout.tsx'), /data-onboard="mobile-menu"/,
     '手机菜单按钮没挂锚点');
+});
+
+test('引导框的样子要和系统其他卡片一致', () => {
+  /*
+    2026-09-05 反馈：引导浮框的 UI 要简洁美观、和整体界面统一。
+
+    原来是一条实心蓝的标题栏。系统里所有卡片都是白底、细边、圆角，
+    蓝色只用在强调上 —— 一整条蓝显得像另一个软件贴上来的弹窗，
+    而引导恰恰是新人对这套系统的第一印象。
+  */
+  const src = read('components/OnboardingTour.tsx');
+  assert.doesNotMatch(src, /bg-blue-600 text-white shrink-0/,
+    '还是那条实心蓝标题栏');
+  assert.match(src, /rounded-full bg-blue-50 px-2\.5 py-1 text-\[11px\] font-black text-blue-700/,
+    '「新手引导」没有收成小标签');
+  assert.match(src, /bg-white border border-gray-200 shadow-xl/,
+    '卡片本体不是白底细边，和其他卡片对不上');
 });

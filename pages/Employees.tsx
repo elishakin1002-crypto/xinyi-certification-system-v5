@@ -67,6 +67,17 @@ const Employees: React.FC = () => {
   /** 待确认删除的账号。删除不可撤销，所以一定要走一次确认 */
   const [pendingDelete, setPendingDelete] = useState<EmployeeAccount | null>(null);
   const [togglingId, setTogglingId] = useState('');
+  /*
+    ── 默认不显示已停用的人（2026-09-05）────────────────────
+
+    离职的人删不掉（他名下的操作记录还要能查出是谁做的），
+    所以停用的账号会一直留在库里。人员流动几年下来，
+    名单里一半是已经不在的人 —— 每次找人都要多扫一遍。
+
+    删掉不是办法（审计链会断），**不显示就够了**：
+    需要时一键看全部，日常眼不见为净。
+  */
+  const [showDisabled, setShowDisabled] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -98,6 +109,8 @@ const Employees: React.FC = () => {
     () => [...users].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
     [users]
   );
+  const disabledCount = sortedUsers.filter(u => u.status === 'disabled').length;
+  const visibleUsers = showDisabled ? sortedUsers : sortedUsers.filter(u => u.status !== 'disabled');
 
   const loadUsers = async () => {
     setIsLoading(true);
@@ -301,7 +314,19 @@ const Employees: React.FC = () => {
               <ShieldCheck className="w-4 h-4 mr-2 text-blue-600" />
               账号列表
             </div>
-            <span className="text-xs font-bold text-gray-500">{users.length} 人</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-bold text-gray-500">
+                {visibleUsers.length} 人{disabledCount > 0 && !showDisabled ? `（另有 ${disabledCount} 个已停用）` : ''}
+              </span>
+              {disabledCount > 0 && (
+                <button
+                  onClick={() => setShowDisabled(v => !v)}
+                  className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-bold text-gray-600 hover:bg-gray-50"
+                >
+                  {showDisabled ? '只看在职' : '显示已停用'}
+                </button>
+              )}
+            </div>
           </div>
           {isLoading ? (
             <div className="h-48 flex items-center justify-center text-sm font-bold text-gray-500">
@@ -330,7 +355,7 @@ const Employees: React.FC = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {/* 整行都能点开编辑 —— 小按钮不是每个人都会去找 */}
-                  {sortedUsers.map(user => (
+                  {visibleUsers.map(user => (
                     <tr
                       key={user.id}
                       onClick={() => selectUser(user)}

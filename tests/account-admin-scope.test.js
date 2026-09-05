@@ -267,3 +267,60 @@ test('停用是一下点完的，不用绕表单', () => {
   assert.match(src, /user\.status === 'disabled' \? '启用' : '停用'/,
     '按钮文字没跟着当前状态变');
 });
+
+test('「待我确认」按能不能自己动手来判，不是谁都能批', () => {
+  /*
+    批准不是「点个已读」，是**真的去执行**：确认到账、完成项目、新建合同。
+
+    2026-09-05 之前这个队列对谁都一样：总助打开工作台能看到
+    「确认到账」的提案并且点得动 —— 而她的角色定义是「管资料不碰钱」，
+    权限矩阵里也没有 PAYMENT_CONFIRM。
+    **AI 提案成了绕过权限的旁路**：本来不能做的事，
+    因为 AI 先提了一嘴，就变成点一下就能做。
+
+    这类漏洞比直接给错权限更隐蔽 —— 权限表看上去完全正确。
+  */
+  const src = read('components/AiProposalQueue.tsx');
+  assert.match(src, /CONFIRM_RECEIVABLE: 'PAYMENT_CONFIRM'/, '确认到账没绑定财务权限');
+  assert.match(src, /CREATE_CONTRACT: 'CONTRACT_CREATE'/, '新建合同没绑定合同权限');
+  assert.match(src, /all\.filter\(p => checkActionPermission\(requiredActionFor\(p\) as any\)\.allowed\)/,
+    '列表没有按权限过滤');
+  // 界面过滤挡不住「列表加载后权限被改」，动手前要再确认一次
+  assert.match(src, /const perm = checkActionPermission\(requiredActionFor\(p\) as any\);\s*\n\s*if \(!perm\.allowed\) throw/,
+    '执行前没有二次确认权限');
+});
+
+test('工作台上的入口也要看权限，不能只挡导航', () => {
+  /*
+    反馈：总助工作台上有「AI 运行与治理」，点进去是 AI 配置中心 ——
+    而她的导航里根本没这一项。左边挡住了，工作台上却留了一扇后门。
+    **入口不止一个，权限判断得跟到每一个。**
+  */
+  const src = read('pages/Dashboard.tsx');
+  assert.match(src, /if \(card\.id === 'hub-ai'\) return hasPermission\('NAV_AI_CENTER'\)/,
+    'AI 入口卡片没按权限过滤');
+  assert.match(src, /if \(card\.id === 'hub-strategy'\) return hasPermission\('NAV_STRATEGY'\)/,
+    '战略入口卡片没按权限过滤');
+});
+
+test('只改一个字段不能被当成改角色', () => {
+  /*
+    2026-09-05：金恩来只把曾云俊的邮箱删掉保存，却被拒绝，
+    提示还是英文的「Only ADMIN can grant ADMIN role」—— 他根本没碰角色。
+
+    原因是表单整体提交：改一个字段，roles / activeRole / 权限委派全跟着发上来，
+    服务端只看「字段在不在 body 里」就判成改角色。
+    **最难查的错误就是这种：提示指向的地方根本没问题。**
+  */
+  const app = read('server/app.js');
+  assert.match(app, /const sameStringSet = \(a, b\)/, '没有值比对，只能按字段有无判断');
+  assert.match(app, /resolveEmployeeUpdatePermissionActions\(req\.body \|\| \{\}, targetUser\)/,
+    '判断改了什么时没有传入当前值');
+  assert.match(app, /const rolesChanged = Object\.prototype\.hasOwnProperty\.call\(req\.body \|\| \{\}, 'roles'\)\s*\n\s*&& !sameStringSet\(requestedRoles, targetUser\.roles\)/,
+    '角色没变也会走授权检查');
+  // 注释里会引用旧提示说明为什么改，所以只看代码
+  const code = app.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /Only ADMIN can grant ADMIN role/, '还留着英文提示');
+  assert.doesNotMatch(code, /current user cannot disable own account/, '还留着英文提示');
+  assert.match(code, /不能停用自己的账号/, '中文提示没写上');
+});

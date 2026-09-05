@@ -235,7 +235,8 @@ const Dashboard = () => {
     strategicInsight,
     userProfiles,
     dashboardMetrics,
-    resolveDashboardPersona
+    resolveDashboardPersona,
+    hasPermission
   } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
@@ -952,7 +953,7 @@ const Dashboard = () => {
       route: '/ai-center?panel=members'
     }
   ], [risks.length, unreadReminders.length, userProfiles.length]);
-  const hubCards = React.useMemo<HubCard[]>(() => [
+  const hubCards = React.useMemo<HubCard[]>(() => ([
     {
       id: 'hub-knowledge',
       title: '知识复用中心',
@@ -1023,7 +1024,23 @@ const Dashboard = () => {
         { id: 'ai-members', label: '成员治理', route: '/ai-center?panel=members' }
       ]
     }
-  ], [
+  ] as HubCard[]).filter(card => {
+    /*
+      ── 入口也要看权限（2026-09-05）────────────────────────
+
+      反馈：总助的工作台上有「AI 运行与治理」，点进去是 AI 配置中心 ——
+      而她的导航里根本没有这一项，权限矩阵也没给她 NAV_AI_CENTER。
+
+      左边导航挡住了，工作台上却留了一扇后门。
+      **入口不止一个，权限判断也得跟到每一个**，
+      不然「收窄了权限」只是收窄了其中一条路。
+    */
+    if (card.id === 'hub-ai') return hasPermission('NAV_AI_CENTER');
+    if (card.id === 'hub-strategy') return hasPermission('NAV_STRATEGY');
+    if (card.id === 'hub-knowledge') return hasPermission('NAV_KNOWLEDGE');
+    return true;
+  }), [
+    hasPermission,
     learnedDocsCount,
     auditLinkedKnowledgeCount,
     pdcaKnowledgeCount,
@@ -1039,11 +1056,7 @@ const Dashboard = () => {
   ]);
 
   const roleHint = PERSONA_LABEL[persona];
-  /*
-    总助看的是总经理那套看板 —— 她统筹派活、盯项目节点，关心的是
-    团队产能和延误，不是「我的线索」（她不拥有线索，那些数字永远是 0）。
-    菜单已经按她的角色收窄了，看板内容不必再分一套。
-  */
+  /* 总助有自己的一套看板（ManagerDashboard），外观和其他角色统一 */
   const isManagerBoard = persona === 'manager';
   const usesBossBoard = persona === 'boss';
 
@@ -1070,12 +1083,7 @@ const Dashboard = () => {
 
       {/* A. 顶部 KPI（按视角切换） */}
       {isManagerBoard ? (
-        <ManagerDashboard
-          topCards={dashboardMetrics.manager.topCards}
-          loadCards={dashboardMetrics.manager.middleCards}
-          totalCards={dashboardMetrics.manager.bottomCards}
-          stuckItems={dashboardMetrics.manager.listItems}
-        />
+        <ManagerDashboard metrics={dashboardMetrics.manager} />
       ) : usesBossBoard ? (
         <BossDashboard
           overviewCards={bossOverviewCards.map(card => ({

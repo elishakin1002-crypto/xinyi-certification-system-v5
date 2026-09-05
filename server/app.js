@@ -515,9 +515,42 @@ const resolveUserUpdateAction = (payload = {}) => {
   return 'USER_UPDATE';
 };
 
-const resolveEmployeeUpdatePermissionActions = (payload = {}) => {
+/*
+  同一组值算不算「改动」。
+
+  2026-09-05 踩到：金恩来只把曾云俊的邮箱删掉保存，却被拒绝，
+  提示还是英文的「Only ADMIN can grant ADMIN role」——
+  他根本没碰角色。原因是**表单是整体提交的**：改一个字段，
+  roles / activeRole / 权限委派全都跟着发上来，
+  服务端只看「字段在不在 body 里」，就把它判成了改角色。
+
+  于是一个只有 EMPLOYEE_UPDATE 权限的人（比如总助）
+  连改个联系方式都会被挡住，而拒绝理由说的是他没做过的事 ——
+  **最难查的错误就是这种：提示指向的地方根本没问题。**
+
+  所以改成比对实际值：值没变就不是改动。
+*/
+const toSnake = (name) => String(name).replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+
+const sameStringSet = (a, b) => {
+  const norm = (list) => Array.from(new Set(
+    (Array.isArray(list) ? list : []).map((x) => String(x || '').trim().toUpperCase()).filter(Boolean)
+  )).sort();
+  const x = norm(a);
+  const y = norm(b);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+};
+
+const resolveEmployeeUpdatePermissionActions = (payload = {}, current = null) => {
   const actions = new Set();
-  const hasField = (name) => Object.prototype.hasOwnProperty.call(payload || {}, name);
+  const hasField = (name) => {
+    if (!Object.prototype.hasOwnProperty.call(payload || {}, name)) return false;
+    if (!current) return true;   // 新建时没有「原值」，一律算改动
+    const before = current[name] !== undefined ? current[name] : current[toSnake(name)];
+    const after = payload[name];
+    if (Array.isArray(after) || Array.isArray(before)) return !sameStringSet(after, before);
+    return String(after ?? '').trim() !== String(before ?? '').trim();
+  };
   /*
     改权限委派 = 改角色，走同一道闸（EMPLOYEE_UPDATE_ROLE）。
 
@@ -824,32 +857,46 @@ app.post('/api/auth/users', requireAuthActionSession('EMPLOYEE_CREATE'), async (
 
 app.patch('/api/auth/users/:id', requireAuthSession, async (req, res) => {
   try {
-    const requiredActions = resolveEmployeeUpdatePermissionActions(req.body || {});
+    // 先拿到当前值，才能判断这次到底改了什么（见 resolveEmployeeUpdatePermissionActions）
+    const targetUser = await findAuthUserById(req.params.id);
+    if (!targetUser) return sendFail(res, ERROR_CODES.NOT_FOUND, '账号不存在', {}, 404);
+
+    const requiredActions = resolveEmployeeUpdatePermissionActions(req.body || {}, targetUser);
     const deniedAction = requiredActions.find((action) => !hasAuthManagementAction(req.authUser, action));
     if (deniedAction) return sendAuthActionDenied(res, req.authUser, deniedAction);
 
-    const actorIsAdmin = normalizeRoles(req.authUser).includes('ADMIN');
-    const targetUser = await findAuthUserById(req.params.id);
-    if (!targetUser) return sendFail(res, ERROR_CODES.NOT_FOUND, 'user not found', {}, 404);
     if (rejectIfTouchingPrivilegedAccount(res, { actorUser: req.authUser, targetUser, operation: '修改' })) return;
+
+    /*
+      授出高权角色只有高权账号能做 —— 但**只在角色真的变了的时候判**。
+      原来写的是 !actorIsAdmin，把系统管理员也挡在外面了：
+      他改任何一个字段，只要表单顺带把 ADMIN 角色发上来就被拒。
+    */
     const requestedRoles = getRequestedRoles(req.body || {});
-    if (!actorIsAdmin && requestedRoles.includes('ADMIN')) {
-      return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Only ADMIN can grant ADMIN role', { requiredRole: 'ADMIN' }, 403);
+    const rolesChanged = Object.prototype.hasOwnProperty.call(req.body || {}, 'roles')
+      && !sameStringSet(requestedRoles, targetUser.roles);
+    if (rolesChanged
+      && !isPrivilegedAccount(req.authUser)
+      && requestedRoles.some((r) => PRIVILEGED_ROLES.includes(r))) {
+      return sendFail(res, ERROR_CODES.NO_PERMISSION,
+        '只有总经理／系统管理员能把账号提升到这一级', { requiredRole: 'ADMIN' }, 403);
     }
 
     const isSelf = String(req.params.id || '') === String(req.authUser?.id || '');
     if (isSelf && Object.prototype.hasOwnProperty.call(req.body || {}, 'status')) {
       const nextStatus = String(req.body.status || '').trim().toLowerCase();
       if (nextStatus === 'disabled') {
-        return sendFail(res, ERROR_CODES.PARAM_ERROR, 'current user cannot disable own account', {}, 400);
+        return sendFail(res, ERROR_CODES.PARAM_ERROR, '不能停用自己的账号 —— 停完当场就登不进来了', {}, 400);
       }
     }
+    // 总经理不能把自己的 ADMIN 角色去掉：去掉之后没人能再改回来
+    const actorIsAdmin = normalizeRoles(req.authUser).includes('ADMIN');
     if (actorIsAdmin && isSelf && Object.prototype.hasOwnProperty.call(req.body || {}, 'roles')) {
       const nextRoles = Array.isArray(req.body.roles)
         ? req.body.roles.map((role) => String(role || '').trim().toUpperCase())
         : [];
       if (!nextRoles.includes('ADMIN')) {
-        return sendFail(res, ERROR_CODES.PARAM_ERROR, 'current admin must keep ADMIN role', {}, 400);
+        return sendFail(res, ERROR_CODES.PARAM_ERROR, '总经理不能把自己的总经理角色去掉 —— 去掉之后没人能再改回来', {}, 400);
       }
     }
     const user = await updateUser(req.params.id, req.body || {});

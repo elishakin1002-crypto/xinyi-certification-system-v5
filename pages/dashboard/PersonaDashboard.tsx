@@ -11,6 +11,8 @@ export type PersonaSection = {
   icon: React.ReactNode;
   cards: DashboardCard[];
   cols: string;
+  /** 新手引导要指到这一块时填。留空就是不指 */
+  anchor?: string;
 };
 
 type Props = {
@@ -107,7 +109,7 @@ const PersonaDashboard: React.FC<Props> = ({ metrics, headline, emphasisId, sect
 
       {/* 中部 / 下部区块 */}
       {sections.map(section => (
-        <div key={section.key} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+        <div key={section.key} data-onboard={section.anchor} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
             <div>
               <h2 className="text-lg font-black text-gray-900 flex items-center">

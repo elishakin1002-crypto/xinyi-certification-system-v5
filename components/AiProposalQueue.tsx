@@ -29,8 +29,47 @@ const REJECT_PRESETS = [
   '客户已另行沟通过',
 ];
 
+
+/*
+  ── 谁能批这一条（2026-09-05）─────────────────────────────────
+
+  批准不是「点个已读」，是**真的去执行**：确认到账、完成项目、新建合同。
+  所以「能不能批」必须等于「能不能自己动手做这件事」。
+
+  2026-09-05 之前这个队列对谁都一样：总助打开工作台能看到
+  「确认到账」的提案并且点得动 —— 而她的角色定义写着「管资料不碰钱」，
+  权限矩阵里也没有 PAYMENT_CONFIRM。
+  **AI 提案在这里变成了绕过权限的旁路**：本来不能做的事，
+  因为 AI 先提了一嘴，就变成点一下就能做。
+
+  这类漏洞比直接给错权限更隐蔽 —— 权限表看上去完全正确。
+*/
+const ACTION_REQUIRES: Record<string, string> = {
+  CONFIRM_RECEIVABLE: 'PAYMENT_CONFIRM',
+  COMPLETE_PROJECT: 'PROJECT_EDIT_INFO',
+  CREATE_CONTRACT: 'CONTRACT_CREATE',
+};
+
+/*
+  没有执行动作的老提案（项目诊断、整改方案这些）批准后只改状态。
+  它们仍然要有人看，但**归属于项目交付**，所以按 PROJECT_VIEW 判 ——
+  财务和销售不该替顾问决定一个项目要不要加风险提醒。
+*/
+const SOURCE_REQUIRES: Record<string, string> = {
+  project_diagnosis: 'PROJECT_VIEW',
+  audit_remediation: 'PROJECT_VIEW',
+  lead_scoring: 'LEAD_EDIT',
+  task_template: 'TASK_CREATE',
+  doc_draft: 'KNOWLEDGE_WRITE',
+};
+
+const requiredActionFor = (p: AIProposal): string => {
+  const type = String((p.action as any)?.type || '');
+  return ACTION_REQUIRES[type] || SOURCE_REQUIRES[String(p.source || '')] || 'PROJECT_VIEW';
+};
+
 export const AiProposalQueue: React.FC = () => {
-  const { addContract, completeProject, toggleReceivableStatus } = useApp();
+  const { addContract, completeProject, toggleReceivableStatus, checkActionPermission } = useApp();
   const [items, setItems] = useState<AIProposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -41,14 +80,22 @@ export const AiProposalQueue: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setItems(await aiProposalService.list('pending'));
+      const all = await aiProposalService.list('pending');
+      /*
+        只留下**自己有权执行**的那些。
+
+        不显示比灰掉更好：灰掉的条目仍然占版面、仍然要人去判断
+        「这条是不是等我」，而答案永远是「不是」。
+        看不到的条目自然有该看的人在他的工作台上看到。
+      */
+      setItems(all.filter(p => checkActionPermission(requiredActionFor(p) as any).allowed));
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [checkActionPermission]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -60,6 +107,9 @@ export const AiProposalQueue: React.FC = () => {
     它看起来像个完整的流程，出了问题谁都不会想到是这里断的。
   */
   const runApproved = async (p: AIProposal) => {
+    // 界面过滤挡不住「列表加载后权限被改」这种情况，动手前再确认一次
+    const perm = checkActionPermission(requiredActionFor(p) as any);
+    if (!perm.allowed) throw new Error(perm.reason || '你没有执行这一条的权限');
     const a: any = p.action || {};
     const d = a.payload || {};
     switch (a.type) {
