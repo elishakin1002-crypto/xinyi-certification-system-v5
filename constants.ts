@@ -190,7 +190,7 @@ export const CUSTOMER_VISIBILITY_POLICY: CustomerVisibilityPolicy =
 export const ROLE_TO_PERSONA: Record<RoleID, DashboardPersona> = {
   ADMIN: 'boss',
   SYS_ADMIN: 'sysadmin',   // 系统管理员看运维看板，不看业务看板
-  MANAGER: 'manager',      // 工作台内容同总经理，但菜单按总助收窄
+  MANAGER: 'manager',      // 总助有自己的看板（派活/延期/日志），见 ManagerDashboard
   SALES: 'sales',
   CONSULTANT: 'consultant',
   FINANCE: 'finance'

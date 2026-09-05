@@ -214,9 +214,18 @@ const asStringOrNull = (value: unknown): string | null => (typeof value === 'str
 */
 const normalizePersona = (value?: string | null): DashboardPersona | null => {
   const normalized = String(value || '').trim().toLowerCase();
-  // 漏一个值的后果是「切过去没反应」——URL 上写着 persona=sysadmin，
-  // 这里认不出来就返回 null，页面悄悄退回默认视角，看起来像点击失效。
-  if (['boss', 'sales', 'consultant', 'finance', 'sysadmin'].includes(normalized)) {
+  /*
+    合法视角**从映射表推导**，不在这里另抄一份名单。
+
+    2026-09-05 加「总助」视角时就漏在了这里：类型、映射表、显示名、
+    看板组件全都加了，唯独这一行的名单没加 —— 于是
+    `?persona=manager` 被判成非法，静默退回本人视角，
+    表现是「点了总助视角完全没反应」。
+
+    而这一行上面原本就写着「漏一个值的后果是切过去没反应」。
+    写了注释提醒自己，然后照样漏 —— 说明靠记性不行，得让它推导出来。
+  */
+  if (Object.prototype.hasOwnProperty.call(PERSONA_TO_ROLE, normalized)) {
     return normalized as DashboardPersona;
   }
   return null;

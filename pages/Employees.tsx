@@ -66,6 +66,7 @@ const Employees: React.FC = () => {
   const [resetPassword, setResetPassword] = useState('');
   /** 待确认删除的账号。删除不可撤销，所以一定要走一次确认 */
   const [pendingDelete, setPendingDelete] = useState<EmployeeAccount | null>(null);
+  const [togglingId, setTogglingId] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -188,6 +189,33 @@ const Employees: React.FC = () => {
     「这个账号名下还有 X 条…请改用停用」。
     人看到的是原因，不是一个灰掉的按钮。
   */
+  /*
+    行内直接停用/启用。
+
+    2026-09-05 之前，停用一个人要：找到那一行 → 点编辑 → 在右边表单里
+    翻到「状态」→ 选停用 → 保存。五步，而且中间任何一步走岔了
+    （比如没点编辑就去改表单）都毫无提示。
+
+    离职停用是这个页面上最常做的一件事，它该是一下点完的。
+  */
+  const toggleStatus = async (user: EmployeeAccount) => {
+    const next = user.status === 'disabled' ? 'active' : 'disabled';
+    setTogglingId(user.id);
+    setError('');
+    setMessage('');
+    try {
+      const saved = await authService.updateUser(user.id, { status: next });
+      setUsers(prev => prev.map(u => (u.id === saved.id ? saved : u)));
+      setMessage(next === 'disabled'
+        ? `${user.name} 已停用 —— 他登不进来了，做过的记录都还在`
+        : `${user.name} 已恢复启用`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '状态修改失败');
+    } finally {
+      setTogglingId('');
+    }
+  };
+
   const handleDelete = async () => {
     if (!pendingDelete) return;
     setIsSaving(true);
@@ -290,12 +318,25 @@ const Employees: React.FC = () => {
                     <th className="px-4 py-3 text-left font-black">角色</th>
                     <th className="px-4 py-3 text-left font-black">岗位</th>
                     <th className="px-4 py-3 text-left font-black">状态</th>
-                    <th className="px-4 py-3 text-right font-black">操作</th>
+                    {/*
+                      「操作」列钉在右边。
+
+                      2026-09-05 反馈「cheshi 找不到删除键」—— 原因不是没有按钮，
+                      是这一列被挤到了屏幕外：表格比可视区宽，横向滚动条又不显眼，
+                      人根本不知道右边还有东西。**够不到的按钮等于不存在。**
+                    */}
+                    <th className="sticky right-0 z-10 bg-gray-50 px-4 py-3 text-right font-black shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.12)]">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
+                  {/* 整行都能点开编辑 —— 小按钮不是每个人都会去找 */}
                   {sortedUsers.map(user => (
-                    <tr key={user.id} className={editingUserId === user.id ? 'bg-blue-50/60' : 'hover:bg-gray-50'}>
+                    <tr
+                      key={user.id}
+                      onClick={() => selectUser(user)}
+                      title="点这一行编辑该账号"
+                      className={`cursor-pointer ${editingUserId === user.id ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
+                    >
                       <td className="px-4 py-3">
                         <div className="font-bold text-gray-900 whitespace-nowrap">{user.name}</div>
                         <div className="text-xs text-gray-400 mt-0.5">{user.id}</div>
@@ -326,25 +367,43 @@ const Employees: React.FC = () => {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className={`sticky right-0 z-10 px-4 py-3 text-right shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.12)] ${
+                        editingUserId === user.id ? 'bg-blue-50' : 'bg-white'
+                      }`}>
                         <div className="flex justify-end gap-2">
                           <button
-                            onClick={() => selectUser(user)}
+                            onClick={(e) => { e.stopPropagation(); selectUser(user); }}
                             className="px-2.5 py-1.5 rounded-md border border-gray-200 bg-white text-xs font-bold text-gray-700 hover:bg-gray-50"
                           >
                             编辑
                           </button>
                           <button
-                            onClick={() => { setResetUserId(user.id); setResetPassword(''); setEditingUserId(''); }}
+                            onClick={(e) => { e.stopPropagation(); setResetUserId(user.id); setResetPassword(''); setEditingUserId(''); }}
                             className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 bg-white text-xs font-bold text-gray-700 hover:bg-gray-50"
                           >
                             <KeyRound className="w-3.5 h-3.5 mr-1" />
                             重置
                           </button>
+                          {/* 停用/启用直接在这一行点完，不用绕表单 */}
+                          {user.id !== currentUser.id && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleStatus(user); }}
+                              disabled={togglingId === user.id}
+                              className={`inline-flex items-center px-2.5 py-1.5 rounded-md border text-xs font-bold disabled:opacity-60 ${
+                                user.status === 'disabled'
+                                  ? 'border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50'
+                                  : 'border-gray-200 bg-white text-gray-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200'
+                              }`}
+                            >
+                              {togglingId === user.id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : user.status === 'disabled' ? '启用' : '停用'}
+                            </button>
+                          )}
                           {/* 不给自己显示删除键 —— 删完当场登不进来，而且这几乎总是误点 */}
                           {user.id !== currentUser.id && (
                             <button
-                              onClick={() => setPendingDelete(user)}
+                              onClick={(e) => { e.stopPropagation(); setPendingDelete(user); }}
                               title="只能删除从没产生过任何记录的账号"
                               className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 bg-white text-xs font-bold text-gray-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
                             >
@@ -361,11 +420,45 @@ const Employees: React.FC = () => {
           )}
         </section>
 
-        <aside className="bg-white border border-gray-200 rounded-lg p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-black text-gray-900">{editingUser ? '编辑员工' : '新建员工'}</h2>
-            <UserPlus className="w-4 h-4 text-blue-600" />
+        <aside className="bg-white border border-gray-200 rounded-lg space-y-4 pb-4">
+          {/*
+            ── 这一条必须钉住（2026-09-05）──────────────────────
+
+            反馈：「选了 cheshi，然后选停用，没有发生任何变化」。
+            实际发生的是：面板停在「新建员工」状态，他在**上级**下拉里
+            选了 cheshi —— 也就是在给一个还不存在的新账号指定上级，
+            而不是在编辑 cheshi。
+
+            标题本来就写着「新建员工」，但表单一长，往下滚两下标题就滚没了，
+            剩下的界面对「在编谁」这件事**一个字都没说**。
+            所以现在钉在顶部，并且把名字直接写出来。
+          */}
+          <div className={`sticky top-0 z-10 flex items-center justify-between gap-2 rounded-t-lg border-b px-4 py-3 ${
+            editingUser ? 'bg-blue-50 border-blue-100' : 'bg-gray-50 border-gray-100'
+          }`}>
+            <div className="min-w-0">
+              <h2 className="text-sm font-black text-gray-900 truncate">
+                {editingUser ? `正在编辑：${editingUser.name}` : '新建员工'}
+              </h2>
+              <p className="text-[11px] font-bold text-gray-500 mt-0.5 truncate">
+                {editingUser
+                  ? (editingUser.username || editingUser.email || editingUser.id)
+                  : '填完保存会新增一个账号，不会改到现有的人'}
+              </p>
+            </div>
+            {editingUser ? (
+              <button
+                onClick={resetForm}
+                className="shrink-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50"
+              >
+                取消编辑
+              </button>
+            ) : (
+              <UserPlus className="w-4 h-4 shrink-0 text-blue-600" />
+            )}
           </div>
+
+          <div className="px-4">
 
           <div className="space-y-3">
             <label className="block">
@@ -535,7 +628,12 @@ const Employees: React.FC = () => {
                 ))}
               </select>
             </label>
-            <label className="block">
+            {/*
+              新建时不显示「状态」：新账号一定是启用的。
+              留着它的唯一效果，是让人以为「选个停用就能把某人停掉」——
+              而那一刻他其实在建一个一出生就停用的新账号。
+            */}
+            <label className={editingUser ? 'block' : 'hidden'}>
               <span className="text-xs font-bold text-gray-500">状态</span>
               <select
                 value={form.status}
@@ -575,6 +673,7 @@ const Employees: React.FC = () => {
               </button>
             </div>
           )}
+          </div>
         </aside>
       </div>
 

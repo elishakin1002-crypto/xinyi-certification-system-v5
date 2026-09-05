@@ -259,3 +259,30 @@ test('每一项导航都要做视角判断，不能漏', () => {
   const missing = gates.filter((g) => !g.includes('inView'));
   assert.deepEqual(missing, [], `这些导航项没做视角判断：${missing.join('、')}`);
 });
+
+test('合法视角名单从映射表推导，不再手抄', () => {
+  /*
+    2026-09-05 加「总助」视角时漏的就是这一处：
+    类型、映射表、显示名、看板组件全加了，唯独 normalizePersona 的
+    白名单没加 —— `?persona=manager` 被判成非法，静默退回本人视角，
+    表现是「点了总助视角完全没反应」。
+
+    而那一行上面原本就写着「漏一个值的后果是切过去没反应」。
+    写了注释提醒自己还是漏了 —— 靠记性不行，得让它推导。
+  */
+  const ctx = read('context/AppContext.tsx');
+  assert.doesNotMatch(ctx, /\['boss', 'sales', 'consultant', 'finance', 'sysadmin'\]/,
+    'normalizePersona 又手抄了一份视角名单');
+  assert.match(ctx, /hasOwnProperty\.call\(PERSONA_TO_ROLE, normalized\)/,
+    '合法视角没有从映射表推导');
+
+  // 类型里有几个视角，映射表里就该有几个
+  const t = read('types.ts');
+  const typed = (t.match(/export type DashboardPersona = ([^;]+);/)[1].match(/'([a-z]+)'/g) || [])
+    .map((x) => x.replace(/'/g, ''));
+  const c = read('constants.ts');
+  const mapped = new Set((c.slice(c.indexOf('export const ROLE_TO_PERSONA'), c.indexOf('export const PERSONA_TO_ROLE'))
+    .match(/: '([a-z]+)'/g) || []).map((x) => x.replace(/: '|'/g, '')));
+  const missing = typed.filter((p) => !mapped.has(p));
+  assert.deepEqual(missing, [], `这些视角没有角色映射到它，切过去会没反应：${missing.join('、')}`);
+});

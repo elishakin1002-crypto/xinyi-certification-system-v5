@@ -208,3 +208,62 @@ test('总助有自己的工作台，而且不放金额', () => {
   assert.doesNotMatch(ui, /人均在制项目数/,
     '平均值会把「5 人各 3 个」和「1 人扛 11 个」混成同一个数');
 });
+
+test('账号列表的操作按钮永远够得到', () => {
+  /*
+    2026-09-05 反馈「cheshi 找不到删除键」。
+    按钮一直都在 —— 但「操作」列被挤到了屏幕外：表格比可视区宽，
+    横向滚动条又不显眼，人根本不知道右边还有东西。
+    **够不到的按钮等于不存在。**
+  */
+  const src = read('pages/Employees.tsx');
+  assert.match(src, /<th className="sticky right-0[^"]*">操作<\/th>/,
+    '操作列没有钉在右边，窄屏下会被挤出可视区');
+  assert.match(src, /sticky right-0 z-10 px-4 py-3 text-right/,
+    '单元格没跟着钉住，表头钉了内容没钉等于没钉');
+
+  // 整行可点，小按钮不是每个人都会去找
+  assert.match(src, /onClick=\{\(\) => selectUser\(user\)\}\n\s+title="点这一行编辑该账号"/,
+    '行本身不能点开编辑');
+  // 行内按钮必须阻止冒泡，否则点「重置」会顺带切换编辑对象
+  for (const fn of ['selectUser\\(user\\)', 'setResetUserId', 'setPendingDelete']) {
+    assert.ok(new RegExp(`e\\.stopPropagation\\(\\);[^}]*${fn}`).test(src),
+      `行内按钮没阻止冒泡：${fn}`);
+  }
+});
+
+test('面板必须说清在编谁 —— 而且这句话不能滚走', () => {
+  /*
+    反馈：「选了 cheshi，然后选停用，没有发生任何变化」。
+
+    实际发生的是：面板停在「新建员工」状态，他在**上级**下拉里选了 cheshi，
+    也就是在给一个还不存在的新账号指定上级。
+    标题本来写着「新建员工」，但表单一长，往下滚两下标题就滚没了，
+    剩下的界面对「在编谁」一个字都没说。
+  */
+  const src = read('pages/Employees.tsx');
+  assert.match(src, /sticky top-0 z-10 flex items-center justify-between/,
+    '面板标题没有钉住，滚下去就看不到在编谁');
+  assert.match(src, /正在编辑：\$\{editingUser\.name\}/, '没有把被编辑的人名写出来');
+  assert.match(src, /填完保存会新增一个账号，不会改到现有的人/,
+    '新建状态没说清楚保存会发生什么');
+  assert.match(src, /取消编辑/, '进了编辑态没法退出去');
+
+  // 新建时不该出现「状态」，那是「选了停用却什么都没发生」的直接来源
+  assert.match(src, /<label className=\{editingUser \? 'block' : 'hidden'\}>/,
+    '新建时仍然显示「状态」—— 人会以为选个停用就能停掉某人');
+});
+
+test('停用是一下点完的，不用绕表单', () => {
+  /*
+    离职停用是这个页面最常做的事。
+    原来要五步：找到行 → 点编辑 → 右边表单翻到状态 → 选停用 → 保存，
+    中间走岔了还没有任何提示。
+  */
+  const src = read('pages/Employees.tsx');
+  assert.match(src, /const toggleStatus = async \(user: EmployeeAccount\)/, '没有行内停用开关');
+  assert.match(src, /他登不进来了，做过的记录都还在/,
+    '停用之后没说清后果 —— 人会怕自己把数据删了');
+  assert.match(src, /user\.status === 'disabled' \? '启用' : '停用'/,
+    '按钮文字没跟着当前状态变');
+});
