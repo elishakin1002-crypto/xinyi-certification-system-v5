@@ -219,7 +219,8 @@ test('指不到的时候要明说，不能假装指到了', () => {
   */
   const src = read('components/OnboardingTour.tsx');
   assert.match(src, /这一块现在不在屏幕上/, '找不到元素时没有任何说明');
-  assert.match(src, /if \(!el\) \{ setRect\(null\); return; \}/, '找不到元素时没有安全退回');
+  assert.match(src, /if \(!visible\(el\)\) \{ setRect\(null\); setViaMenu\(false\); return; \}/,
+    '找不到元素时没有安全退回');
 });
 
 test('引导里写的每个 target，界面上都真的挂了锚点', () => {
@@ -242,4 +243,47 @@ test('引导里写的每个 target，界面上都真的挂了锚点', () => {
   const missing = targets.filter((t) => !all.includes(`data-onboard="${t}"`)
     && !all.includes(`dataOnboard="${t}"`));
   assert.deepEqual(missing, [], `这些 target 在界面上找不到锚点：${missing.join('、')}`);
+});
+
+test('引导框永远完整露在屏幕里，按钮不会被挤出去', () => {
+  /*
+    2026-09-05 反馈：指到左下角「员工账号」时，**「下一步」被挤出屏幕底部**，
+    引导直接卡死在第 3 步。
+
+    原因是摆位置时高度用的是拍脑袋的估计值 260px，
+    而卡片实际有三四百像素高。一个走不下去的引导比没有引导更糟。
+  */
+  const src = read('components/OnboardingTour.tsx');
+  assert.match(src, /const \[cardH, setCardH\] = useState/, '没有量卡片真实高度');
+  assert.match(src, /Math\.abs\(h - cardH\) > 4/, '没有死区，高度会来回跳成无限循环');
+  assert.match(src, /const h = Math\.min\(cardH, maxH\)/, '没有用实测高度夹进视口');
+  assert.match(src, /overflow-y-auto grow/, '正文不能滚动，内容长了还是会顶出按钮');
+  assert.match(src, /border-t border-gray-100 bg-gray-50 shrink-0/,
+    '按钮那一条要 shrink-0 固定在底部，不能跟着内容一起被压缩');
+});
+
+test('手机上是底部抽屉，不是把电脑版缩小', () => {
+  /*
+    手机屏幕窄，气泡贴在元素旁边会把内容整个盖住；
+    而且左侧导航在手机上是收起来的 —— 指「左侧导航第三项」毫无意义。
+  */
+  const src = read('components/OnboardingTour.tsx');
+  assert.match(src, /const NARROW = 768/, '没有区分手机');
+  assert.match(src, /rounded-t-2xl w-full max-h-\[70vh\]/, '手机上没做成底部抽屉');
+  assert.match(src, /isMobile \? 'items-end justify-center'/, '手机上没有贴到屏幕底部');
+
+  // 导航项在手机上收起来了，要改指左上角的菜单按钮
+  assert.match(src, /targetSel\.startsWith\('nav-'\)/, '手机上指不到导航项时没有兜底');
+  assert.match(src, /pick\('mobile-menu'\)/, '没有退而指左上角菜单');
+  assert.match(src, /手机上这一项收在左上角这个菜单里/, '没告诉人该点哪儿');
+
+  /*
+    「宽高不为 0」不等于「在屏幕上」：手机侧边栏是整体平移到屏幕外
+    （transform），宽高照旧，坐标是负的。只看宽高会以为它可见，
+    结果高亮框画到屏幕外 —— 人看到的是整页变暗、什么都没框住。
+  */
+  assert.match(src, /r\.left < window\.innerWidth && r\.top < window\.innerHeight/,
+    '可见性判断没检查和视口有没有交集，会被平移到屏幕外的元素骗过去');
+  assert.match(read('components/Layout.tsx'), /data-onboard="mobile-menu"/,
+    '手机菜单按钮没挂锚点');
 });

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, FileClock, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import LoginSessions from '../components/LoginSessions';
 import { authService, AuthAuditLog } from '../services/authService';
 
 const actionLabels: Record<string, string> = {
@@ -89,6 +90,15 @@ const AuthAuditLogs: React.FC = () => {
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-[1600px] mx-auto">
+      {/*
+        「谁在哪登录着」放在审计日志页最上面，而不是埋进设置里。
+
+        它回答的是当下的问题（现在谁登着、要不要踢），
+        下面的日志回答的是过去的问题（谁改了什么）。
+        当下的事更急，所以排在前面。
+      */}
+      <LoginSessions all />
+
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-2xl font-black text-gray-900">审计日志</h1>

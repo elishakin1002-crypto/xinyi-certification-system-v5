@@ -5,7 +5,7 @@ import AIChatWidget from './AIChatWidget';
 import FeedbackModal from './FeedbackModal';
 import MyAiUsage from './MyAiUsage';
 import OnboardingTour from './OnboardingTour';
-import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare, Compass } from 'lucide-react';
+import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare, Compass, MonitorSmartphone } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { authService } from '../services/authService';
 import { dataService } from '../services/dataService';
@@ -449,7 +449,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <div className="flex-1 flex flex-col overflow-hidden relative">
         <header className="flex md:hidden h-14 bg-white border-b border-gray-200 items-center justify-between px-4 shrink-0 z-20 overflow-hidden">
           <div className="flex items-center space-x-2 min-w-0 shrink">
-            <button onClick={() => setIsSidebarOpen(true)} className="p-2 -ml-2 text-gray-600 hover:bg-gray-100 rounded-lg shrink-0">
+            <button data-onboard="mobile-menu" onClick={() => setIsSidebarOpen(true)} className="p-2 -ml-2 text-gray-600 hover:bg-gray-100 rounded-lg shrink-0">
               <Menu className="w-5 h-5" />
             </button>
             <h2 className="text-sm font-bold text-gray-800 whitespace-nowrap">{getPageTitle()}</h2>
@@ -672,6 +672,23 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       >
                         <Compass className="w-4 h-4 shrink-0" />
                         重看新手引导
+                      </button>
+
+                      {/*
+                        「我在哪几台设备登录着」。
+
+                        勾了「常用电脑」的会话有 14 天，风险不在时间长，
+                        在于**人不知道自己还在哪登着**。
+                        换了电脑、手机丢了、在客户那儿借电脑登过一次 ——
+                        看得见、踢得掉，这件事才算解决。
+                      */}
+                      <button
+                        type="button"
+                        onClick={() => { navigate('/my-devices'); setIsAccountMenuOpen(false); }}
+                        className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                      >
+                        <MonitorSmartphone className="w-4 h-4 shrink-0" />
+                        我的登录设备
                       </button>
 
                       <button

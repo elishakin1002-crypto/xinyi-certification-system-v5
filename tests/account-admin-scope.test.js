@@ -131,3 +131,80 @@ test('页面里也不再列角色名单', () => {
       `${file} 没改成按动作判断`);
   }
 });
+
+// ── 会话时长与登录设备 ─────────────────────────────────────────
+
+test('会话分两档，长的那档由用户自己选', () => {
+  /*
+    原来只有一档 7 天 + 每次使用再续 7 天 —— 等于永不过期，
+    「另一台电脑不用登录就能进」就是这个。
+
+    但一刀切改短也不对：信义办公室基本一人一台，天天早上重登纯属添堵，
+    而添堵的实际结果通常是把密码写在便签上贴显示器边。
+  */
+  const store = read('server/authStore.js');
+  assert.match(store, /XINYI_SESSION_TTL_MS \|\| 12 \* 60 \* 60 \* 1000/,
+    '默认档不是 12 小时');
+  assert.match(store, /XINYI_SESSION_REMEMBER_TTL_MS \|\| 14 \* 24 \* 60 \* 60 \* 1000/,
+    '没有「常用电脑」的长档');
+  assert.match(store, /const ttlFor = \(remember\)/, '没有按选择取时长');
+
+  // 每个会话记住自己那一档，否则续期时会被悄悄降回短档
+  assert.match(store, /ADD COLUMN IF NOT EXISTS ttl_ms BIGINT/, '会话没记自己的时长');
+  assert.match(store, /Number\(row\.ttl_ms\) > 0 \? Number\(row\.ttl_ms\) : SESSION_TTL_MS/,
+    '续期时没用本会话的时长 —— 勾了「常用电脑」也会被降回 12 小时');
+});
+
+test('登录页把「多久、什么时候该取消」写清楚', () => {
+  // 一句「记住我」不够 —— 这一项直接决定离开工位后别人能不能进
+  const src = read('pages/Login.tsx');
+  assert.match(src, /14 天内免登录/, '没说清是多久');
+  assert.match(src, /公用电脑请取消勾选/, '没说什么时候该取消');
+  assert.match(src, /authService\.login\(account\.trim\(\), password, remember\)/,
+    '选择没传给后端');
+});
+
+test('长会话靠「看得见、踢得掉」兜底，而不是靠时间', () => {
+  /*
+    14 天的风险不在时间长，在于人不知道自己还在哪登着。
+    猜一个超时数字，短了添堵、长了心里没底；
+    能看见能踢掉，才把「心里没底」真正解决。
+  */
+  const app = read('server/app.js');
+  assert.match(app, /app\.get\('\/api\/auth\/sessions'/, '没有登录设备列表接口');
+  assert.match(app, /app\.delete\('\/api\/auth\/sessions\/:id'/, '没有下线接口');
+
+  const del = app.slice(app.indexOf("app.delete('/api/auth/sessions/:id'"),
+                        app.indexOf("app.delete('/api/auth/sessions/:id'") + 1400);
+  assert.match(del, /isSelf && !isPrivilegedAccount/, '任何人都能踢别人下线');
+  assert.match(del, /SESSION_REVOKE/, '下线没写审计日志');
+
+  const list = app.slice(app.indexOf("app.get('/api/auth/sessions'"),
+                         app.indexOf("app.get('/api/auth/sessions'") + 1200);
+  assert.match(list, /wantsAll && !canSeeAll/, '普通员工能看到全公司的登录');
+
+  const ui = read('components/LoginSessions.tsx');
+  assert.doesNotMatch(ui, /session\.id.*token|sessionToken/, '界面不该显示会话令牌');
+  assert.match(ui, /当前这台/, '没标出哪个是自己正在用的');
+});
+
+test('总助有自己的工作台，而且不放金额', () => {
+  /*
+    她既不负责也无权处理回款（没有确认到账和结算权限）。
+    看得见但动不了的数字，比看不见更糟 ——
+    它占着最显眼的位置，把她真正该盯的挤到下面去了。
+  */
+  const m = read('services/dashboardMetrics.ts');
+  assert.match(m, /const buildManagerMetrics/, '没有总助的指标');
+  const fn = m.slice(m.indexOf('const buildManagerMetrics'), m.indexOf('const buildSalesMetrics'));
+  assert.doesNotMatch(fn, /money\(/, '总助工作台上出现了金额');
+  assert.match(fn, /unassigned/, '没有「待指派负责人」—— 那是她最该先处理的');
+  assert.match(fn, /loadByOwner/, '没有按人统计负载，就没法派活');
+
+  // 注释里会引用旧做法说明为什么改，所以只看代码
+  const ui = read('pages/dashboard/ManagerDashboard.tsx')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.match(ui, /谁手上活多少/, '没有按人列出负载');
+  assert.doesNotMatch(ui, /人均在制项目数/,
+    '平均值会把「5 人各 3 个」和「1 人扛 11 个」混成同一个数');
+});

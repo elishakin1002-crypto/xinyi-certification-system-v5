@@ -17,6 +17,7 @@ import Login from './pages/Login';
 import Employees from './pages/Employees';
 import ChangePassword from './pages/ChangePassword';
 import AuthAuditLogs from './pages/AuthAuditLogs';
+import LoginSessions from './components/LoginSessions';
 import { AppProvider } from './context/AppContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import { authService, AuthUser } from './services/authService';
@@ -109,6 +110,8 @@ const App = () => {
               <Route path="/ai-center" element={<ProtectedRoute permission="NAV_AI_CENTER"><AICenter /></ProtectedRoute>} />
               <Route path="/employees" element={<ProtectedRoute action="EMPLOYEE_VIEW"><Employees /></ProtectedRoute>} />
               <Route path="/auth-audit" element={<ProtectedRoute action="AUTH_AUDIT_VIEW"><AuthAuditLogs /></ProtectedRoute>} />
+              {/* 自己的登录设备，人人可看，不需要任何额外权限 —— 看的是自己 */}
+              <Route path="/my-devices" element={<div className="p-4 md:p-6 max-w-3xl mx-auto"><LoginSessions /></div>} />
             </Routes>
           </Layout>
         )}

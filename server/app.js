@@ -20,6 +20,8 @@ const {
   updateUser,
   resetUserPassword,
   deleteUserIfUnused,
+  listSessions,
+  getSessionOwner,
   changeOwnPassword,
   appendAuthAuditLog,
   listAuthAuditLogs
@@ -654,7 +656,9 @@ app.post('/api/auth/login', async (req, res) => {
       account,
       password,
       ip: forwarded || req.ip || '',
-      userAgent: String(req.headers['user-agent'] || '')
+      userAgent: String(req.headers['user-agent'] || ''),
+      // 勾了「这台电脑我常用」就走长的那一档（14 天），否则 12 小时
+      remember: parseBoolean(req.body?.remember, false)
     });
     if (!result) {
       return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Invalid account or password', {}, 403);
@@ -663,6 +667,57 @@ app.post('/api/auth/login', async (req, res) => {
     return sendSuccess(res, { user: result.user, expiresAt: result.expiresAt }, 'success');
   } catch (error) {
     return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'login failed', {}, 500);
+  }
+});
+
+
+/*
+  ── 我的登录设备（2026-09-05）────────────────────────────────
+
+  长会话不是靠时间兜底，是靠**看得见、踢得掉**。
+  所以每个人都能看自己在哪几台设备登录着，随时踢掉不认识的那个；
+  系统管理员和总经理能看全公司的 —— 「谁在哪登录着」本来就是他们的活。
+
+  只返回 IP 和浏览器标识，不返回会话令牌本身。
+*/
+app.get('/api/auth/sessions', requireAuthSession, async (req, res) => {
+  try {
+    const wantsAll = String(req.query?.scope || '') === 'all';
+    const canSeeAll = isPrivilegedAccount(req.authUser);
+    if (wantsAll && !canSeeAll) {
+      return sendFail(res, ERROR_CODES.NO_PERMISSION, '只有总经理和系统管理员能看全部登录设备', {}, 403);
+    }
+    const list = await listSessions(wantsAll ? {} : { userId: req.authUser?.id });
+    const current = getRequestSessionId(req);
+    return sendSuccess(res, {
+      sessions: list.map((s) => ({ ...s, isCurrent: s.id === current })),
+      canSeeAll,
+    }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || '读取登录设备失败', {}, 500);
+  }
+});
+
+app.delete('/api/auth/sessions/:id', requireAuthSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const owner = await getSessionOwner(id);
+    if (!owner) return sendFail(res, ERROR_CODES.NOT_FOUND, '这个登录已经不存在了', {}, 404);
+
+    const isSelf = owner === String(req.authUser?.id || '');
+    if (!isSelf && !isPrivilegedAccount(req.authUser)) {
+      return sendFail(res, ERROR_CODES.NO_PERMISSION, '只能下线自己的设备', {}, 403);
+    }
+    await revokeSession(id);
+    await appendAuthAuditLog({
+      action: 'SESSION_REVOKE', actorUserId: req.authUser?.id, actorName: req.authUser?.name,
+      targetUserId: owner,
+    }).catch(() => {});
+    // 踢的是自己当前这台，顺手清掉 cookie，否则界面还以为登着
+    if (id === getRequestSessionId(req)) res.setHeader('Set-Cookie', clearSessionCookie());
+    return sendSuccess(res, { revoked: id }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || '下线失败', {}, 500);
   }
 });
 

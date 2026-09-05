@@ -10,6 +10,12 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   /*
+    默认勾上：信义办公室基本一人一台电脑，天天早上重登纯属添堵 ——
+    而添堵的实际结果通常是把密码写在便签上贴在显示器边，那更不安全。
+    公用电脑请手动取消，下面那行小字说明了。
+  */
+  const [remember, setRemember] = useState(true);
+  /*
     初始密码是随机 12 位，同事得照着纸条或微信里的一串字符敲。
     敲错了看到的只有一排圆点，只能整行删掉重来 ——
     连着两三次就会怀疑是不是密码本身错了，然后来问。
@@ -29,7 +35,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setSubmitting(true);
     setError('');
     try {
-      const result = await authService.login(account.trim(), password);
+      const result = await authService.login(account.trim(), password, remember);
       onLogin(result.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败');
@@ -115,6 +121,25 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
+            </label>
+
+            {/*
+              这一项直接决定「离开工位之后别人能不能进」，
+              所以写清楚是多久、什么时候该取消，而不是一句「记住我」。
+            */}
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(event) => setRemember(event.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-blue-600 focus:ring-2 focus:ring-blue-500/30"
+              />
+              <span className="text-xs font-bold leading-relaxed text-slate-500">
+                这台电脑我常用，14 天内免登录
+                <span className="block font-medium text-slate-400">
+                  公用电脑请取消勾选 —— 不勾的话离开 12 小时就要重新登录。
+                </span>
+              </span>
             </label>
 
             {error && (

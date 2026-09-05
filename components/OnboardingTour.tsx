@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Compass, X, ArrowRight, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { Compass, X, ArrowRight, ArrowLeft, CheckCircle2, CornerLeftUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useApp } from '../context/AppContext';
 import { dataService } from '../services/dataService';
@@ -9,37 +9,44 @@ import { getTour } from '../src/modules/onboarding/steps';
 /**
  * 新手引导。
  *
- * ── 四条设计原则 ──────────────────────────────────────────────
+ * ── 五条设计原则 ──────────────────────────────────────────────
  *
  * 1）**说到哪，就指到哪。**
- *    2026-09-05 金恩来反馈：「只会在左侧导航栏里跳动，却没有解释到哪，
- *    就指向哪里」。查下来 steps.ts 里的 target 字段**从头到尾是死代码** ——
+ *    2026-09-05 反馈：「只会在左侧导航栏里跳动，却没有解释到哪，就指向哪里」。
+ *    查下来 steps.ts 里的 target 字段**从头到尾是死代码** ——
  *    组件只弹了个居中的框，从来没用过它。
  *
  *    人读引导时脑子里在问的是「它说的那个东西在屏幕哪儿」。
- *    这个问题不回答，讲得再有道理也落不了地：
- *    合上引导之后他还是要自己找一遍，而多数人不会找，就放弃了。
+ *    这个问题不回答，讲得再有道理也落不了地。
  *
- *    所以现在：把那块**挖出来高亮**，四周压暗，说明气泡贴在它旁边。
+ * 2）**框子必须完整露在屏幕里。**
+ *    第一版按元素位置摆气泡时，高度用的是拍脑袋的估计值 260px。
+ *    实际卡片有三四百像素高，指到左下角「员工账号」时，
+ *    **「下一步」按钮被挤出了屏幕底部** —— 引导直接卡死在第 3 步。
  *
- * 2）**必须能跳过，而且跳过要显眼。**
- *    强制看完的引导只会让人乱点，反而什么都没记住。
+ *    所以现在量真实高度，再夹进视口；真放不下就让正文自己滚动，
+ *    **按钮那一条永远贴在卡片底部，不参与滚动**。
+ *    一个走不下去的引导比没有引导更糟。
  *
- * 3）**必须能重看。**
- *    第一次登录时人最想做的是「赶紧看看这东西长什么样」，
- *    引导反而是干扰。用了两天遇到问题，才是真正想看引导的时候。
+ * 3）**手机上换一种形态，不是把电脑版缩小。**
+ *    手机屏幕窄，气泡贴在元素旁边会把内容整个盖住；
+ *    而且左侧导航在手机上是收起来的 —— 指「左侧导航第三项」毫无意义。
+ *    所以手机上：说明做成**底部抽屉**，指向导航项时改为高亮左上角的 ☰
+ *    并说明「在这个菜单里」。
  *
- * 4）**看过就不再自动弹。**
- *    记在本机（localStorage），换台电脑重看一次也无所谓。
+ * 4）**必须能跳过，而且跳过要显眼。**
+ * 5）**必须能重看，看过就不再自动弹。**
  */
 
 const seenKey = (userId: string) => `onboard_seen_${userId}`;
 
-/** 高亮框四周留的空隙，让被指的东西不至于贴着边 */
+/** 高亮框四周留的空隙 */
 const PAD = 8;
-/** 气泡宽度。窄屏时会退成居中弹窗，不再贴着元素 */
 const CARD_W = 380;
-const NARROW = 720;
+/** 低于这个宽度按手机处理：导航收起、气泡改抽屉 */
+const NARROW = 768;
+/** 卡片四周至少留出的边距，保证按钮不贴边、不出屏 */
+const EDGE = 12;
 
 type Rect = { top: number; left: number; width: number; height: number };
 
@@ -53,19 +60,23 @@ export const OnboardingTour: React.FC<{
   const [open, setOpen] = useState(false);
   const [i, setI] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
+  /** 指的是不是「手机上收起来的菜单」而不是原本那一项 */
+  const [viaMenu, setViaMenu] = useState(false);
+  const [vw, setVw] = useState(() => (typeof window === 'undefined' ? 1280 : window.innerWidth));
+  const [vh, setVh] = useState(() => (typeof window === 'undefined' ? 800 : window.innerHeight));
+  /** 卡片实测高度。**不能用估计值**，见文件头第 2 条 */
+  const [cardH, setCardH] = useState(300);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const tour = getTour(currentUser?.roles as any);
+  const isMobile = vw < NARROW;
 
   useEffect(() => {
     if (forceOpen) { setOpen(true); setI(0); return; }
     if (!tour || !currentUser?.id) return;
     try {
       const seen = Number(dataService.get(seenKey(currentUser.id), 0));
-      /*
-        版本比对而不是布尔值：引导内容有实质更新时把 version +1，
-        看过旧版的人会再看一次新版。
-      */
+      // 版本比对而不是布尔值：内容有实质更新时 +1，看过旧版的人会再看一次
       if (seen < tour.version) setOpen(true);
     } catch { /* 读不到就不弹，不打扰 */ }
   }, [forceOpen, tour, currentUser?.id]);
@@ -76,38 +87,80 @@ export const OnboardingTour: React.FC<{
   /*
     找到要指的那个元素，量出它的位置。
 
-    **找不到就退回居中弹窗，绝不报错也绝不空白。**
-    元素可能因为权限、折叠、还没渲染完而不在页面上 ——
-    引导的价值是解释，指不到顶多少一层帮助，
-    但要是因此白屏或卡住，就成了新人对系统的第一印象。
+    手机上导航是收起来的，`nav-*` 这类目标根本不在页面上。
+    这时候退而指左上角的 ☰ —— 那才是他真正要点的第一下。
+    指不到又没有替代的，就退回不带高亮的说明，绝不报错也绝不空白。
   */
   const measure = useCallback(() => {
-    if (!targetSel || typeof document === 'undefined') { setRect(null); return; }
-    const el = document.querySelector<HTMLElement>(`[data-onboard="${targetSel}"]`);
-    if (!el) { setRect(null); return; }
-    const r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) { setRect(null); return; }
+    if (!targetSel || typeof document === 'undefined') { setRect(null); setViaMenu(false); return; }
+    const pick = (sel: string) => document.querySelector<HTMLElement>(`[data-onboard="${sel}"]`);
+    let el = pick(targetSel);
+    let byMenu = false;
+
+    /*
+      「在屏幕上」不等于「宽高不为 0」。
+
+      手机上侧边栏是**整体平移到屏幕外**（transform: -translate-x-full），
+      不是 display:none —— 宽高照旧，getBoundingClientRect 给出的是
+      x = -351 这种负坐标。只判断宽高的话会认为它可见，
+      于是高亮框画到了屏幕外面：人看到的是「整页变暗、什么都没框住」。
+
+      所以还要判断它和视口有没有交集。
+    */
+    const visible = (n: HTMLElement | null) => {
+      if (!n) return false;
+      const r = n.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      return r.right > 0 && r.bottom > 0
+        && r.left < window.innerWidth && r.top < window.innerHeight;
+    };
+
+    if (!visible(el) && targetSel.startsWith('nav-')) {
+      el = pick('mobile-menu');
+      byMenu = visible(el);
+      if (!byMenu) el = null;
+    }
+    if (!visible(el)) { setRect(null); setViaMenu(false); return; }
+
+    const r = el!.getBoundingClientRect();
     setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    setViaMenu(byMenu);
   }, [targetSel]);
 
   useLayoutEffect(() => {
     if (!open) return;
     /*
-      量两次：切页面之后 DOM 要一帧才渲染出来，立刻量会量到旧的位置或量不到。
+      量两次：切页面之后 DOM 要一帧才渲染出来，立刻量会量到旧位置。
       第二次延后 260ms，覆盖页面切换 + 滚动动画。
     */
     measure();
-    const t1 = window.setTimeout(() => {
+    const t = window.setTimeout(() => {
       const el = targetSel && document.querySelector<HTMLElement>(`[data-onboard="${targetSel}"]`);
       if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
       window.setTimeout(measure, 260);
     }, 60);
-    return () => window.clearTimeout(t1);
+    return () => window.clearTimeout(t);
   }, [open, i, targetSel, measure]);
+
+  /*
+    量卡片的真实高度。
+
+    留 4px 死区：不加的话高度在两个相邻值之间来回跳，
+    setState → 重排 → 又量到新值，无限循环。
+  */
+  useLayoutEffect(() => {
+    if (!open || !cardRef.current) return;
+    const h = cardRef.current.getBoundingClientRect().height;
+    if (h > 0 && Math.abs(h - cardH) > 4) setCardH(h);
+  });
 
   useEffect(() => {
     if (!open) return;
-    const onChange = () => measure();
+    const onChange = () => {
+      setVw(window.innerWidth);
+      setVh(window.innerHeight);
+      measure();
+    };
     window.addEventListener('resize', onChange);
     window.addEventListener('scroll', onChange, true);
     return () => {
@@ -120,9 +173,8 @@ export const OnboardingTour: React.FC<{
 
   const total = tour.steps.length;
   const isIntro = i === 0;
-  const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
-  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
-  const anchored = Boolean(rect) && vw >= NARROW;
+  /** 电脑上且指得到元素时，说明才贴着元素放 */
+  const anchored = Boolean(rect) && !isMobile;
 
   const finish = () => {
     try {
@@ -140,20 +192,23 @@ export const OnboardingTour: React.FC<{
   };
 
   /*
-    气泡放哪：优先放在被指元素的右边（导航在左侧，最常见），
-    右边放不下就放左边，左右都放不下就放下方。
-    夹在视口里，不让它跑出屏幕 —— 跑出去就等于没有。
+    气泡放哪：优先放元素右边（导航在左侧，最常见），
+    右边放不下放左边，然后夹进视口。
+
+    **纵向用实测高度夹**，这是「下一步被挤出屏幕」那个 bug 的修法。
   */
   const cardPos = (): React.CSSProperties => {
     if (!anchored || !rect) return {};
     const gap = 16;
-    const estH = 260;
     let left = rect.left + rect.width + gap;
-    if (left + CARD_W > vw - 12) left = rect.left - CARD_W - gap;
-    if (left < 12) left = Math.min(Math.max(12, rect.left), vw - CARD_W - 12);
-    let top = rect.top + rect.height / 2 - estH / 2;
-    top = Math.max(12, Math.min(top, vh - estH - 12));
-    return { position: 'fixed', top, left, width: CARD_W };
+    if (left + CARD_W > vw - EDGE) left = rect.left - CARD_W - gap;
+    if (left < EDGE) left = Math.min(Math.max(EDGE, rect.left), vw - CARD_W - EDGE);
+
+    const maxH = vh - EDGE * 2;
+    const h = Math.min(cardH, maxH);
+    let top = rect.top + rect.height / 2 - h / 2;
+    top = Math.max(EDGE, Math.min(top, vh - h - EDGE));
+    return { position: 'fixed', top, left, width: CARD_W, maxHeight: maxH };
   };
 
   const maskColor = 'rgba(0,0,0,0.55)';
@@ -161,32 +216,38 @@ export const OnboardingTour: React.FC<{
     ? { top: rect.top - PAD, left: rect.left - PAD, width: rect.width + PAD * 2, height: rect.height + PAD * 2 }
     : null;
 
+  /*
+    正文可滚，页脚（上一步/下一步）不可滚。
+
+    这样无论内容多长、屏幕多矮，**操作按钮永远在**。
+    第一版正是因为整张卡片一起被推出屏幕，人卡在第 3 步走不动。
+  */
   const card = (
     <div
       ref={cardRef}
       style={anchored ? cardPos() : undefined}
-      className={`bg-white rounded-2xl shadow-2xl overflow-hidden pointer-events-auto ${anchored ? 'z-[72]' : 'w-full max-w-md'}`}
+      className={[
+        'bg-white shadow-2xl overflow-hidden pointer-events-auto flex flex-col',
+        anchored ? 'rounded-2xl z-[72]' : '',
+        !anchored && isMobile ? 'rounded-t-2xl w-full max-h-[70vh]' : '',
+        !anchored && !isMobile ? 'rounded-2xl w-full max-w-md max-h-[calc(100vh-24px)]' : '',
+      ].join(' ')}
     >
-      <div className="flex items-center justify-between px-5 py-3.5 bg-blue-600 text-white">
+      <div className="flex items-center justify-between px-5 py-3.5 bg-blue-600 text-white shrink-0">
         <div className="flex items-center gap-2">
           <Compass className="w-4 h-4" />
           <span className="text-sm font-black">新手引导</span>
         </div>
-        {/*
-          跳过键放在最显眼的右上角，不藏起来。
-          藏跳过键换来的「完成率」是假的 —— 人只是乱点过去了。
-        */}
+        {/* 跳过键放最显眼的右上角。藏跳过键换来的「完成率」是假的 */}
         <button onClick={finish} className="text-xs font-bold text-white/80 hover:text-white flex items-center gap-1">
           跳过 <X className="w-3.5 h-3.5" />
         </button>
       </div>
 
-      <div className={`px-6 py-5 ${anchored ? '' : 'min-h-[210px] py-6'}`}>
+      <div className="px-6 py-5 overflow-y-auto grow">
         {isIntro ? (
           <>
-            <p className="text-xs font-black text-blue-600 mb-3">
-              {currentUser?.name}，欢迎
-            </p>
+            <p className="text-xs font-black text-blue-600 mb-3">{currentUser?.name}，欢迎</p>
             <div className="text-sm text-gray-800 leading-relaxed prose-sm">
               <ReactMarkdown>{tour.intro}</ReactMarkdown>
             </div>
@@ -197,17 +258,21 @@ export const OnboardingTour: React.FC<{
               第 {i} 步 / 共 {total} 步
               {/*
                 指不到的时候明说，而不是假装指到了。
-                人照着找找不到，会以为是自己眼瞎或者系统坏了。
-
-                措辞刻意含糊：原因可能是权限、可能是要先选中一个项目、
-                也可能是页面还空着。**说不准就别说死** ——
-                写成「你没权限」而实际只是列表为空，比不说更误导。
+                措辞刻意含糊：可能是权限、可能要先选中一个项目、也可能列表还空着。
+                **说不准就别说死** —— 写成「你没权限」而实际只是没数据，比不说更误导。
               */}
               {step?.target && !rect && (
                 <span className="ml-2 font-bold text-gray-300">（这一块现在不在屏幕上）</span>
               )}
             </p>
             <h3 className="text-lg font-black text-gray-900 mb-3">{step!.title}</h3>
+            {/* 手机上导航是收起来的，先告诉他要点哪儿才能看到 */}
+            {viaMenu && (
+              <p className="mb-3 flex items-start gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">
+                <CornerLeftUp className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                手机上这一项收在左上角这个菜单里，点开就能看到。
+              </p>
+            )}
             <div className="text-sm text-gray-700 leading-relaxed">
               <ReactMarkdown>{step!.body}</ReactMarkdown>
             </div>
@@ -215,7 +280,7 @@ export const OnboardingTour: React.FC<{
         )}
       </div>
 
-      <div className="flex items-center justify-between px-5 py-3.5 border-t border-gray-100 bg-gray-50">
+      <div className="flex items-center justify-between px-5 py-3.5 border-t border-gray-100 bg-gray-50 shrink-0">
         <div className="flex gap-1">
           {Array.from({ length: total + 1 }).map((_, n) => (
             <span key={n} className={`h-1.5 rounded-full transition-all ${
@@ -251,9 +316,8 @@ export const OnboardingTour: React.FC<{
       {/*
         遮罩用四块拼出来，中间留个洞。
 
-        没用 SVG mask 或 box-shadow 撑出的洞：那两种写法在被指元素
-        本身有圆角、或者页面横向滚动时容易错位半个像素，
-        而这里错位一点点就会露出一条黑边，看着像渲染坏了。
+        没用 SVG mask 或 box-shadow 撑出的洞：那两种写法在元素有圆角、
+        或页面横向滚动时容易错半个像素，露出一条黑边，看着像渲染坏了。
         四块矩形笨，但在任何位置都不会错。
       */}
       {hole ? (
@@ -275,7 +339,9 @@ export const OnboardingTour: React.FC<{
       )}
 
       {anchored ? card : (
-        <div className="fixed inset-0 z-[71] flex items-center justify-center p-4 pointer-events-none">
+        <div className={`fixed inset-0 z-[71] flex pointer-events-none ${
+          isMobile ? 'items-end justify-center' : 'items-center justify-center p-4'
+        }`}>
           {card}
         </div>
       )}

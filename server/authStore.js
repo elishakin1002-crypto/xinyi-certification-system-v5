@@ -7,7 +7,37 @@ const AUTH_STORE_PATH = path.resolve(
   process.env.AUTH_STORE_PATH || process.env.XINYI_AUTH_STORE_PATH || '.runtime/auth_store.json'
 );
 
-const SESSION_TTL_MS = Math.max(10 * 60 * 1000, Number(process.env.XINYI_SESSION_TTL_MS || 8 * 60 * 60 * 1000));
+/*
+  ── 两档会话有效期（2026-09-05）──────────────────────────────
+
+  原来只有一档，而且是 7 天 + 每次使用再续 7 天 —— 等于永不过期。
+  一台电脑登过一次之后直接敲地址就进去了，
+  金恩来反馈的「另一台电脑不用登录就能进」就是这个。
+
+  但一刀切改短也不对：信义办公室基本一人一台电脑，
+  每天早上重新登一次纯属添堵，而添堵的结果通常是把密码写在便签上。
+
+  所以分两档，由登录时那个勾选框决定，和 Google / GitHub 一样：
+
+    不勾（公用电脑）  12 小时闲置到期
+    勾了（自己的电脑）14 天闲置到期
+
+  行业参照：GitHub 企业 SSO 上限 12 小时；Google Workspace 把
+  「永不过期」强制改成 16 小时；OWASP 建议全天使用的办公系统
+  绝对上限 4-8 小时。短的那一档落在这个带里。
+
+  长的那一档靠另外两件事兜底，而不是靠时间：
+  ①「我的登录设备」列表，本人和系统管理员都能看、能一键踢下线；
+  ② 高权账号的密码重置有同级限制（见 server/app.js）。
+  **能看见并且踢得掉，比猜一个超时数字有用。**
+*/
+const SESSION_TTL_MS = Math.max(10 * 60 * 1000, Number(process.env.XINYI_SESSION_TTL_MS || 12 * 60 * 60 * 1000));
+const SESSION_REMEMBER_TTL_MS = Math.max(
+  SESSION_TTL_MS,
+  Number(process.env.XINYI_SESSION_REMEMBER_TTL_MS || 14 * 24 * 60 * 60 * 1000)
+);
+/** 这次会话该用哪一档 */
+const ttlFor = (remember) => (remember ? SESSION_REMEMBER_TTL_MS : SESSION_TTL_MS);
 const DEFAULT_SEED_EMAIL = String(process.env.XINYI_AUTH_SEED_ADMIN_EMAIL || 'admin@xinyi-iso.local').trim().toLowerCase();
 const DEFAULT_SEED_PASSWORD = String(process.env.XINYI_AUTH_SEED_ADMIN_PASSWORD || '').trim();
 const MAX_FAILED_LOGIN_ATTEMPTS = Math.max(3, Number(process.env.XINYI_AUTH_MAX_FAILED_LOGIN_ATTEMPTS || 5));
@@ -396,6 +426,12 @@ const initPostgresAuthStore = async () => {
   await pool.query(`ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions (user_id);`);
 
+  /*
+    每个会话记住自己那一档时长。
+    不记的话续期时只能用全局值，「勾了常用电脑」的会话第一次续期
+    就被悄悄降回 12 小时 —— 用户看到的是「明明勾了还是天天要登」。
+  */
+  await pool.query(`ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS ttl_ms BIGINT;`);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at
     ON auth_sessions (expires_at);
@@ -1041,7 +1077,7 @@ const isAccountExpired = (expiresAt) => {
  */
 const trimOrigin = (v, max) => String(v || '').trim().slice(0, max);
 
-const authenticateUser = async ({ account, password, ip = '', userAgent = '' }) => {
+const authenticateUser = async ({ account, password, ip = '', userAgent = '', remember = false }) => {
   await initAuthStore();
   if (backend.mode === 'postgres' && pool) {
     const user = await findUserByAccountPostgres(account);
@@ -1056,13 +1092,14 @@ const authenticateUser = async ({ account, password, ip = '', userAgent = '' }) 
     await clearPostgresLoginFailures(user.id);
     await cleanupSessionsPostgres();
     const sessionId = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+    const ttl = ttlFor(remember);
+    const expiresAt = new Date(Date.now() + ttl).toISOString();
     await pool.query(
       `
-        INSERT INTO auth_sessions (id, user_id, created_at, expires_at, ip, user_agent, last_seen_at)
-        VALUES ($1, $2, NOW(), $3::timestamptz, $4, $5, NOW());
+        INSERT INTO auth_sessions (id, user_id, created_at, expires_at, ip, user_agent, last_seen_at, ttl_ms)
+        VALUES ($1, $2, NOW(), $3::timestamptz, $4, $5, NOW(), $6);
       `,
-      [sessionId, user.id, expiresAt, trimOrigin(ip, 64), trimOrigin(userAgent, 300)]
+      [sessionId, user.id, expiresAt, trimOrigin(ip, 64), trimOrigin(userAgent, 300), ttl]
     );
     return { sessionId, user: toUserProfileFromRow(user), expiresAt };
   }
@@ -1082,7 +1119,8 @@ const authenticateUser = async ({ account, password, ip = '', userAgent = '' }) 
     id: sessionId,
     userId: user.id,
     createdAt: nowIso(),
-    expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString()
+    ttlMs: ttlFor(remember),
+    expiresAt: new Date(Date.now() + ttlFor(remember)).toISOString()
   };
   store.sessions.push(session);
   await clearFileLoginFailures(user);
@@ -1098,6 +1136,7 @@ const getSessionUser = async (sessionId) => {
       `
         SELECT
           s.expires_at,
+          s.ttl_ms,
           u.id,
           u.email,
           u.username,
@@ -1137,7 +1176,9 @@ const getSessionUser = async (sessionId) => {
         一个人开着页面就是持续的写入压力，而「最后活跃」精确到分钟毫无意义。
         续期是有节流的（shouldRenewSession），正好蹭它的节奏。
       */
-      expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+      // 用本会话登录时那一档，不是全局值 —— 否则勾了「常用电脑」也会被降回 12 小时
+      const ttl = Number(row.ttl_ms) > 0 ? Number(row.ttl_ms) : SESSION_TTL_MS;
+      expiresAt = new Date(Date.now() + ttl).toISOString();
       await pool.query(
         'UPDATE auth_sessions SET expires_at = $2::timestamptz, last_seen_at = NOW() WHERE id = $1;',
         [String(sessionId || ''), expiresAt]
@@ -1155,11 +1196,59 @@ const getSessionUser = async (sessionId) => {
   if (isAccountExpired(user.accountExpiresAt)) return null;   // 同上，会话有效不代表账号有效
   let renewed = false;
   if (shouldRenewSession(session.expiresAt)) {
-    session.expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+    session.expiresAt = new Date(Date.now() + (Number(session.ttlMs) > 0 ? Number(session.ttlMs) : SESSION_TTL_MS)).toISOString();
     await writeStore();
     renewed = true;
   }
   return { user: toUserProfile(user), expiresAt: session.expiresAt, renewed };
+};
+
+
+/**
+ * 「谁在哪台设备登录着」。
+ *
+ * 长会话（勾了「常用电脑」的 14 天）安全性不是靠时间兜底的，
+ * 是靠**能看见并且踢得掉**。一个看不见的长会话才是风险，
+ * 看得见的长会话只是方便。
+ *
+ * userId 传了就只看这个人的；不传是系统管理员看全部。
+ */
+const listSessions = async ({ userId = '' } = {}) => {
+  await initAuthStore();
+  if (!(backend.mode === 'postgres' && pool)) return [];
+  await cleanupSessionsPostgres();
+  const where = userId ? 'WHERE s.user_id = $1' : '';
+  const params = userId ? [String(userId)] : [];
+  const { rows } = await pool.query(
+    `SELECT s.id, s.user_id, s.created_at, s.expires_at, s.last_seen_at, s.ip, s.user_agent, s.ttl_ms,
+            u.name, u.username, u.email
+     FROM auth_sessions s JOIN auth_users u ON u.id = s.user_id
+     ${where}
+     ORDER BY s.last_seen_at DESC NULLS LAST, s.created_at DESC
+     LIMIT 200;`,
+    params
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    userName: r.name,
+    account: r.username || r.email || '',
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    lastSeenAt: r.last_seen_at,
+    ip: r.ip || '',
+    userAgent: r.user_agent || '',
+    // 记住的设备 = 用了长的那一档
+    remembered: Number(r.ttl_ms) > SESSION_TTL_MS,
+  }));
+};
+
+/** 这个会话属于谁 —— 踢下线之前要确认操作人有没有资格 */
+const getSessionOwner = async (sessionId) => {
+  await initAuthStore();
+  if (!(backend.mode === 'postgres' && pool)) return '';
+  const { rows } = await pool.query('SELECT user_id FROM auth_sessions WHERE id = $1', [String(sessionId || '')]);
+  return rows?.[0]?.user_id || '';
 };
 
 const revokeSession = async (sessionId) => {
@@ -1251,6 +1340,8 @@ module.exports = {
   updateUser,
   resetUserPassword,
   deleteUserIfUnused,
+  listSessions,
+  getSessionOwner,
   changeOwnPassword,
   appendAuthAuditLog,
   listAuthAuditLogs

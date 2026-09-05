@@ -65,13 +65,33 @@ const parseJson = async <T,>(res: Response): Promise<AuthEnvelope<T>> => {
   return body as AuthEnvelope<T>;
 };
 
+export interface LoginSession {
+  id: string;
+  userId: string;
+  userName: string;
+  account: string;
+  createdAt: string;
+  expiresAt: string;
+  lastSeenAt: string;
+  ip: string;
+  userAgent: string;
+  /** 登录时勾了「这台电脑我常用」 */
+  remembered: boolean;
+  /** 就是你现在正在用的这一个 */
+  isCurrent?: boolean;
+}
+
 export const authService = {
-  login: async (account: string, password: string): Promise<AuthPayload> => {
+  /**
+   * remember：勾了「这台电脑我常用」→ 14 天免登录；不勾 → 12 小时。
+   * 公用电脑必须不勾，否则下一个坐下来的人直接进得去。
+   */
+  login: async (account: string, password: string, remember = false): Promise<AuthPayload> => {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ account, password })
+      body: JSON.stringify({ account, password, remember })
     });
     const body = await parseJson<AuthPayload>(res);
     return body.data;
@@ -139,6 +159,17 @@ export const authService = {
       credentials: 'include'
     });
     await parseJson<{ deleted: string }>(res);
+  },
+  listSessions: async (all = false): Promise<{ sessions: LoginSession[]; canSeeAll: boolean }> => {
+    const res = await fetch(`/api/auth/sessions${all ? '?scope=all' : ''}`, { credentials: 'include' });
+    const body = await parseJson<{ sessions: LoginSession[]; canSeeAll: boolean }>(res);
+    return body.data;
+  },
+  revokeSession: async (id: string): Promise<void> => {
+    const res = await fetch(`/api/auth/sessions/${encodeURIComponent(id)}`, {
+      method: 'DELETE', credentials: 'include'
+    });
+    await parseJson<{ revoked: string }>(res);
   },
   changePassword: async (currentPassword: string, newPassword: string): Promise<AuthPayload> => {
     const res = await fetch('/api/auth/change-password', {

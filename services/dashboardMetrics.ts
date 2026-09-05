@@ -2,7 +2,7 @@ import { Contract, Customer, Lead, Project, ProjectTask, ProjectWorkLog, RoleID,
 import { APP_ROUTES } from '../src/routes';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
 
-export type DashboardRoleView = 'boss' | 'sales' | 'consultant' | 'finance';
+export type DashboardRoleView = 'boss' | 'manager' | 'sales' | 'consultant' | 'finance';
 
 export interface DashboardCard {
   id: string;
@@ -30,6 +30,7 @@ export interface DashboardMetricsBundle {
   roleView: DashboardRoleView;
   monthKey: string;
   boss: RoleDashboardMetrics;
+  manager: RoleDashboardMetrics;
   sales: RoleDashboardMetrics;
   consultant: RoleDashboardMetrics;
   finance: RoleDashboardMetrics;
@@ -287,6 +288,120 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
   };
 };
 
+
+/*
+  ── 总助工作台（2026-09-05 新建）─────────────────────────────
+
+  在这之前总助看的是总经理那套看板。理由当时写的是「她不拥有线索，
+  销售那套数字对她永远是 0」—— 这话没错，但结论选错了：
+  她该有自己的一套，而不是借用老板的。
+
+  借用老板看板的后果是**每天第一眼看到的都不是她能动的事**：
+  本月签约金额、已回款金额、回款风险 —— 这些她既不负责也无权处理
+  （权限矩阵里她没有确认到账和结算）。**看得见但动不了的数字，
+  比看不见更糟**：它占着最显眼的位置，把她真正该盯的挤到下面去了。
+
+  她的活是「代总经理统筹派活与进度」，所以这套看板回答三个问题：
+
+    谁手上活太多 · 哪个项目要延期 · 这周谁没记日志
+
+  **刻意不放任何金额。** 不是怕她看到（她有查看合同金额的权限），
+  是因为钱不是她能推动的事 —— 放在这里只会分散注意力。
+  她要看金额，去合同管理页看。
+*/
+const buildManagerMetrics = (inputs: Inputs): RoleDashboardMetrics => {
+  const now = nowDate();
+  const activeProjects = inputs.projects.filter(p => p.status === Status.Active);
+
+  // 没写负责人的项目 —— 这是她最该先处理的一类：没人认领就没人推进
+  const unassigned = activeProjects.filter(p => !String(p.manager || '').trim());
+
+  const openTasks = inputs.projects.flatMap(p => p.tasks || []).filter(t => t.status !== 'Completed');
+  const overdueTasks = openTasks.filter(t => diffDays(t.deadline, now) < 0);
+  const dueSoonTasks = openTasks.filter(t => {
+    const d = diffDays(t.deadline, now);
+    return d >= 0 && d <= 3;
+  });
+
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - 6);
+  /*
+    分子必须限定在「在制项目」里，否则和分母不是同一个总体。
+    2026-08-24 在老板看板上踩过：卡片 18.8%，点进去列表 0 个项目。
+  */
+  const activeIds = new Set(activeProjects.map(p => String(p.id)));
+  const weekLogProjects = new Set(
+    inputs.projectWorkLogs
+      .filter(log => parseDate(log.logDate) >= weekStart.getTime())
+      .map(log => String(log.projectId))
+      .filter(id => activeIds.has(id))
+  );
+
+  /*
+    每个人手上多少活。**按负责人分组，不取平均** ——
+    「人均 3.67 个」这种数字对派活毫无用处：
+    可能是 5 个人各 3-4 个（正常），也可能是 1 个人扛 11 个、
+    另外 4 个人各 0 个（要立刻调）。平均值恰好把这两种情况混成一个数。
+  */
+  const loadByOwner = new Map<string, number>();
+  activeProjects.forEach(p => {
+    const owner = String(p.manager || '').trim();
+    if (!owner) return;
+    loadByOwner.set(owner, (loadByOwner.get(owner) || 0) + 1);
+  });
+  const loads = Array.from(loadByOwner.entries()).sort((a, b) => b[1] - a[1]);
+  const busiest = loads[0];
+
+  const stuckList: DashboardListItem[] = [
+    ...unassigned.slice(0, 3).map(p => ({
+      id: `mgr-unassigned-${p.id}`,
+      title: `${p.name} 还没有负责人`,
+      subtitle: '没人认领就没人推进，这是最该先处理的一类',
+      route: `${APP_ROUTES.PROJECTS}?projectId=${encodeURIComponent(p.id)}`
+    })),
+    ...activeProjects
+      .filter(p => (p.tasks || []).some(t => t.status !== 'Completed' && diffDays(t.deadline, now) < 0))
+      .slice(0, 4)
+      .map(p => ({
+        id: `mgr-overdue-${p.id}`,
+        title: `${p.name} 有任务已超期`,
+        subtitle: `负责人：${String(p.manager || '未指派')}`,
+        route: `${APP_ROUTES.PROJECTS}?filter=delay&projectId=${encodeURIComponent(p.id)}`
+      })),
+  ].slice(0, 6);
+
+  return {
+    topCards: [
+      { id: 'mgr-unassigned', title: '待指派负责人', value: String(unassigned.length),
+        hint: '没人认领的项目不会自己往前走', route: `${APP_ROUTES.PROJECTS}?filter=unassigned` },
+      { id: 'mgr-overdue-task', title: '已超期任务', value: String(overdueTasks.length),
+        hint: '过了截止日还没完成的', route: `${APP_ROUTES.PROJECTS}?filter=delay` },
+      { id: 'mgr-due-soon', title: '三天内到期', value: String(dueSoonTasks.length),
+        hint: '现在提醒还来得及', route: `${APP_ROUTES.PROJECTS}?filter=duesoon` },
+      { id: 'mgr-log-coverage', title: '本周日志覆盖率',
+        value: rate(weekLogProjects.size, activeProjects.length),
+        hint: '低不代表偷懒，多半是某个环节太麻烦',
+        route: `${APP_ROUTES.PROJECTS}?tab=logs&range=7d` }
+    ],
+    middleCards: loads.slice(0, 8).map(([owner, n]) => ({
+      id: `mgr-load-${owner}`,
+      title: owner,
+      value: String(n),
+      hint: busiest && n === busiest[1] && loads.length > 1 ? '手上最多' : '',
+      route: `${APP_ROUTES.PROJECTS}?owner=${encodeURIComponent(owner)}`
+    })),
+    bottomCards: [
+      { id: 'mgr-active', title: '在制项目总数', value: String(activeProjects.length),
+        route: `${APP_ROUTES.PROJECTS}?view=team` },
+      { id: 'mgr-people', title: '有活在手的人', value: String(loads.length),
+        route: `${APP_ROUTES.PROJECTS}?view=team` },
+      { id: 'mgr-open-task', title: '未完成任务', value: String(openTasks.length),
+        route: `${APP_ROUTES.PROJECTS}?filter=open` }
+    ],
+    listItems: stuckList
+  };
+};
+
 const buildSalesMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetrics => {
   const now = nowDate();
   const me = String(inputs.currentUser.name || '');
@@ -519,6 +634,7 @@ export const buildDashboardMetrics = (inputs: Inputs): DashboardMetricsBundle =>
     roleView: resolveDashboardRoleView(inputs.currentUser, inputs.activeRole),
     monthKey,
     boss: buildBossMetrics(inputs, monthKey),
+    manager: buildManagerMetrics(inputs),
     sales: buildSalesMetrics(inputs, monthKey),
     consultant: buildConsultantMetrics(inputs),
     finance: buildFinanceMetrics(inputs, monthKey)

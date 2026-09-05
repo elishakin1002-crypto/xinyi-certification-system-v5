@@ -22,6 +22,7 @@ import { useApp } from '../context/AppContext';
 import { AggregatedReminder, Reminder, DashboardPersona, Status } from '../types';
 import { useLocation, useNavigate } from 'react-router-dom';
 import SysAdminBoard from './dashboard/SysAdminBoard';
+import ManagerDashboard from './dashboard/ManagerDashboard';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
 import { AiProposalQueue } from '../components/AiProposalQueue';
 import BossDashboard from './dashboard/BossDashboard';
@@ -96,8 +97,18 @@ const BOSS_PLAN: PersonaPlan = {
 
 const PERSONA_PLAN: Record<DashboardPersona, PersonaPlan> = {
   boss: BOSS_PLAN,
-  // 总助和总经理看同一套看板 —— 她关心团队产能和延误，不是「我的线索」
-  manager: BOSS_PLAN,
+  /*
+    总助有自己的一套看板（见 ManagerDashboard）。
+    任务默认看明细而不是汇总：她要盯到具体哪个项目卡住，
+    汇总数字对派活没用。
+  */
+  manager: {
+    taskDefaultView: 'detail',
+    chartCollapsed: true,
+    aiDefaultOpen: { opportunity: false, risk: true, intel: false },
+    taskKeywords: ['指派', '延期', '超期', '节点', '进度', '催办', '日志'],
+    alertKeywords: ['延期', '超期', '未指派', '风险', '停滞']
+  },
   sales: {
     taskDefaultView: 'aggregated',
     chartCollapsed: true,
@@ -1033,7 +1044,8 @@ const Dashboard = () => {
     团队产能和延误，不是「我的线索」（她不拥有线索，那些数字永远是 0）。
     菜单已经按她的角色收窄了，看板内容不必再分一套。
   */
-  const usesBossBoard = persona === 'boss' || persona === 'manager';
+  const isManagerBoard = persona === 'manager';
+  const usesBossBoard = persona === 'boss';
 
   /*
     系统管理员走完全不同的一块看板。
@@ -1057,7 +1069,14 @@ const Dashboard = () => {
       </div>
 
       {/* A. 顶部 KPI（按视角切换） */}
-      {usesBossBoard ? (
+      {isManagerBoard ? (
+        <ManagerDashboard
+          topCards={dashboardMetrics.manager.topCards}
+          loadCards={dashboardMetrics.manager.middleCards}
+          totalCards={dashboardMetrics.manager.bottomCards}
+          stuckItems={dashboardMetrics.manager.listItems}
+        />
+      ) : usesBossBoard ? (
         <BossDashboard
           overviewCards={bossOverviewCards.map(card => ({
             id: card.id,
