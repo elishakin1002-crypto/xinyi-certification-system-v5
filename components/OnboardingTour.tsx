@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Compass, X, ArrowRight, ArrowLeft, CheckCircle2, CornerLeftUp } from 'lucide-react';
+import { Compass, X, ArrowRight, ArrowLeft, CheckCircle2, CornerLeftUp, MousePointerClick } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useApp } from '../context/AppContext';
 import { dataService } from '../services/dataService';
@@ -136,7 +136,13 @@ export const OnboardingTour: React.FC<{
     measure();
     const t = window.setTimeout(() => {
       const el = targetSel && document.querySelector<HTMLElement>(`[data-onboard="${targetSel}"]`);
-      if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      /*
+        手机上说明是**底部抽屉**，占掉屏幕下半部分。
+        还按 center 滚的话，被指的那块正好落在抽屉底下 ——
+        高亮框画出来了，可人看不见，等于没指。
+        所以手机上滚到上半屏（start），电脑上仍然居中。
+      */
+      if (el) el.scrollIntoView({ block: window.innerWidth < NARROW ? 'start' : 'center', behavior: 'smooth' });
       window.setTimeout(measure, 260);
     }, 60);
     return () => window.clearTimeout(t);
@@ -175,6 +181,19 @@ export const OnboardingTour: React.FC<{
   const isIntro = i === 0;
   /** 电脑上且指得到元素时，说明才贴着元素放 */
   const anchored = Boolean(rect) && !isMobile;
+  /* 手机有单独写就用手机那份，没写就沿用电脑那份 */
+  const howTo = (isMobile ? (step?.howToMobile || step?.howTo) : step?.howTo) || [];
+
+  /*
+    ── 抽屉要会躲（2026-09-06）────────────────────────────────
+
+    手机上说明是底部抽屉。指「右下角的 AI 助手」时，
+    抽屉正好把它盖住 —— 高亮框画出来了，人却看不见，等于没指。
+
+    所以被指的东西落在屏幕下半部分时，抽屉改成从**顶部**下来。
+    上半部分的目标（比如左上角的 ☰）仍然用底部抽屉。
+  */
+  const sheetAtTop = isMobile && Boolean(rect) && rect!.top > vh * 0.42;
 
   const finish = () => {
     try {
@@ -229,7 +248,9 @@ export const OnboardingTour: React.FC<{
       className={[
         'bg-white border border-gray-200 shadow-xl overflow-hidden pointer-events-auto flex flex-col',
         anchored ? 'rounded-2xl z-[72]' : '',
-        !anchored && isMobile ? 'rounded-t-2xl w-full max-h-[70vh]' : '',
+        !anchored && isMobile
+          ? `w-full max-h-[62vh] shadow-2xl ${sheetAtTop ? 'rounded-b-2xl border-t-0' : 'rounded-t-2xl border-b-0'}`
+          : '',
         !anchored && !isMobile ? 'rounded-2xl w-full max-w-md max-h-[calc(100vh-24px)]' : '',
       ].join(' ')}
     >
@@ -242,7 +263,16 @@ export const OnboardingTour: React.FC<{
 
         现在改成和别处一样：白底细边，「新手引导」缩成一个小标签。
       */}
-      <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-3 shrink-0">
+      {/* 手机上给个把手，一眼看出这是从底下拉上来的一层，不是盖住页面的弹窗 */}
+      {!anchored && isMobile && !sheetAtTop && (
+        <div className="flex justify-center pt-2.5 pb-1 shrink-0">
+          <span className="h-1 w-9 rounded-full bg-gray-300" />
+        </div>
+      )}
+
+      <div className={`flex items-center justify-between gap-3 px-5 shrink-0 ${
+        !anchored && isMobile ? 'pt-1.5 pb-2.5' : 'pt-4 pb-3'
+      }`}>
         <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-black text-blue-700">
           <Compass className="w-3.5 h-3.5" />
           新手引导
@@ -288,11 +318,43 @@ export const OnboardingTour: React.FC<{
             <div className="text-sm text-gray-700 leading-relaxed">
               <ReactMarkdown>{step!.body}</ReactMarkdown>
             </div>
+
+            {/*
+              ── 「怎么做」（2026-09-06 加）──────────────────────
+
+              原来每一步只讲道理。道理确实比「点这里新建线索」好记，
+              但**只有道理落不了地**：合上引导之后，人还是不知道第一下点哪儿。
+
+              手机那份单独写：手机上左侧导航是收起来的，
+              「左边点项目管理」这句话在手机上是错的。
+              没单独写就沿用电脑那份 —— 多数步骤两边确实一样。
+            */}
+            {howTo.length > 0 && (
+              <div className="mt-3.5 rounded-xl border border-gray-100 bg-gray-50/80 px-3.5 py-3">
+                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-black text-gray-500">
+                  <MousePointerClick className="w-3.5 h-3.5" />
+                  怎么做{isMobile && step!.howToMobile ? '（手机上）' : ''}
+                </p>
+                <ol className="flex flex-col gap-1.5">
+                  {howTo.map((line, n) => (
+                    <li key={n} className="flex gap-2 text-[13px] leading-relaxed text-gray-700">
+                      <span className="mt-[3px] flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-black text-gray-500 ring-1 ring-gray-200">
+                        {n + 1}
+                      </span>
+                      <span className="min-w-0 [&_strong]:text-gray-900">
+                        <ReactMarkdown components={{ p: ({ children }) => <>{children}</> }}>{line}</ReactMarkdown>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
           </>
         )}
       </div>
 
       <div className="flex items-center justify-between gap-3 px-5 py-3.5 mt-2 border-t border-gray-100 shrink-0">
+        {/* 抽屉从顶部下来时，把手挪到底边 */}
         <div className="flex gap-1">
           {Array.from({ length: total + 1 }).map((_, n) => (
             <span key={n} className={`h-1.5 rounded-full transition-all ${
@@ -320,6 +382,12 @@ export const OnboardingTour: React.FC<{
           )}
         </div>
       </div>
+
+      {!anchored && isMobile && sheetAtTop && (
+        <div className="flex justify-center pb-2.5 pt-0.5 shrink-0">
+          <span className="h-1 w-9 rounded-full bg-gray-300" />
+        </div>
+      )}
     </div>
   );
 
@@ -352,7 +420,9 @@ export const OnboardingTour: React.FC<{
 
       {anchored ? card : (
         <div className={`fixed inset-0 z-[71] flex pointer-events-none ${
-          isMobile ? 'items-end justify-center' : 'items-center justify-center p-4'
+          isMobile
+            ? (sheetAtTop ? 'items-start justify-center' : 'items-end justify-center')
+            : 'items-center justify-center p-4'
         }`}>
           {card}
         </div>

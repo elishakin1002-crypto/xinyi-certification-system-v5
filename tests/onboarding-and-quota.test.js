@@ -269,8 +269,9 @@ test('手机上是底部抽屉，不是把电脑版缩小', () => {
   */
   const src = read('components/OnboardingTour.tsx');
   assert.match(src, /const NARROW = 768/, '没有区分手机');
-  assert.match(src, /rounded-t-2xl w-full max-h-\[70vh\]/, '手机上没做成底部抽屉');
-  assert.match(src, /isMobile \? 'items-end justify-center'/, '手机上没有贴到屏幕底部');
+  assert.match(src, /w-full max-h-\[62vh\] shadow-2xl/, '手机上没做成抽屉');
+  assert.match(src, /rounded-t-2xl border-b-0/, '底部抽屉的圆角方向不对');
+  assert.match(src, /'items-end justify-center'/, '手机上没有贴到屏幕底部');
 
   // 导航项在手机上收起来了，要改指左上角的菜单按钮
   assert.match(src, /targetSel\.startsWith\('nav-'\)/, '手机上指不到导航项时没有兜底');
@@ -303,4 +304,96 @@ test('引导框的样子要和系统其他卡片一致', () => {
     '「新手引导」没有收成小标签');
   assert.match(src, /bg-white border border-gray-200 shadow-xl/,
     '卡片本体不是白底细边，和其他卡片对不上');
+});
+
+test('每一步都要说清「点哪里、填什么」，不能只讲道理', () => {
+  /*
+    2026-09-06 反馈：引导要细化到实际操作层面。
+
+    原来每一步只讲道理：「客户是老板谈来的，你记进来系统才知道提醒谁跟进」。
+    道理确实比「点这里新建线索」好记 —— 但**只有道理落不了地**：
+    合上引导之后，人还是不知道第一下点哪儿。
+  */
+  const src = read('src/modules/onboarding/steps.ts');
+  assert.match(src, /howTo\?: string\[\]/, '步骤里没有操作说明字段');
+
+  // 每个角色至少一半的步骤要有具体操作
+  const blocks = src.split(/\n  (?=[A-Z_]+: \{\n\s+version)/).slice(1);
+  assert.ok(blocks.length >= 5, '解析引导块失败，测试要跟着结构改');
+  blocks.forEach((b) => {
+    const role = (b.match(/^([A-Z_]+):/) || [, '?'])[1];
+    const steps = (b.match(/\n      \{\n\s+(route|target|title):/g) || []).length;
+    const howTos = (b.match(/howTo: \[/g) || []).length;
+    assert.ok(howTos >= Math.ceil(steps / 2),
+      `${role} 只有 ${howTos}/${steps} 步写了操作说明`);
+  });
+});
+
+test('操作说明里的按钮名要和界面对得上', () => {
+  /*
+    写「点新建」而界面上写着「新增线索」，人会以为自己找错了地方 ——
+    **这比不写还糟**。所以这里拿引导里提到的按钮名去界面上核对一遍。
+  */
+  const src = read('src/modules/onboarding/steps.ts');
+  const pages = {
+    '新增线索': 'pages/Leads.tsx',
+    '保存线索': 'pages/Leads.tsx',
+    '导入数据': 'pages/Leads.tsx',
+    '新建项目': 'pages/Projects.tsx',
+    '确认立项': 'pages/Projects.tsx',
+    '提交日志': 'pages/Projects.tsx',
+    '确认指派': 'pages/Projects.tsx',
+    '确认到账': 'pages/Finance.tsx',
+    '导出对账单': 'pages/Finance.tsx',
+    '确认驳回': 'pages/Finance.tsx',
+    '上传证据': 'pages/Audit.tsx',
+    '智能生成整改方案': 'pages/Audit.tsx',
+    '文件上传': 'pages/Knowledge.tsx',
+    '导入历史合同': 'pages/Contracts.tsx',
+    '新建员工': 'pages/Employees.tsx',
+    '抓取今日情报': 'pages/IntelRadar.tsx',
+    '归档日报': 'pages/IntelRadar.tsx',
+  };
+  const missing = Object.entries(pages)
+    .filter(([label, file]) => src.includes(`「${label}」`) && !read(file).includes(label))
+    .map(([label, file]) => `${label}（${file} 里没有）`);
+  assert.deepEqual(missing, [], `引导里写的按钮界面上找不到：${missing.join('、')}`);
+});
+
+test('手机上不一样的步骤要单独写', () => {
+  /*
+    手机上左侧导航是收起来的，「左边点项目管理」这句话在手机上是错的。
+    没写手机版就沿用电脑版 —— 多数步骤两边确实一样，不必强行凑。
+  */
+  const src = read('src/modules/onboarding/steps.ts');
+  assert.match(src, /howToMobile\?: string\[\]/, '没有手机版操作说明字段');
+  assert.ok((src.match(/howToMobile: \[/g) || []).length >= 5,
+    '几乎没有步骤写手机版 —— 导航、录入这些两边差别很大');
+  assert.match(src, /先点左上角 ☰/, '手机版没说清怎么打开导航');
+
+  const ui = read('components/OnboardingTour.tsx');
+  assert.match(ui, /isMobile \? \(step\?\.howToMobile \|\| step\?\.howTo\) : step\?\.howTo/,
+    '组件没有按设备选用对应的操作说明');
+});
+
+test('手机上被指的那块不能藏在抽屉底下', () => {
+  /*
+    手机上说明是底部抽屉，占掉屏幕下半部分。
+    还按 center 滚的话，被指的那块正好落在抽屉底下 ——
+    高亮框画出来了，可人看不见，等于没指。
+  */
+  const src = read('components/OnboardingTour.tsx');
+  assert.match(src, /block: window\.innerWidth < NARROW \? 'start' : 'center'/,
+    '手机上没把目标滚到上半屏');
+  assert.match(src, /h-1 w-9 rounded-full bg-gray-300/,
+    '底部抽屉没有把手，看不出是可以从底下拉上来的一层');
+
+  /*
+    抽屉还要会躲：指「右下角的 AI 助手」时，底部抽屉正好盖住它 ——
+    高亮框画出来了，人却看不见，等于没指。
+  */
+  assert.match(src, /const sheetAtTop = isMobile && Boolean\(rect\) && rect!\.top > vh \* 0\.42/,
+    '目标在屏幕下半部分时，抽屉没有让开');
+  assert.match(src, /sheetAtTop \? 'items-start justify-center' : 'items-end justify-center'/,
+    '抽屉不会换到顶部');
 });
