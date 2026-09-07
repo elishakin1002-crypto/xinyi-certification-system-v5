@@ -5,7 +5,7 @@
  * 收成一套规格，改一处全站生效。规格基准来自「不符合项管理」页。
  */
 import React from 'react';
-import { Search, X } from 'lucide-react';
+import { ChevronDown, Search, X } from 'lucide-react';
 
 /* ──────────────── 色板 ──────────────── */
 
@@ -53,8 +53,10 @@ export const Badge: React.FC<{
   tone?: Tone;
   children: React.ReactNode;
   className?: string;
-}> = ({ tone = 'gray', children, className = '' }) => (
-  <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] font-bold whitespace-nowrap ${toneChip[tone]} ${className}`}>
+  /** 悬停说明。徽章上塞不下的那半句话放这里 */
+  title?: string;
+}> = ({ tone = 'gray', children, className = '', title }) => (
+  <span title={title} className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] font-bold whitespace-nowrap ${toneChip[tone]} ${className}`}>
     {children}
   </span>
 );
@@ -88,6 +90,68 @@ export const SearchInput: React.FC<{
     )}
   </div>
 );
+
+/* ──────────────── 筛选下拉 ──────────────── */
+
+/**
+ * 列表页的筛选控件。
+ *
+ * ── 为什么从一排按钮改成下拉（2026-09-07）────────────────────
+ *
+ * 金恩来：「弄一堆按钮在上面也挺抢重点的……一切设计不要画蛇添足，
+ * 要以方便和效率为主。」
+ *
+ * 他说的是对的，而且不只是好看不好看的问题：
+ * 项目管理页顶部原来有 9 个同样大小、同样加粗的按钮，
+ * 它们和「新建项目」抢的是同一份注意力 ——
+ * 而 9 个里通常只有 1 个是当前生效的档位，另外 8 个是噪音。
+ *
+ * 下拉的好处是**收起来的时候只显示当前选中的那一档**：
+ * 「状态：全部状态」本身就是一句话，不用再去按钮堆里找哪个是高亮的。
+ * 手机上更明显 —— 9 个按钮要横向滚动，下拉只占一行，
+ * 而且调用的是系统自带的选择器，比自己画的浮层好按。
+ *
+ * 用原生 `<select>` 不是偷懒：自绘浮层要处理点外面关闭、键盘、
+ * 滚动跟随、屏幕边缘翻转，多写几百行只为了换个箭头样式 ——
+ * 那才是画蛇添足。
+ */
+export const FilterSelect = <T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+  className = ''
+}: {
+  /** 这一组在筛什么，比如「状态」。收起来时和选中项一起显示 */
+  label: string;
+  value: T;
+  onChange: (value: T) => void;
+  options: readonly { value: T; label: string; title?: string }[];
+  className?: string;
+}) => {
+  const active = options.find(o => o.value === value);
+  return (
+    <label
+      className={`group relative inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white pl-3 pr-8 py-2 cursor-pointer transition-colors hover:border-indigo-300 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-500/15 ${className}`}
+      title={active?.title}
+    >
+      <span className="text-[11px] font-bold text-gray-400 whitespace-nowrap">{label}</span>
+      <span className="text-sm font-bold text-gray-800 whitespace-nowrap">{active?.label || ''}</span>
+      {/* 真正的 select 铺满整块并透明 —— 点哪里都能展开，手机上也是系统选择器 */}
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value as T)}
+        aria-label={label}
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+      >
+        {options.map(o => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+    </label>
+  );
+};
 
 /* ──────────────── 空状态 ──────────────── */
 

@@ -1029,7 +1029,7 @@ const Contracts = () => {
     setImportPlan(null);
     setImportResult(
       `导入完成：成功 ${done} 条${failed.length ? `，失败 ${failed.length} 条 —— ${failed.slice(0, 3).join('；')}` : ''}。`
-      + '这些合同不会生成交付项目。'
+      + '这些合同不会生成合同项目。'
     );
   };
 
@@ -1047,7 +1047,7 @@ const Contracts = () => {
              />
              <button
                onClick={() => importInputRef.current?.click()}
-               title="从 Excel 批量导入已经做完的老合同，不会生成交付项目"
+               title="从 Excel 批量导入已经做完的老合同，不会生成合同项目"
                className="bg-white text-gray-700 border border-gray-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-50 flex items-center shadow-sm whitespace-nowrap"
              >
                <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" /> 导入历史合同
@@ -1181,7 +1181,7 @@ const Contracts = () => {
                                                 <Briefcase className="w-3 h-3 mr-1" /> 已立项 
                                             </button> 
                                         ) : ( 
-                                            <button onClick={(e) => handleCreateProject(e, contract)} className="w-full text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 px-2 py-1.5 rounded-lg flex items-center justify-center transition-colors shadow-sm font-bold whitespace-nowrap" title="一键转为交付项目" > 
+                                            <button onClick={(e) => handleCreateProject(e, contract)} className="w-full text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 px-2 py-1.5 rounded-lg flex items-center justify-center transition-colors shadow-sm font-bold whitespace-nowrap" title="一键转为合同项目" > 
                                                 <Briefcase className="w-3 h-3 mr-1" /> 转项目 
                                             </button> 
                                         )} 
@@ -1590,7 +1590,7 @@ const Contracts = () => {
                         <div className="grid grid-cols-3 gap-4"> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">合同总额 (¥)</label> <input required type="number" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm font-mono font-bold" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">签订日期</label> <input required type="date" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.signDate} onChange={e => setFormData({...formData, signDate: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">支付方式</label> <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.paymentMethod} onChange={e => setFormData({...formData, paymentMethod: e.target.value})} /> </div> </div>
                         <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100"> <div className="flex justify-between items-center mb-3"> <h4 className="text-xs font-black text-gray-900 uppercase tracking-wider flex items-center"> <Wallet className="w-4 h-4 mr-2 text-blue-600" /> 支付节点与金额 (可编辑) </h4> <button type="button" onClick={addReceivable} className="text-xs font-bold text-blue-600 hover:underline flex items-center"> <Plus className="w-3 h-3 mr-1" /> 添加款项节点 </button> </div> {extractedReceivables.length === 0 && ( <div className="text-center text-gray-400 text-xs py-4 border-2 border-dashed border-gray-200 rounded-xl font-bold"> 暂无支付计划，AI 识别后将在此显示 </div> )} <div className="space-y-2"> {extractedReceivables.map((r, idx) => ( <div key={idx} className="flex space-x-2 items-center"> <div className="flex-1"> <input type="text" className="w-full px-3 py-2 text-sm font-bold border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none" value={r.node} onChange={(e) => handleReceivableChange(idx, 'node', e.target.value)} placeholder="节点名称 (如: 首付款)" /> </div> <div className="w-32 relative"> <span className="absolute left-2 top-2 text-xs text-gray-400">¥</span> <input type="number" className="w-full pl-6 pr-2 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none font-mono font-bold" value={r.amount} onChange={(e) => handleReceivableChange(idx, 'amount', Number(e.target.value))} placeholder="金额" /> </div> <div className="w-36"> <input type="date" className="w-full px-2 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none" value={r.dueDate} onChange={(e) => handleReceivableChange(idx, 'dueDate', e.target.value)} /> </div> <button type="button" onClick={() => removeReceivable(idx)} className="text-gray-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-lg transition-colors" > <Trash2 className="w-4 h-4" /> </button> </div> ))} </div> </div>
                         <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center"> <AlignLeft className="w-4 h-4 mr-1" /> 备注 (注：最后一行内容) </label> <textarea className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm resize-none" rows={2} value={formData.remarks} onChange={e => setFormData({...formData, remarks: e.target.value})} ></textarea> </div>
-                        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-start"> <div className="flex items-center h-5"> <input id="createProject" name="createProject" type="checkbox" className="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded" checked={formData.createProject} onChange={e => setFormData({...formData, createProject: e.target.checked})} /> </div> <div className="ml-3 text-sm"> <label htmlFor="createProject" className="font-bold text-blue-900">同时创建交付项目 (推荐)</label> <p className="text-blue-700 text-xs mt-0.5">勾选后将自动在“项目管理”中生成对应项目，项目回款状态将自动同步此处的支付计划。</p> </div> </div>
+                        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-start"> <div className="flex items-center h-5"> <input id="createProject" name="createProject" type="checkbox" className="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded" checked={formData.createProject} onChange={e => setFormData({...formData, createProject: e.target.checked})} /> </div> <div className="ml-3 text-sm"> <label htmlFor="createProject" className="font-bold text-blue-900">同时创建合同项目 (推荐)</label> <p className="text-blue-700 text-xs mt-0.5">勾选后将自动在“项目管理”中生成对应项目，项目回款状态将自动同步此处的支付计划。</p> </div> </div>
                         <div className="pt-4 flex justify-end space-x-3"> <button type="button" onClick={closeContractModal} className="px-6 py-3 border border-gray-200 rounded-xl text-gray-700 font-bold hover:bg-gray-50 transition-colors" > 取消 </button> <button type="submit" className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-lg shadow-blue-500/20 transition-all active:scale-95" > 确认录入并生成 </button> </div>
                     </form>
                 </div>
@@ -1648,7 +1648,7 @@ const Contracts = () => {
             <div className="px-5 py-4 border-b border-gray-100 shrink-0">
               <h3 className="text-sm font-black text-gray-900">导入历史合同</h3>
               <p className="text-xs font-bold text-gray-500 mt-0.5">
-                共读到 {importPlan.totalRows} 行。<span className="text-emerald-700">这些合同不会生成交付项目。</span>
+                共读到 {importPlan.totalRows} 行。<span className="text-emerald-700">这些合同不会生成合同项目。</span>
               </p>
             </div>
 

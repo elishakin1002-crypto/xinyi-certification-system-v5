@@ -452,7 +452,7 @@ const AIChatWidget = () => {
         if (actionData.project) {
           const p = actionData.project;
           addProject({ name: p.name, customerId: p.customerId, contractRef: p.contractRef, manager: p.manager || currentUser?.name, projectAmount: p.projectAmount, costStatus: p.costStatus, tasks: p.tasks || [] } as any);
-          sys(`✅ 已创建交付项目：${p.name || ''}`);
+          sys(`✅ 已创建合同项目：${p.name || ''}`);
           return 'project';
         }
         if (actionData.complete_project) {
@@ -777,7 +777,7 @@ ${ragContext}
    - lead: {name, company, mobile?, industry?, intent?}  录入线索
    - customer: {name, contactPerson?, mobile?, industry?}  新建客户
    - contract: {title, customerName, amount, serviceLine?, receivables?}  录入合同(可带回款计划)
-   - project: {name, customerId?, contractRef?, manager?, projectAmount?, costStatus?, tasks?}  建交付项目
+   - project: {name, customerId?, contractRef?, manager?, projectAmount?, costStatus?, tasks?}  建合同项目
    - lead_follow_up: {leadId, content, type?}  线索加跟进
    - customer_follow_up: {customerId, content, type?}  客户加跟进
    - complete_project: {projectId}  完成项目(触发评级/客户分级/提醒/PDCA级联)

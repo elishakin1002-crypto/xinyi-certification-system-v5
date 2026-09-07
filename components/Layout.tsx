@@ -6,7 +6,8 @@ import VersionWatcher from './VersionWatcher';
 import FeedbackModal from './FeedbackModal';
 import MyAiUsage from './MyAiUsage';
 import OnboardingTour from './OnboardingTour';
-import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare, Compass, MonitorSmartphone, AlertTriangle, X } from 'lucide-react';
+import HelpHub from './HelpHub';
+import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare, Compass, MonitorSmartphone, AlertTriangle, X, HelpCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { authService } from '../services/authService';
 import { dataService } from '../services/dataService';
@@ -39,6 +40,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isBellOpen, setIsBellOpen] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [replayTour, setReplayTour] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -470,6 +472,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <h2 className="text-sm font-bold text-gray-800 whitespace-nowrap">{getPageTitle()}</h2>
           </div>
           <div className="flex items-center space-x-2 shrink-0">
+            {/* 手机上更需要这个入口：屏幕小、说明文字都被折叠了 */}
+            <button
+              onClick={() => setHelpOpen(true)}
+              aria-label="帮助"
+              className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
+            >
+              <HelpCircle className="w-5 h-5" />
+            </button>
             {/*
               手机端的铃铛。**和桌面端是两个独立的按钮** ——
               2026-09-02 改桌面端时差点漏了这个，
@@ -584,6 +594,25 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
              )}
 
              {/*
+               帮助入口。**常驻在头部，不收进菜单** ——
+               需要帮助的那一刻，人正卡在某个按钮前面，
+               他不会先去翻账号菜单找「帮助在哪」。看不见的入口等于没有入口。
+
+               一个问号后面挂三层：走一遍岗位 / 讲这一页 / 点哪讲哪。
+               分成三个按钮的话，人得先判断「我这个问题属于第几层」，
+               那是让他先学一遍我的分类法。
+             */}
+             <button
+               data-onboard="help"
+               onClick={() => setHelpOpen(true)}
+               aria-label="帮助"
+               title="帮助：走一遍岗位 / 这一页是干什么的 / 这个按钮什么意思"
+               className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
+             >
+               <HelpCircle className="w-5 h-5" />
+             </button>
+
+             {/*
                铃铛。原来点了是 navigate('/dashboard') —— 而人多半就站在工作台上，
                所以表现为「点了没有任何反应」。
 
@@ -682,11 +711,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       */}
                       <button
                         type="button"
-                        onClick={() => { setReplayTour(true); setIsAccountMenuOpen(false); }}
+                        onClick={() => { setHelpOpen(true); setIsAccountMenuOpen(false); }}
                         className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
                       >
                         <Compass className="w-4 h-4 shrink-0" />
-                        重看新手引导
+                        帮助与新手引导
                       </button>
 
                       {/*
@@ -765,6 +794,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         )}
         <FeedbackModal open={isFeedbackOpen} onClose={() => setIsFeedbackOpen(false)} />
         <OnboardingTour forceOpen={replayTour} onClose={() => setReplayTour(false)} />
+        <HelpHub open={helpOpen} onClose={() => setHelpOpen(false)} onOpen={() => setHelpOpen(true)} onReplayTour={() => setReplayTour(true)} />
       </div>
     </div>
   );

@@ -17,8 +17,12 @@ import { resolveProjectCapabilities } from '../src/utils/projectCapabilities';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { TASK_STATUS, WORK_LOG_SOURCE } from '../src/constants/status.ts';
 import { StatusBadge } from '../src/ui/statusBadge';
-import { Badge, SearchInput, EmptyState, StatCard, StatGrid, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
+import { Badge, SearchInput, EmptyState, FilterSelect, StatCard, StatGrid, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 import { SampleTr } from '../components/SampleRow';
+import {
+  PROJECT_CATEGORY_META, PROJECT_CATEGORY_ORDER, CATEGORY_TO_MODE,
+  CATEGORY_FILTERS, STATUS_FILTERS, SCOPE_FILTERS, ProjectModeFilter
+} from '../src/modules/projectCategory';
 
 const normalizeServiceToken = (value: string) => (value || '')
   .toUpperCase()
@@ -64,9 +68,26 @@ const Projects = () => {
   const [assignProjectId, setAssignProjectId] = useState<string | null>(null);
   const [assignManager, setAssignManager] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [viewScope, setViewScope] = useState<'all' | 'related'>(() => activeRole === 'CONSULTANT' ? 'related' : 'all');
-  // 交付项目与跟进项目分开看：跟进项目还没签约，混在一起会让交付数据失真
-  const [modeScope, setModeScope] = useState<'delivery' | 'followup' | 'all'>('delivery');
+  /*
+    ── 三个筛选的默认值：都开到最大（2026-09-07 改）────────────
+
+    金恩来：「默认应该都是全部状态，然后若是要筛选内容，
+    再由登录同事自己根据条件筛选，一切设计不要画蛇添足。」
+
+    这不只是偏好问题。默认值每收紧一档，就多一条
+    「东西明明在库里，人却看不见」的路径 —— 而人看不见的第一反应
+    不是「我筛错了」，是「系统坏了」。这个月已经踩了三次：
+    默认只看交付 → 建的跟进项目不见；默认只看进行中 → 已完项目不见；
+    默认「与我相关」→ 别人负责的项目不见。
+
+    所以默认全开，收窄由使用的人自己来 —— 他收窄了就知道自己收窄了。
+
+    唯一保留的默认是「与我相关」：这是金恩来点名要的，
+    而且人打开项目页多半先找自己的活。为防它变成第四次「看不见」，
+    下面有一条：与我相关是 0、全公司却有，就直接把话说出来并给个按钮。
+  */
+  const [viewScope, setViewScope] = useState<'all' | 'related'>('related');
+  const [modeScope, setModeScope] = useState<ProjectModeFilter>('all');
   const [assignOwnerUserId, setAssignOwnerUserId] = useState('');
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [templateModalProjectId, setTemplateModalProjectId] = useState<string | null>(null);
@@ -285,9 +306,9 @@ const Projects = () => {
       setViewScope(focus.owner === 'me' || activeRole === 'CONSULTANT' ? 'related' : 'all');
       setFilterStatus(['revenue_completed', 'completed_7d'].includes(focus.type) ? 'Completed' : focus.type === 'team_overview' ? 'All' : 'Active');
       /*
-        从工作台点进来时，「交付 / 跟进」开关要放开到两者都看。
+        从工作台点进来时，类别筛选要放开到「全部类别」。
 
-        本页默认只看交付项目，而工作台的指标（在制项目数、日志覆盖率、延误率…）
+        本页曾经默认只看合同项目，而工作台的指标（在制项目数、日志覆盖率、延误率…）
         统计的是**所有**在制项目，跟进类项目也算在分母里。不放开的话，
         卡片和列表算的根本不是同一批项目。
 
@@ -322,8 +343,22 @@ const Projects = () => {
     setSearchTerm(q);
   }, [location.search]);
 
+  /*
+    换角色（含右上角切视角）时把范围恢复成默认。
+
+    ── 这里原来是「除了顾问，一律看全公司」（2026-09-07 改）──
+
+    那条规则藏在一个 useEffect 里，**会覆盖掉状态声明的默认值** ——
+    我把默认改成「与我相关」之后，界面上依然显示「全公司」，
+    因为这个 effect 在挂载时又把它推回去了。
+    同一条规则在这个文件里有四处副本，这是最难发现的一处：
+    它不在筛选条附近，改筛选时根本不会看到它。
+
+    现在统一成「与我相关」——金恩来点名要的默认值，
+    而「与我相关是 0、全公司却有」的情况由筛选条下面那行提示兜住。
+  */
   useEffect(() => {
-    setViewScope(activeRole === 'CONSULTANT' ? 'related' : 'all');
+    setViewScope('related');
   }, [activeRole]);
 
   useEffect(() => {
@@ -356,10 +391,31 @@ const Projects = () => {
     return () => window.clearTimeout(t);
   }, [undoComplete]);
 
-  const [filterStatus, setFilterStatus] = useState<'Active' | 'Completed' | 'All'>('Active');
+  const [filterStatus, setFilterStatus] = useState<'Active' | 'Completed' | 'All'>('All');
   /** 刚建完的一句说明 —— 告诉人东西在哪，而不是让他自己找 */
   const [createdNotice, setCreatedNotice] = useState('');
-  
+
+  /**
+   * 类别筛选。
+   *
+   * ── 这里原来藏得住东西（2026-09-07 修）──────────────────────
+   *
+   * 原来只有两档 delivery / followup，判断写成
+   * 「delivery 档排掉 isFollowUp、followup 档排掉非 isFollowUp」。
+   * 加了第三类「其他事务」之后，它的 projectMode 是 'public'，
+   * isFollowUp 为 false —— 于是：
+   *   选「交付项目」：不排它 → 混进来了
+   *   选「跟进项目」：排掉它 → 找不到了
+   * 而立项后代码又特地把筛选切到 followup 档，
+   * 意思是**建完一个其他事务，界面会跳到唯一看不见它的那一档**。
+   *
+   * 现在直接比对 projectMode，三类各归各档，加第四类也不会再漏。
+   */
+  const matchesModeScope = React.useCallback(
+    (p: Project) => modeScope === 'all' || resolveProjectCapabilities(p).projectMode === modeScope,
+    [modeScope]
+  );
+
   /**
    * 概览卡片的统计口径。
    *
@@ -373,7 +429,7 @@ const Projects = () => {
     /*
       口径必须和列表完全一致，副标题就是这么承诺的。修之前有三处不一致：
         ① 四张卡片内部就不统一 —— 前三张按「交付项目」算，红色那张按「交付+跟进」算；
-        ② 四张都不跟随眼前的「交付 / 跟进 / 两者都看」开关（useMemo 依赖里连 modeScope 都没有）；
+        ② 四张都不跟随眼前的类别筛选（useMemo 依赖里连 modeScope 都没有）；
         ③ 结果是咨询顾问视角下出现「0 个进行中项目、共 0 个项目」却「3 个超期未完成任务」，
            那 3 个任务在跟进项目里，而列表正筛着交付项目 —— 点卡片也找不到对应项目。
       现在四张卡片同源：先按「与我相关 / 全公司」，再按「交付 / 跟进」，
@@ -381,11 +437,7 @@ const Projects = () => {
     */
     const base = projects
       .filter(p => viewScope === 'all' || isMineProject(p))
-      .filter(p => {
-        if (modeScope === 'all') return true;
-        const isFollowUp = resolveProjectCapabilities(p).isFollowUpProject;
-        return modeScope === 'delivery' ? !isFollowUp : isFollowUp;
-      });
+      .filter(p => matchesModeScope(p));
     const active = base.filter(p => p.status === Status.Active);
     return {
       active: active.length,
@@ -402,11 +454,7 @@ const Projects = () => {
       if (filterStatus === 'Active' && p.status === Status.Completed) return false;
       if (filterStatus === 'Completed' && p.status !== Status.Completed) return false;
 
-      if (modeScope !== 'all') {
-        const isFollowUp = resolveProjectCapabilities(p).isFollowUpProject;
-        if (modeScope === 'delivery' && isFollowUp) return false;
-        if (modeScope === 'followup' && !isFollowUp) return false;
-      }
+      if (!matchesModeScope(p)) return false;
 
       /*
         项目列表对所有角色可见（只读），由「与我相关 / 全部项目」开关控制范围。
@@ -422,6 +470,21 @@ const Projects = () => {
       if (!q) return true;
       return p.name.includes(q) || p.manager.includes(q);
     }), [projects, filterStatus, activeRole, viewScope, modeScope, searchTerm, dashboardFocus, currentUser.name, projectWorkLogs]);
+
+  /**
+   * 同样的条件下，全公司有多少个 —— 用来判断「是真没有，还是我在看自己那一档」。
+   *
+   * 只有在「与我相关」筛出 0 条时才用得上，所以不必在意它多算一遍。
+   */
+  const companyWideCount = useMemo(() => projects.filter(p => {
+    if (filterStatus === 'Active' && p.status === Status.Completed) return false;
+    if (filterStatus === 'Completed' && p.status !== Status.Completed) return false;
+    if (!matchesModeScope(p)) return false;
+    if (!matchesProjectFocus(p)) return false;
+    const q = searchTerm.trim();
+    if (!q) return true;
+    return p.name.includes(q) || p.manager.includes(q);
+  }).length, [projects, filterStatus, modeScope, searchTerm, dashboardFocus, projectWorkLogs]);
 
   /** 金额与结算只给有 CONTRACT_VIEW_AMOUNT 的角色。咨询师刻意看不到，避免与客户议价、同事比价。 */
   // 新建类动作不传归属 context —— 还没建出来的东西谈不上是谁的
@@ -547,9 +610,11 @@ const Projects = () => {
 
   const getStatusBadge = (status: Status) => <StatusBadge status={status} domain="project" />;
 
-  const getCategoryBadge = (category: any) => (
-    <Badge tone={category === 'FollowUp' ? 'amber' : 'indigo'}>{category === 'FollowUp' ? '跟进项目' : '交付项目'}</Badge>
-  );
+  const getCategoryBadge = (category: any) => {
+    const meta = PROJECT_CATEGORY_META[category as keyof typeof PROJECT_CATEGORY_META] || PROJECT_CATEGORY_META.Delivery;
+    const tone = category === 'FollowUp' ? 'amber' : category === 'Public' ? 'gray' : 'indigo';
+    return <Badge tone={tone} className="cursor-help" title={`${meta.when}・${meta.money}`}>{meta.label}</Badge>;
+  };
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -574,13 +639,13 @@ const Projects = () => {
       是这件事的工时、进度、谁在做全部回到微信群和个人脑子里。
 
       现在按类别分：
-        交付项目  必须有客户 —— 它来自合同，没客户结算给谁
+        合同项目  必须有客户 —— 它来自合同，没客户结算给谁
         跟进项目  客户可选 —— 客户还没成，本来就可能只是个线索
-        公共事务  不要客户
+        其他事务  不要客户
     */
     const customerId = String(formData.customerId || '').trim();
     if (formData.projectCategory === 'Delivery' && !customerId) {
-      alert('交付项目必须选归属客户 —— 它来自合同，没有客户就没法统计合作次数和结算。\n\n如果这件事还没有客户，把类别改成「跟进项目」；如果它不属于任何客户（比如政府交办的事），选「公共事务」。');
+      alert(`${PROJECT_CATEGORY_META.Delivery.label}必须选归属客户 —— 它来自合同，没有客户就没法统计合作次数和结算。\n\n如果这件事还没有客户，把类别改成「${PROJECT_CATEGORY_META.FollowUp.label}」；如果它不属于任何客户（比如政府交办的事），选「${PROJECT_CATEGORY_META.Public.label}」。`);
       return;
     }
     // 负责人同时写入用户 ID，保证「我的项目」和数据权限按身份而不是姓名判断
@@ -603,15 +668,20 @@ const Projects = () => {
       而且下面那条测试会在新增筛选却忘了处理时失败。
     */
     const mine = manager === currentUser.name || (ownerUserId && ownerUserId === currentUser.id);
-    const isFollowUp = formData.projectCategory === 'FollowUp';
-    const isPublic = formData.projectCategory === 'Public';
+    const category = (formData.projectCategory || 'Delivery') as keyof typeof PROJECT_CATEGORY_META;
 
     // ① 范围：不是自己负责就切到全公司
     setViewScope(mine ? 'related' : 'all');
-    // ② 状态：新建的一定是进行中
-    setFilterStatus('Active');
-    // ③ 类别：切到新项目所属的那一档
-    setModeScope(isFollowUp || isPublic ? 'followup' : 'delivery');
+    /*
+      ②③ 状态和类别一律开到「全部」，不再「切到它所属的那一档」。
+
+      切到那一档看着更贴心，实际上是把「看得见」压在**我算得对**上：
+      第一次算错了类别（其他事务被切到跟进档，而那一档恰恰不显示它），
+      于是又是一次「点了没反应」。开到全部则不依赖任何判断 ——
+      只要它进了库就一定在列表里。
+    */
+    setFilterStatus('All');
+    setModeScope('all');
     // ④ 搜索框里的关键词也会把它挡掉
     setSearchTerm('');
     /*
@@ -624,9 +694,9 @@ const Projects = () => {
 
     const where = [
       mine ? null : `负责人是「${manager}」，已切到「全公司」`,
-      isPublic ? '公共事务归在「跟进项目」这一档下' : (isFollowUp ? '已切到「跟进项目」这一档' : null),
+      '筛选已放开到全部状态、全部类别',
     ].filter(Boolean).join('；');
-    setCreatedNotice(where ? `已立项 —— ${where}，这样你才看得到它。` : '已立项，负责人是你自己。');
+    setCreatedNotice(`已立项「${PROJECT_CATEGORY_META[category].label}」—— ${where}，这样你才看得到它。`);
   };
 
   const getWorkLogDraft = (projectId: string) => workLogDrafts[projectId] || defaultWorkLogDraft();
@@ -915,7 +985,7 @@ const Projects = () => {
               <div>
                 <h3 className="text-base font-black text-amber-900">情报/跟进闭环面板</h3>
                 <p className="text-xs text-amber-700 font-bold mt-1">
-                  跟进项目默认不进入财务结算与回款，签约后请在合同管理录入合同并自动立项为交付项目。
+                  跟进项目默认不进入财务结算与回款，签约后请在合同管理录入合同并自动立项为合同项目。
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -990,7 +1060,7 @@ const Projects = () => {
                         alert(res.reason || '绑定失败');
                         return;
                       }
-                      alert('已绑定客户。签约后请在合同管理录入合同并自动立项交付项目。');
+                      alert('已绑定客户。签约后请在合同管理录入合同并自动立项合同项目。');
                     }}
                     className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black hover:bg-indigo-700 whitespace-nowrap"
                   >
@@ -2074,7 +2144,7 @@ const Projects = () => {
       <div className="flex justify-between items-center mb-6">
         <div>
            <h1 className="text-2xl font-bold text-gray-900">交付工作台</h1>
-           <p className="text-sm text-gray-500 mt-1">下方数字跟随「与我相关 / 全公司」和「交付 / 跟进」，与列表口径一致（不跟状态和搜索）。点开项目勾任务推进。</p>
+           <p className="text-sm text-gray-500 mt-1">下方数字跟随筛选条里的「范围」和「类别」，和列表口径一致（不跟状态和搜索走）。点开项目勾任务推进。</p>
         </div>
         {/*
           按权限显示（2026-09-07）。
@@ -2109,23 +2179,23 @@ const Projects = () => {
           value={overviewStats.active}
           label="进行中项目"
           tone="blue"
-          onClick={() => { setModeScope('delivery'); setFilterStatus('Active'); }}
-          title="点击查看进行中的交付项目"
+          onClick={() => setFilterStatus('Active')}
+          title="点击只看进行中的项目"
         />
         <StatCard
           icon={<CheckCircle className="w-6 h-6" />}
           value={overviewStats.completed}
           label="已完成项目"
           tone="emerald"
-          onClick={() => { setModeScope('delivery'); setFilterStatus('Completed'); }}
-          title="点击查看已完成的交付项目"
+          onClick={() => setFilterStatus('Completed')}
+          title="点击只看已完成的项目"
         />
         <StatCard
           icon={<AlertTriangle className="w-6 h-6" />}
           value={overviewStats.stuck}
           label="有任务卡住的项目"
           tone="amber"
-          onClick={() => { setModeScope('delivery'); setFilterStatus('Active'); }}
+          onClick={() => setFilterStatus('Active')}
           title="进行中项目里存在超期任务的"
         />
         <StatCard
@@ -2137,57 +2207,67 @@ const Projects = () => {
         />
       </StatGrid>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6 flex flex-col gap-4">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center space-x-2 w-full md:w-auto overflow-x-auto">
-             <button onClick={() => setFilterStatus('Active')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'Active' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>进行中</button>
-             <button onClick={() => setFilterStatus('Completed')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'Completed' ? 'bg-green-600 text-white shadow-md shadow-green-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>已完成</button>
-             <button onClick={() => setFilterStatus('All')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filterStatus === 'All' ? 'bg-gray-800 text-white shadow-md' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>全部状态</button>
-             <div className="h-6 w-px bg-gray-200 mx-1 shrink-0" />
-             {([
-               { key: 'delivery', label: '交付项目' },
-               { key: 'followup', label: '跟进项目' },
-               { key: 'all', label: '两者都看' }
-             ] as const).map(item => (
-               <button
-                 key={item.key}
-                 onClick={() => setModeScope(item.key)}
-                 className={`px-3 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${modeScope === item.key ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
-               >
-                 {item.label}
-               </button>
-             ))}
-          </div>
-          
-          <div className="flex items-center space-x-3 w-full md:w-auto">
-            <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="搜索项目…" className="flex-1 md:w-64" />
-              <div className="flex w-full md:w-auto justify-center md:justify-start items-center bg-white border border-gray-200 rounded-xl p-1 shadow-sm">
+      {/*
+        ── 筛选条：三组下拉放一起（2026-09-07 重做）────────────────
+
+        原来是 9 个同样大小、同样加粗的按钮横铺一排，
+        金恩来：「弄一堆按钮在上面也挺抢重点的……是不是把这三组内容
+        放一起会好一些。」
+
+        改动有三处：
+        ① 三组收成三个下拉，收起来只显示当前选中的那一档，
+           「范围：与我相关」自己就是一句话，不用去按钮堆里找哪个亮着；
+        ② 三组挨在一起、共用一个「筛选」标签，看得出它们是一类东西
+           （原来状态和类别在左、范围被挤到搜索框右边，像两个功能）；
+        ③ 默认全开，见上面 modeScope 处的说明。
+      */}
+      <div data-guide-id="project-filters" className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6 flex flex-col gap-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <FilterSelect label="状态" value={filterStatus} onChange={v => setFilterStatus(v)} options={STATUS_FILTERS} />
+            <FilterSelect label="类别" value={modeScope} onChange={v => setModeScope(v)} options={CATEGORY_FILTERS} />
+            <FilterSelect label="范围" value={viewScope} onChange={v => setViewScope(v)} options={SCOPE_FILTERS} />
+            {(filterStatus !== 'All' || modeScope !== 'all' || viewScope !== 'related' || searchTerm.trim()) && (
               <button
-                onClick={() => setViewScope('related')}
-                title="我负责、我负责其中服务项、或有任务在我名下的项目"
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${viewScope === 'related' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+                type="button"
+                onClick={() => { setFilterStatus('All'); setModeScope('all'); setViewScope('related'); setSearchTerm(''); }}
+                className="px-2.5 py-2 rounded-lg text-xs font-bold text-gray-400 hover:text-gray-700 hover:bg-gray-50"
               >
-                与我相关
+                重置筛选
               </button>
-              <button
-                onClick={() => setViewScope('all')}
-                title="公司全部项目（只读，用于了解他人交付进度）"
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${viewScope === 'all' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
-              >
-                全公司
-              </button>
-            </div>
+            )}
           </div>
+          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="搜索项目…" className="w-full md:w-64" />
         </div>
         {/* 条数随筛选实时算，和列表永远一致——避免"徽标说 13、列表只给 1 条" */}
         <div className="flex items-center justify-between gap-3 pt-1 border-t border-gray-50 text-[11px] text-gray-500">
           <span>
-            {viewScope === 'related' ? '与我相关' : '全公司'}
-            ・{modeScope === 'delivery' ? '交付项目' : modeScope === 'followup' ? '跟进项目' : '交付+跟进'}
-            ・{filterStatus === 'Active' ? '进行中' : filterStatus === 'Completed' ? '已完成' : '全部状态'}
+            {SCOPE_FILTERS.find(o => o.value === viewScope)?.label}
+            ・{CATEGORY_FILTERS.find(o => o.value === modeScope)?.label}
+            ・{STATUS_FILTERS.find(o => o.value === filterStatus)?.label}
           </span>
           <span className="font-bold text-gray-700">共 {filteredProjects.length} 个项目</span>
         </div>
+
+        {/*
+          「与我相关」是默认值，而默认值最容易把人骗了：
+          总经理、总助多半不亲自当项目负责人，一进来就是空的 ——
+          空白页不会告诉他「不是没有项目，是你在看自己的那一档」。
+          所以这一行只在「我的是 0、公司的不是 0」时出现，并直接给按钮。
+        */}
+        {viewScope === 'related' && filteredProjects.length === 0 && companyWideCount > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-bold text-amber-800">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>你名下没有符合条件的项目，全公司还有 {companyWideCount} 个。</span>
+            <button
+              type="button"
+              onClick={() => setViewScope('all')}
+              className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-black text-white hover:bg-amber-700"
+            >
+              看全公司
+            </button>
+          </div>
+        )}
 
         {dashboardFocusLabel && (
           <div className="flex flex-wrap items-center gap-2">
@@ -2197,12 +2277,14 @@ const Projects = () => {
             <button
               type="button"
               onClick={() => {
+                // 清焦点 = 回到默认那一套，和「重置筛选」保持一致
                 setDashboardFocus(null);
                 setDashboardFocusLabel('');
                 setSearchTerm('');
-                setFilterStatus('Active');
+                setFilterStatus('All');
+                setModeScope('all');
                 setTaskViewMode('grouped');
-                setViewScope(activeRole === 'CONSULTANT' ? 'related' : 'all');
+                setViewScope('related');
               }}
               className="text-xs font-bold text-gray-500 hover:text-gray-700"
             >
@@ -2276,7 +2358,7 @@ const Projects = () => {
                   <td className="pl-4 text-gray-300"><ChevronRight className="w-4 h-4" /></td>
                   <td className={tdClass}>
                     <div className="font-bold text-gray-900">温州示范包装有限公司 ISO9001 换证</div>
-                    <div className="mt-1 text-[11px] text-gray-500">合同 XY-2026-0001 · 交付项目</div>
+                    <div className="mt-1 text-[11px] text-gray-500">合同 XY-2026-0001 · 合同项目</div>
                   </td>
                   <td className={tdClass}>
                     <div className="text-sm font-bold text-amber-700">整理管理手册（还有 3 天到期）</div>
@@ -2382,7 +2464,7 @@ const Projects = () => {
                           <p className="text-[11px] text-gray-400 mt-2">
                             {formData.projectCategory === 'Delivery'
                               ? '必选。不关联客户的话，客户档案里看不到这个项目，合作次数和累计金额也统计不到。'
-                              : '客户还没谈成时可以先空着。以后转成交付项目时再补上，客户档案会自动接上。'}
+                              : '客户还没谈成时可以先空着。以后转成合同项目时再补上，客户档案会自动接上。'}
                           </p>
                       </div>
                       )}
@@ -2408,35 +2490,47 @@ const Projects = () => {
                       </div>
                       <div>
                           <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">项目类别</label>
-                          <div className="flex items-center bg-gray-50 border border-gray-200 rounded-2xl p-1">
-                            <button
-                              type="button"
-                              onClick={() => setFormData({ ...formData, projectCategory: 'Delivery' as any })}
-                              className={`flex-1 px-3 py-2 rounded-xl text-xs font-black transition-colors ${formData.projectCategory === 'Delivery' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-600 hover:bg-white'}`}
-                            >
-                              交付项目
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setFormData({ ...formData, projectCategory: 'FollowUp' as any })}
-                              className={`flex-1 px-3 py-2 rounded-xl text-xs font-black transition-colors ${formData.projectCategory === 'FollowUp' ? 'bg-amber-600 text-white shadow-sm' : 'text-gray-600 hover:bg-white'}`}
-                            >
-                              跟进项目
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setFormData({ ...formData, projectCategory: 'Public' as any, customerId: '' })}
-                              className={`flex-1 px-3 py-2 rounded-xl text-xs font-black transition-colors ${formData.projectCategory === 'Public' ? 'bg-slate-600 text-white shadow-sm' : 'text-gray-600 hover:bg-white'}`}
-                            >
-                              公共事务
-                            </button>
+                          {/*
+                            ── 名字之外，把「什么时候建」和「钱怎么算」写在按钮上 ──
+
+                            2026-09-07 金恩来：「名字完全无法 get 到『什么时候建』
+                            以及『钱』这两者内容，我基本都看误解了。」
+
+                            名字确实带不动两条信息 —— 「合同项目」四个字说不了
+                            「合同签了之后建、做完算营收」。所以按钮做成两行：
+                            上面是名字，下面两行小字就是这两个问题的答案，
+                            选之前不用点开也不用猜。
+                          */}
+                          <div className="grid grid-cols-3 gap-2">
+                            {PROJECT_CATEGORY_ORDER.map(cat => {
+                              const meta = PROJECT_CATEGORY_META[cat];
+                              const on = formData.projectCategory === cat;
+                              const tone = cat === 'FollowUp'
+                                ? 'border-amber-500 bg-amber-50 text-amber-900'
+                                : cat === 'Public'
+                                  ? 'border-slate-500 bg-slate-50 text-slate-900'
+                                  : 'border-indigo-500 bg-indigo-50 text-indigo-900';
+                              return (
+                                <button
+                                  key={cat}
+                                  type="button"
+                                  onClick={() => setFormData({
+                                    ...formData,
+                                    projectCategory: cat as any,
+                                    // 其他事务没有客户，切过去就把已选的清掉，免得留个看不见的值
+                                    ...(cat === 'Public' ? { customerId: '' } : {})
+                                  })}
+                                  className={`rounded-2xl border-2 px-2 py-2.5 text-left transition-colors ${on ? tone : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}
+                                >
+                                  <span className="block text-xs font-black">{meta.label}</span>
+                                  <span className="mt-1 block text-[10px] font-bold leading-tight opacity-70">{meta.when}</span>
+                                  <span className="block text-[10px] font-bold leading-tight opacity-70">{meta.money}</span>
+                                </button>
+                              );
+                            })}
                           </div>
                           <p className="mt-2 text-[11px] font-bold leading-relaxed text-gray-400">
-                            {formData.projectCategory === 'Delivery'
-                              ? '来自合同的交付工作，必须选归属客户 —— 它关系到结算和客户合作记录。'
-                              : formData.projectCategory === 'FollowUp'
-                                ? '客户还没谈成时用这个。归属客户可以先空着，成了再补。'
-                                : '政府交办、行业活动、内部建设这类不属于任何客户的活。不要客户，也不计营收，但工时和进度照常记。'}
+                            {PROJECT_CATEGORY_META[(formData.projectCategory || 'Delivery') as keyof typeof PROJECT_CATEGORY_META].hint}
                           </p>
                       </div>
                       <div className="grid grid-cols-2 gap-4">

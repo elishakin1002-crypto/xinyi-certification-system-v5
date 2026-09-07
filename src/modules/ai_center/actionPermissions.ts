@@ -49,7 +49,7 @@ export const AI_ACTION_PERMISSION: Record<string, ActionCode> = {
 export const AI_ACTION_LABEL: Record<string, string> = {
   customer: '新建客户',
   contract: '录入合同',
-  project: '建交付项目',
+  project: '建合同项目',
   lead: '录入线索',
   lead_follow_up: '给线索加跟进',
   customer_follow_up: '给客户加跟进',

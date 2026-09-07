@@ -111,8 +111,16 @@ test('能重看，而且入口找得到', () => {
     那时候找不到入口，这个功能就白做了。
   */
   const layout = read('components/Layout.tsx');
-  assert.match(layout, /重看新手引导/, '账号菜单里没有重看入口');
+  /*
+    2026-09-07 起，入口从账号菜单里的「重看新手引导」变成了帮助中心的第一项 ——
+    需要帮助的那一刻人不会去翻账号菜单，所以头部常驻一个「?」。
+    两条路都要在：菜单里那条留着（老同事习惯了），头部那个是主入口。
+  */
+  assert.match(layout, /帮助与新手引导/, '账号菜单里没有重看入口');
+  assert.match(layout, /aria-label="帮助"/, '头部没有常驻帮助入口');
   assert.match(layout, /forceOpen=\{replayTour\}/, '重看没有接上强制打开');
+  assert.match(layout, /onReplayTour=\{\(\) => setReplayTour\(true\)\}/,
+    '帮助中心的「带我走一遍」没接上引导');
 });
 
 test('看过就不再自动弹，但内容更新后会再弹一次', () => {
