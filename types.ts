@@ -411,9 +411,26 @@ export interface Vendor {
 }
 
 export type ProjectType = 'Self-Operated' | 'Outsourced' | 'Joint';
-export type ProjectCategory = 'Delivery' | 'FollowUp';
+/*
+  项目分三类，**分类决定「要不要有客户」**。
+
+  2026-09-07 金恩来提出：新建项目一定要选归属客户，
+  那逻辑不就变成「先建客户再建项目」？而且有些活根本没有客户 ——
+  「政府要我们配合通知 2000 家企业营业执照要年检」，
+  这种事不属于任何一家客户，按原来的规则**根本进不了系统**。
+
+  进不了系统的后果不是少一条记录，是这件事的工时、进度、谁在做，
+  全部回到微信群和个人脑子里 —— 而这恰恰是公司最该沉淀的那类事：
+  政府交办的事做好了，就是下一批线索。
+
+  Delivery  交付项目：来自合同，**必须有客户**（否则结算给谁？）
+  FollowUp  跟进项目：客户还没成，客户可选
+  Public    公共事务：政府协调、行业活动、内部建设，**没有客户**
+            不计营收、不进转化率，但要有人、有进度、有工时
+*/
+export type ProjectCategory = 'Delivery' | 'FollowUp' | 'Public';
 export type ProjectSourceType = 'intel' | 'lead' | 'customer' | 'contract' | 'manual';
-export type ProjectMode = 'followup' | 'delivery';
+export type ProjectMode = 'followup' | 'delivery' | 'public';
 export type SettlementRuleType = 'Ratio' | 'Fixed' | 'ProfitShare';
 
 export type ServiceItemStatus = 'Pending' | 'InProgress' | 'Completed';

@@ -22,6 +22,7 @@ const parseLegacyProjectRef = (ref: string | undefined): { sourceType?: ProjectS
 
 export const resolveProjectMode = (project: Pick<Project, 'projectMode' | 'projectCategory' | 'contractRef'>): ProjectMode => {
   if (isValidProjectMode(project.projectMode)) return project.projectMode;
+  if (project.projectCategory === 'Public') return 'public';
   if (project.projectCategory === 'FollowUp') return 'followup';
   if (project.projectCategory === 'Delivery') return 'delivery';
 
@@ -56,14 +57,22 @@ export const resolveProjectCapabilities = (project: Pick<Project, 'sourceType' |
   const { projectMode, sourceType, sourceRef } = inferProjectMeta(project);
   const isFollowUpProject = projectMode === 'followup';
   const isIntelOrigin = sourceType === 'intel';
+  /*
+    公共事务：政府协调、行业活动、内部建设这类没有客户的活。
+    它要有人、有进度、有工时，但**没有钱这一路** ——
+    没有合同就没有服务项，没有客户就没有回款。
+    把这两块面板留着只会让人对着空表单发愣。
+  */
+  const isPublicProject = projectMode === 'public';
   return {
     projectMode,
     sourceType,
     sourceRef,
     isFollowUpProject,
+    isPublicProject,
     isIntelOrigin,
-    showFinancePanel: !isIntelOrigin,
-    showServicePanel: !isIntelOrigin,
+    showFinancePanel: !isIntelOrigin && !isPublicProject,
+    showServicePanel: !isIntelOrigin && !isPublicProject,
     allowFastFollowUpComplete: isFollowUpProject && isIntelOrigin
   };
 };

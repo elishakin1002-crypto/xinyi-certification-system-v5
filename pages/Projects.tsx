@@ -562,9 +562,25 @@ const Projects = () => {
       alert('执行负责人请从列表选择（或选择“待指派”）。');
       return;
     }
+    /*
+      ── 客户必填与否，由项目类别决定（2026-09-07 改）──────────
+
+      原来一律必填，逻辑上是倒的：变成「必须先建客户，才能建项目」，
+      而现实里往往是先有事、后有客户。
+
+      更要紧的是有一类活根本没有客户 ——
+      「政府要我们配合通知 2000 家企业营业执照要年检」，
+      按原规则**根本进不了系统**。进不了系统不是少一条记录，
+      是这件事的工时、进度、谁在做全部回到微信群和个人脑子里。
+
+      现在按类别分：
+        交付项目  必须有客户 —— 它来自合同，没客户结算给谁
+        跟进项目  客户可选 —— 客户还没成，本来就可能只是个线索
+        公共事务  不要客户
+    */
     const customerId = String(formData.customerId || '').trim();
-    if (!customerId) {
-      alert('请选择归属客户。不关联客户的项目在客户档案里看不到，也无法统计合作次数与金额。');
+    if (formData.projectCategory === 'Delivery' && !customerId) {
+      alert('交付项目必须选归属客户 —— 它来自合同，没有客户就没法统计合作次数和结算。\n\n如果这件事还没有客户，把类别改成「跟进项目」；如果它不属于任何客户（比如政府交办的事），选「公共事务」。');
       return;
     }
     // 负责人同时写入用户 ID，保证「我的项目」和数据权限按身份而不是姓名判断
@@ -2324,25 +2340,32 @@ const Projects = () => {
                           <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">项目名称</label>
                           <input required className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="例如：某某工厂ISO认证咨询" />
                       </div>
+                      {/* 公共事务没有客户，这一栏整个不显示 —— 摆一个填不了的必填框只会让人卡住 */}
+                      {formData.projectCategory !== 'Public' && (
                       <div>
                           <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">
-                            归属客户 <span className="text-red-500">*</span>
+                            归属客户 {formData.projectCategory === 'Delivery'
+                              ? <span className="text-red-500">*</span>
+                              : <span className="text-gray-400 normal-case tracking-normal">（可以先空着）</span>}
                           </label>
                           <select
-                            required
+                            required={formData.projectCategory === 'Delivery'}
                             className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
                             value={String(formData.customerId || '')}
                             onChange={e => setFormData({ ...formData, customerId: e.target.value })}
                           >
-                            <option value="">请选择客户</option>
+                            <option value="">{formData.projectCategory === 'Delivery' ? '请选择客户' : '暂不关联客户'}</option>
                             {customers.map(c => (
                               <option key={c.id} value={c.id}>{c.name}</option>
                             ))}
                           </select>
                           <p className="text-[11px] text-gray-400 mt-2">
-                            必选。不关联客户的话，客户档案里看不到这个项目，合作次数和累计金额也统计不到。
+                            {formData.projectCategory === 'Delivery'
+                              ? '必选。不关联客户的话，客户档案里看不到这个项目，合作次数和累计金额也统计不到。'
+                              : '客户还没谈成时可以先空着。以后转成交付项目时再补上，客户档案会自动接上。'}
                           </p>
                       </div>
+                      )}
                       <div>
                           <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">关联合同</label>
                           <select
@@ -2380,7 +2403,21 @@ const Projects = () => {
                             >
                               跟进项目
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => setFormData({ ...formData, projectCategory: 'Public' as any, customerId: '' })}
+                              className={`flex-1 px-3 py-2 rounded-xl text-xs font-black transition-colors ${formData.projectCategory === 'Public' ? 'bg-slate-600 text-white shadow-sm' : 'text-gray-600 hover:bg-white'}`}
+                            >
+                              公共事务
+                            </button>
                           </div>
+                          <p className="mt-2 text-[11px] font-bold leading-relaxed text-gray-400">
+                            {formData.projectCategory === 'Delivery'
+                              ? '来自合同的交付工作，必须选归属客户 —— 它关系到结算和客户合作记录。'
+                              : formData.projectCategory === 'FollowUp'
+                                ? '客户还没谈成时用这个。归属客户可以先空着，成了再补。'
+                                : '政府交办、行业活动、内部建设这类不属于任何客户的活。不要客户，也不计营收，但工时和进度照常记。'}
+                          </p>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                           <div>
