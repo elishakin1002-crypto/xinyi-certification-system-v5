@@ -6,7 +6,7 @@ import VersionWatcher from './VersionWatcher';
 import FeedbackModal from './FeedbackModal';
 import MyAiUsage from './MyAiUsage';
 import OnboardingTour from './OnboardingTour';
-import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare, Compass, MonitorSmartphone } from 'lucide-react';
+import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare, Compass, MonitorSmartphone, AlertTriangle, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { authService } from '../services/authService';
 import { dataService } from '../services/dataService';
@@ -107,6 +107,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     markAllRemindersRead,
     previewPersona,
     setPreviewPersona,
+    writeFailure,
+    dismissWriteFailure,
     leads,
     customers,
     contracts,
@@ -725,6 +727,42 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </main>
         <AIChatWidget />
         <VersionWatcher />
+
+        {/*
+          ── 保存失败必须让人看见（2026-09-07）────────────────
+
+          原来写失败只在控制台打一行 warn。同事不会开控制台，
+          他看到的是「我点了确认、东西也出现了」，
+          刷新之后东西没了 —— 他会以为系统把数据弄丢了。
+
+          红色、居中、要手动关掉：这类消息不能自己消失，
+          人可能正低头看键盘，一闪而过等于没提示。
+        */}
+        {writeFailure && (
+          <div className="fixed inset-x-0 top-4 z-[80] flex justify-center px-4 pointer-events-none">
+            <div className="pointer-events-auto flex max-w-lg items-start gap-3 rounded-xl border border-red-200 bg-white px-4 py-3 shadow-lg">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
+              <div className="min-w-0">
+                <p className="text-sm font-black text-gray-900">
+                  「{writeFailure.what}」没有保存成功
+                </p>
+                <p className="mt-0.5 text-xs font-bold leading-relaxed text-gray-600">
+                  {writeFailure.reason}
+                </p>
+                <p className="mt-1 text-[11px] font-bold text-gray-400">
+                  刚才那条已经撤回，界面上看到的就是真实情况 —— 不用担心存了一半。
+                </p>
+              </div>
+              <button
+                onClick={dismissWriteFailure}
+                className="shrink-0 rounded-lg p-1 text-gray-400 hover:bg-gray-100"
+                aria-label="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
         <FeedbackModal open={isFeedbackOpen} onClose={() => setIsFeedbackOpen(false)} />
         <OnboardingTour forceOpen={replayTour} onClose={() => setReplayTour(false)} />
       </div>

@@ -96,6 +96,8 @@ const Projects = () => {
     category: ServiceCategory | '';
     owner: string;
     autoTasks: boolean;
+    /** 校验没过时的提示 —— 不能只是不动 */
+    error?: string;
   } | null>(null);
 
   const canManageTemplate = (tpl: TaskTemplate) => {
@@ -174,7 +176,23 @@ const Projects = () => {
       .map(u => String(u.name || '').trim())
       .filter(Boolean)
   ));
-  const managerOptions = ['待指派', ...assignableManagers];
+  /*
+    ── 自己排最前面并标出来（2026-09-07）──────────────────────
+
+    立项时没选自己当负责人，项目建完就落在「与我相关」之外，
+    人在列表里找不到，以为没建成 —— 2026-09-07 实际发生过。
+
+    默认值本来就是当前登录人，但一长串名字排在一起时，
+    人根本注意不到默认选中的是谁，随手就往下拉了。
+    所以把自己拎到第一个、写上「（我自己）」——
+    **改成别人是一个需要动手的动作，而不是随手滑过去的结果。**
+  */
+  const myName = String(currentUser?.name || '').trim();
+  const managerOptions = Array.from(new Set([
+    ...(myName && assignableManagers.includes(myName) ? [myName] : []),
+    '待指派',
+    ...assignableManagers,
+  ]));
   const isValidManager = (value: string) => value === '待指派' || assignableManagers.includes(value);
 
   const openCreateModal = () => {
@@ -339,6 +357,8 @@ const Projects = () => {
   }, [undoComplete]);
 
   const [filterStatus, setFilterStatus] = useState<'Active' | 'Completed' | 'All'>('Active');
+  /** 刚建完的一句说明 —— 告诉人东西在哪，而不是让他自己找 */
+  const [createdNotice, setCreatedNotice] = useState('');
   
   /**
    * 概览卡片的统计口径。
@@ -404,6 +424,7 @@ const Projects = () => {
     }), [projects, filterStatus, activeRole, viewScope, modeScope, searchTerm, dashboardFocus, currentUser.name, projectWorkLogs]);
 
   /** 金额与结算只给有 CONTRACT_VIEW_AMOUNT 的角色。咨询师刻意看不到，避免与客户议价、同事比价。 */
+  const canCreateProject = checkActionPermission('PROJECT_CREATE', {}).allowed;
   const canSeeMoney = checkActionPermission('CONTRACT_VIEW_AMOUNT', {}).allowed;
   /**
    * 结算/提成可见性，与「能看合同金额」刻意分开：
@@ -549,6 +570,26 @@ const Projects = () => {
     const ownerUserId = userProfiles.find(u => u.name === manager)?.id;
     addProject({ ...formData, manager, customerId, ...(ownerUserId ? { ownerUserId } : {}) });
     setIsModalOpen(false);
+
+    /*
+      ── 建完要能看见（2026-09-07）────────────────────────────
+
+      负责人不是自己时，新项目落在「与我相关」之外 ——
+      人点完「确认立项」，列表里什么都没多出来，
+      合理的第一反应是「没建成」，然后再建一次。
+
+      **建完就该看见它。** 所以这里自动切到能看到它的范围，
+      并说清楚为什么切 —— 不解释的话，界面自己跳一下同样莫名其妙。
+    */
+    const mine = manager === currentUser.name || (ownerUserId && ownerUserId === currentUser.id);
+    if (!mine) {
+      setViewScope('all');
+      setCreatedNotice(`已立项。负责人是「${manager}」，不在「与我相关」里，已切到「全公司」让你看到它。`);
+    } else {
+      setViewScope('related');
+      setCreatedNotice(`已立项，负责人是你自己。`);
+    }
+    if (filterStatus !== 'Active') setFilterStatus('Active');
   };
 
   const getWorkLogDraft = (projectId: string) => workLogDrafts[projectId] || defaultWorkLogDraft();
@@ -1247,7 +1288,7 @@ const Projects = () => {
                     list={serviceDatalistId}
                     className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none"
                     value={activeServiceDraft.rawName}
-                    onChange={e => setServiceDraft(prev => prev ? { ...prev, rawName: e.target.value } : prev)}
+                    onChange={e => setServiceDraft(prev => prev ? { ...prev, rawName: e.target.value, error: '' } : prev)}
                     placeholder="如：ISO9001 / 高新技术企业 / SC 食品生产许可"
                   />
                   <datalist id={serviceDatalistId}>
@@ -1291,10 +1332,24 @@ const Projects = () => {
                       <option key={u.id} value={u.name}>{u.name}</option>
                     ))}
                   </select>
+                  {activeServiceDraft.error && (
+                    <span className="text-xs font-bold text-red-600">{activeServiceDraft.error}</span>
+                  )}
                   <button
                     onClick={() => {
                       const rawName = activeServiceDraft.rawName.trim();
-                      if (!rawName) return;
+                      /*
+                        名称是空的时候原来直接 return —— **一声不吭**。
+                        2026-09-07 反馈「点击确认添加没有反应」就是这个：
+                        人以为按钮坏了，其实是系统在无声地拒绝他。
+
+                        点了没反应是最难查的一类问题：没有报错、没有日志、
+                        连「哪里不对」都不知道，只能反复点。
+                      */
+                      if (!rawName) {
+                        setServiceDraft(prev => prev ? { ...prev, error: '先填服务名称，比如「ISO9001 认证咨询」' } : prev);
+                        return;
+                      }
                       const match = matchServiceCatalog(rawName, activeServiceDraft.category);
                       const standardName = match?.name || rawName;
                       const rawNameStored = match && match.name !== rawName ? rawName : undefined;
@@ -1953,8 +2008,31 @@ const Projects = () => {
            <h1 className="text-2xl font-bold text-gray-900">交付工作台</h1>
            <p className="text-sm text-gray-500 mt-1">下方数字跟随「与我相关 / 全公司」和「交付 / 跟进」，与列表口径一致（不跟状态和搜索）。点开项目勾任务推进。</p>
         </div>
-        <button onClick={openCreateModal} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-all active:scale-95 font-bold text-sm"><Plus className="w-4 h-4 mr-2" /> 新建项目</button>
+        {/*
+          按权限显示（2026-09-07）。
+
+          顾问没有 PROJECT_CREATE —— 项目由总助或总经理立项，顾问执行，
+          这个分工本身是对的。错的是原来照样把按钮摆在那里：
+          他填完整张表、点了「确认立项」、列表里也出现了，
+          服务端却返回 403，前端只在控制台打了一行 warn。
+          刷新之后项目消失 —— 他会以为系统把数据弄丢了。
+
+          **点不动的按钮不该出现。**
+        */}
+        {canCreateProject && (
+          <button onClick={openCreateModal} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-all active:scale-95 font-bold text-sm"><Plus className="w-4 h-4 mr-2" /> 新建项目</button>
+        )}
       </div>
+
+      {createdNotice && (
+        <div className="mb-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+          <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+          <p className="text-sm font-bold text-emerald-800">{createdNotice}</p>
+          <button onClick={() => setCreatedNotice('')} className="ml-auto shrink-0 rounded p-1 text-emerald-600 hover:bg-emerald-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* 概览卡片：数字随「与我相关 / 全公司」变，点击直接切到对应筛选 */}
       <StatGrid className="mb-6">
@@ -2282,7 +2360,9 @@ const Projects = () => {
                                 onChange={e => setFormData({ ...formData, manager: e.target.value })}
                               >
                                 {managerOptions.map(name => (
-                                  <option key={name} value={name}>{name}</option>
+                                  <option key={name} value={name}>
+                                    {name === myName ? `${name}（我自己）` : name}
+                                  </option>
                                 ))}
                               </select>
                           </div>

@@ -65,6 +65,9 @@ export interface AppContextType {
   /** 新手引导正在进行 —— 各列表这时会显示一条「样例」行 */
   isTourActive: boolean;
   setIsTourActive: (v: boolean) => void;
+  /** 最近一次保存失败 —— 由 Layout 弹出来告诉人，不能只打日志 */
+  writeFailure: { what: string; reason: string } | null;
+  dismissWriteFailure: () => void;
   setPreviewPersona: (p: DashboardPersona | null) => void;
   userPermissions: PermissionCode[];
   hasPermission: (permission: PermissionCode) => boolean;
@@ -417,6 +420,40 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     全都会带上假数据 —— 跟历史合同建僵尸项目是同一个坑。
     它只是渲染出来的一行，刷新就没了。
   */
+  /*
+    ── 保存失败必须让人看见（2026-09-07）────────────────────────
+
+    2026-09-07 金恩来用顾问账号新建项目：填完表单、点了「确认立项」、
+    列表里也出现了 —— 但服务端返回的是 403（顾问本来就没有建项目的权限），
+    前端只在控制台打了一行 warn，**没回滚、没提示**。
+    刷新之后项目消失。
+
+    这是最糟的一类 bug：**人以为办成了，实际什么都没发生，
+    而且过一会儿东西还不见了。** 他会以为是系统把数据弄丢了。
+
+    原来的回滚还挂在 shouldVerifyWrites 这个开关上，而它默认是关的 ——
+    等于生产环境里所有写失败都是静默的。
+    现在改成：**失败一律回滚，一律弹出来说清楚**。
+  */
+  const [writeFailure, setWriteFailure] = useState<{ what: string; reason: string } | null>(null);
+  const dismissWriteFailure = React.useCallback(() => setWriteFailure(null), []);
+  const reportWriteFailure = React.useCallback((what: string, error: unknown) => {
+    const raw = error instanceof Error ? error.message : String(error || '');
+    /*
+      把技术错误翻译成人能懂的话。
+      「HTTP 403」对同事没有任何意义，「你没有这个权限」他才知道该找谁。
+    */
+    const reason = /没有 [A-Z_]+ 权限|无权限|permission/i.test(raw)
+      ? '你的账号没有这个权限 —— 找总助或系统管理员开一下'
+      : /401|未登录|not login/i.test(raw)
+        ? '登录已过期，请重新登录后再试'
+        : /Failed to fetch|NetworkError|network/i.test(raw)
+          ? '网络没连上，检查一下网络再试'
+          : (raw || '服务器没有接受这次保存');
+    console.warn('[write failed]', what, raw);
+    setWriteFailure({ what, reason });
+  }, []);
+
   const [isTourActive, setIsTourActive] = useState(false);
 
   const [previewPersona, setPreviewPersona] = useState<DashboardPersona | null>(() => {
@@ -2254,8 +2291,8 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
           }
         })
         .catch(error => {
-          console.warn('[ProjectService] create failed', error);
-          if (projectService.shouldVerifyWrites()) {
+          reportWriteFailure('新建', error);
+          {
             setProjects(previousProjects);
           }
         });
@@ -2301,8 +2338,8 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
           }
         })
         .catch(error => {
-          console.warn('[ProjectService] manager update failed', error);
-          if (projectService.shouldVerifyWrites()) {
+          reportWriteFailure('修改负责人', error);
+          {
             setProjects(previousProjects);
           }
         });
@@ -2619,9 +2656,8 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         params.verify?.(readbackDatasets);
       })
       .catch(error => {
-        console.warn('[ProjectService] transaction failed', error);
-        if (!projectService.shouldVerifyWrites()) return;
-        setProjects(params.previousProjects);
+        reportWriteFailure('保存', error);
+                setProjects(params.previousProjects);
         if (params.previousProjectWorkLogs) setProjectWorkLogs(params.previousProjectWorkLogs);
         if (params.previousCustomers) setCustomers(params.previousCustomers);
         if (params.previousReminders) setReminders(params.previousReminders);
@@ -2887,8 +2923,8 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
           }
         })
         .catch(error => {
-          console.warn('[ProjectService] task create failed', error);
-          if (projectService.shouldVerifyWrites()) {
+          reportWriteFailure('新建任务', error);
+          {
             setProjects(previousProjects);
           }
         });
@@ -3245,8 +3281,8 @@ ${receivableLines}
           }
         })
         .catch(error => {
-          console.warn('[ProjectService] cost update failed', error);
-          if (projectService.shouldVerifyWrites()) {
+          reportWriteFailure('修改成本', error);
+          {
             setProjects(previousProjects);
           }
         });
@@ -3305,8 +3341,8 @@ ${receivableLines}
           setLeads(prev => prev.map(l => l.id === newLead.id ? savedLead : l));
         })
         .catch(error => {
-          console.warn('[LeadService] create failed', error);
-          if (leadService.shouldVerifyWrites()) {
+          reportWriteFailure('新建', error);
+          {
             setLeads(previousLeads);
           }
         });
@@ -3328,8 +3364,8 @@ ${receivableLines}
           setLeads(prev => prev.map(l => l.id === id ? savedLead : l));
         })
         .catch(error => {
-          console.warn('[LeadService] update failed', error);
-          if (leadService.shouldVerifyWrites()) {
+          reportWriteFailure('保存修改', error);
+          {
             setLeads(previousLeads);
           }
         });
@@ -3357,8 +3393,8 @@ ${receivableLines}
           setLeads(prev => prev.map(l => l.id === leadId ? savedLead : l));
         })
         .catch(error => {
-          console.warn('[LeadService] follow-up failed', error);
-          if (leadService.shouldVerifyWrites()) {
+          reportWriteFailure('保存跟进记录', error);
+          {
             setLeads(previousLeads);
           }
         });
@@ -3381,8 +3417,8 @@ ${receivableLines}
           setCustomers(prev => prev.map(c => c.id === newCustomer.id ? savedCustomer : c));
         })
         .catch(error => {
-          console.warn('[CustomerService] create failed', error);
-          if (customerService.shouldVerifyWrites()) {
+          reportWriteFailure('新建', error);
+          {
             setCustomers(previousCustomers);
           }
         });
@@ -3410,8 +3446,8 @@ ${receivableLines}
           setCustomers(prev => prev.map(c => c.id === customerId ? savedCustomer : c));
         })
         .catch(error => {
-          console.warn('[CustomerService] follow-up failed', error);
-          if (customerService.shouldVerifyWrites()) {
+          reportWriteFailure('保存跟进记录', error);
+          {
             setCustomers(previousCustomers);
           }
         });
@@ -3456,7 +3492,7 @@ ${receivableLines}
         if (leadService.isEnabled()) {
           leadService.bulkUpsertLeads(newLeads)
             .catch(error => {
-              console.warn('[LeadService] bulk import failed', error);
+              reportWriteFailure('批量导入', error);
               alert('导入的线索保存失败，已撤销本次导入，请重试。');
               setLeads(previousLeads);
             });
@@ -3801,8 +3837,8 @@ ${receivableLines}
           }
         })
         .catch(error => {
-          console.warn('[ContractService] transaction failed', error);
-          if (contractService.shouldVerifyWrites()) {
+          reportWriteFailure('保存', error);
+          {
             setContracts(previousContracts);
             setCustomers(previousCustomers);
             setProjects(previousProjects);
@@ -3862,8 +3898,8 @@ ${receivableLines}
         verify?.(readback.datasets || {});
       })
       .catch(error => {
-        console.warn('[ContractService] transaction failed', error);
-        if (contractService.shouldVerifyWrites()) {
+        reportWriteFailure('保存', error);
+        {
           setContracts(previousContracts);
           setCustomers(previousCustomers);
           setProjects(previousProjects);
@@ -4683,8 +4719,8 @@ ${receivableLines}
           setCustomers(prev => prev.map(c => c.id === id ? savedCustomer : c));
         })
         .catch(error => {
-          console.warn('[CustomerService] update failed', error);
-          if (customerService.shouldVerifyWrites()) {
+          reportWriteFailure('保存修改', error);
+          {
             setCustomers(previousCustomers);
           }
         });
@@ -4700,7 +4736,7 @@ ${receivableLines}
       leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, vendors, marketSignals, projectWorkLogs,
       currentUser: normalizedCurrentUser, userProfiles, isAuthRequired: authRequired, switchUser, updateUserProfile, addUserProfile, deleteUserProfile,
       activeRole, setActiveRole, activePersona, availablePersonas, resolveDashboardPersona,
-      previewPersona, setPreviewPersona, isTourActive, setIsTourActive, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
+      previewPersona, setPreviewPersona, isTourActive, setIsTourActive, writeFailure, dismissWriteFailure, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
       addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, updateProjectWorkLog, deleteProjectWorkLog,
       createFollowUpProjectFromLead,
       createFollowUpProjectFromCustomer,
