@@ -108,7 +108,12 @@ export interface AppContextType {
   importExcel: (file: File) => Promise<ImportRecord | null>; // 新增导入方法
   addLeadFollowUp: (leadId: string, record: Omit<FollowUpRecord, 'id'>) => void;
 
-  addCustomer: (customer: Omit<Customer, 'id'>) => void;
+  /**
+   * 新建客户。**返回新建出来的这条** —— 项目表单里「当场新建客户」
+   * 建完要立刻选中它，拿不到 id 就只能让人再去下拉里找一遍，
+   * 而那正是这个功能要省掉的那一步。
+   */
+  addCustomer: (customer: Omit<Customer, 'id'>) => Customer;
   addCustomerFollowUp: (customerId: string, record: Omit<FollowUpRecord, 'id'>) => void;
 
   addContract: (
@@ -3414,7 +3419,7 @@ ${receivableLines}
     }
   };
 
-  const addCustomer = (customer: Omit<Customer, 'id'>) => {
+  const addCustomer = (customer: Omit<Customer, 'id'>): Customer => {
     const newCustomer: Customer = { ...customer, id: `C-${Date.now()}` };
     const previousCustomers = customers;
     setCustomers(prev => [newCustomer, ...prev]);
@@ -3436,6 +3441,7 @@ ${receivableLines}
           }
         });
     }
+    return newCustomer;
   };
 
   const addCustomerFollowUp = (customerId: string, record: Omit<FollowUpRecord, 'id'>) => {

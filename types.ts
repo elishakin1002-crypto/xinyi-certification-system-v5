@@ -498,6 +498,19 @@ export interface Project {
   projectAmount?: number; // 必须 > 0 才能完成
 
   projectCategory: ProjectCategory;
+  /**
+   * 这活收不收钱。
+   *
+   * ── 为什么是属性，不是类别（2026-09-08）────────────────────
+   * 原来靠 projectCategory 隐含表达「算不算营收」，
+   * 于是「有客户、收钱、但没签合同」这种（台账指导、先干后签）
+   * 三个类别一个都装不下。
+   *
+   * PSA 类工具的通行做法是 billable 作为项目属性、合同作为可选挂件。
+   * 老数据没有这个字段，读取一律走 isBillable()：
+   * 缺省按「交付项目=收钱」回推，保证历史报表数字不变。
+   */
+  billable?: boolean;
   manager: string;
   progress: number;
   status: Status;

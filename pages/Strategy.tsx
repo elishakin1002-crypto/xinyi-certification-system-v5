@@ -35,7 +35,15 @@ const TaskCard: React.FC<{ task: StrategicTask }> = ({ task }) => {
       name: `【战略战役】${task.title}`.slice(0, 60),
       contractRef: `STRATEGY:${task.id}`,
       manager: task.owner || '待指派',
-      projectCategory: 'FollowUp',
+      /*
+        战略战役归「其他事务」，不是「售前跟进」（2026-09-08 改）。
+
+        它压根不涉及客户 —— 是公司内部要打的仗。原来挂在售前跟进下面，
+        于是「还在争取的客户」这一档里混着内部战役，
+        销售想看自己在争取谁，得先把内部任务一条条挑出去。
+      */
+      projectCategory: 'Public',
+      billable: false,
       projectType: 'Self-Operated',
       deadline: task.deadline || new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString().split('T')[0],
       tasks: [

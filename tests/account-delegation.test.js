@@ -31,10 +31,22 @@ const cleanup = async () => {
   delete process.env.DATABASE_URL;
 };
 
+/**
+ * 相对今天第 n 天的日期。
+ *
+ * **必须用本地日期部件，不能用 toISOString()。**
+ * 这正是 authStore.js 里 toDateOnly 的注释警告过的坑，而这个测试自己踩了：
+ * toISOString() 给的是 UTC 日期，东八区凌晨 0-8 点时它比本地日期少一天，
+ * 于是「到期日当天」被算成昨天，测试挂掉 —— 而服务端逻辑是对的。
+ *
+ * 2026-09-08 00:52 实测挂过一次。这种只在半夜失败的测试最费人：
+ * 白天怎么跑都是绿的，谁也不信它真的有问题。
+ */
 const dayOffset = (n) => {
   const d = new Date();
   d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
 
 test.afterEach(async () => { await cleanup(); });

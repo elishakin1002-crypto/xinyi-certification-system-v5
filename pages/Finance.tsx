@@ -4,12 +4,13 @@ import { useApp } from '../context/AppContext';
 import { SampleTr } from '../components/SampleRow';
 import { Wallet, Search, CheckCircle, Clock, AlertCircle, RefreshCcw, Filter, Download, X, AlertTriangle, Upload, FileSpreadsheet, Loader2, DollarSign, Building, User } from 'lucide-react';
 import { Receivable, Settlement } from '../types';
+import { hasContract, isBillable } from '../src/modules/projectCategory';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { aiService } from '../services/aiService';
 import { SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 
 const Finance = () => {
-  const { contracts, settlements, toggleReceivableStatus, rejectReceivable, importSettlements, updateSettlementStatus, vendors } = useApp();
+  const { contracts, settlements, projects, toggleReceivableStatus, rejectReceivable, importSettlements, updateSettlementStatus, vendors } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
   
@@ -211,6 +212,26 @@ const Finance = () => {
     if (prev !== item.status) updateSettlementStatus(item.id, prev);
   };
 
+  /**
+   * 收钱但没挂合同的项目。
+   *
+   * ── 为什么是提醒，不是关卡（2026-09-08）────────────────────
+   *
+   * 金恩来：「有些项目小比如台账指导可能就没有签合同，
+   * 或者有些项目是先执行，后补合同。」
+   *
+   * 所以建项目时**不再要求先有合同** —— 拿合同当前提，这些活就进不了系统，
+   * 而进不了系统就等于工时、进度、谁在做全部回到微信群里。
+   *
+   * 但「收了钱却没有合同」这件事本身是要有人知道的：对账、外审、
+   * 真出纠纷时它就是风险。所以放在这里提醒，**看得见，但不挡路**。
+   * 有些确实就是不会签合同（小额台账指导），忽略它也没关系 ——
+   * 这一栏的作用是让人**知道有这么几笔**，不是逼人补齐。
+   */
+  const missingContract = useMemo(() => (projects || []).filter(p => (
+    p.projectCategory === 'Delivery' && isBillable(p) && !hasContract(p)
+  )), [projects]);
+
   return (
     <div className="p-6">
        <div className="mb-6 flex justify-between items-center">
@@ -241,6 +262,37 @@ const Finance = () => {
           >
             清除焦点
           </button>
+        </div>
+      )}
+
+      {missingContract.length > 0 && (
+        <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-black text-amber-900">
+                有 {missingContract.length} 个收费项目还没关联合同
+              </p>
+              <p className="mt-0.5 text-[12px] font-bold leading-relaxed text-amber-800/90">
+                没签、口头约定、先干后补都会出现在这里。这是提醒，不是错误 ——
+                小额台账指导这类本来就可能不签合同，看一眼心里有数就行；
+                真要补的，去合同管理录进来，再回项目里关联一下。
+              </p>
+              <ul className="mt-2 space-y-1">
+                {missingContract.slice(0, 6).map(p => (
+                  <li key={p.id} className="flex items-center gap-2 text-[12px] font-bold text-amber-900">
+                    <span className="truncate">{p.name}</span>
+                    <span className="shrink-0 text-amber-700/70">
+                      {Number(p.projectAmount || 0) > 0 ? `¥${Number(p.projectAmount).toLocaleString()}` : '金额未填'}
+                    </span>
+                  </li>
+                ))}
+                {missingContract.length > 6 && (
+                  <li className="text-[11px] font-bold text-amber-700/70">…还有 {missingContract.length - 6} 个</li>
+                )}
+              </ul>
+            </div>
+          </div>
         </div>
       )}
       {activeTab === 'receivables' && ( 

@@ -20,8 +20,8 @@ import { StatusBadge } from '../src/ui/statusBadge';
 import { Badge, SearchInput, EmptyState, FilterSelect, StatCard, StatGrid, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 import { SampleTr } from '../components/SampleRow';
 import {
-  PROJECT_CATEGORY_META, PROJECT_CATEGORY_ORDER, CATEGORY_TO_MODE,
-  CATEGORY_FILTERS, STATUS_FILTERS, SCOPE_FILTERS, ProjectModeFilter
+  PROJECT_CATEGORY_META, deriveCategory, isBillable, hasContract,
+  buildCategoryFilters, STATUS_FILTERS, SCOPE_FILTERS, ProjectModeFilter
 } from '../src/modules/projectCategory';
 
 const normalizeServiceToken = (value: string) => (value || '')
@@ -56,7 +56,7 @@ const matchServiceCatalog = (input: string, category?: ServiceCategory | ''): Se
 };
 
 const Projects = () => {
-  const { projects, customers, contracts, marketSignals, projectWorkLogs, auditIssues, toggleReceivableStatus, claimReceivablePaid, addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, deleteProjectWorkLog, completeProject, reopenProject, updateProjectCost, convertIntelProjectToLead, bindFollowUpProjectToCustomer, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate, activeRole, currentUser, userProfiles, checkActionPermission, aiDecisionLogs, runProjectDiagnosis } = useApp();
+  const { projects, customers, contracts, addCustomer, marketSignals, projectWorkLogs, auditIssues, toggleReceivableStatus, claimReceivablePaid, addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, deleteProjectWorkLog, completeProject, reopenProject, updateProjectCost, convertIntelProjectToLead, bindFollowUpProjectToCustomer, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate, activeRole, currentUser, userProfiles, checkActionPermission, aiDecisionLogs, runProjectDiagnosis } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
@@ -179,8 +179,12 @@ const Projects = () => {
     : null;
 
   const [formData, setFormData] = useState<Partial<Project>>({
-    name: '', manager: '', deadline: '', duration: 30, projectType: 'Self-Operated', projectCategory: 'Delivery'
+    name: '', manager: '', deadline: '', duration: 30, projectType: 'Self-Operated',
+    projectCategory: 'Delivery', billable: true
   });
+  /** 「找不到？直接新建客户」展开没有 */
+  const [showNewCustomer, setShowNewCustomer] = useState(false);
+  const [newCustomerName, setNewCustomerName] = useState('');
   const defaultWorkLogDraft = () => ({
     logDate: new Date().toISOString().split('T')[0],
     serviceItemId: '',
@@ -610,11 +614,83 @@ const Projects = () => {
 
   const getStatusBadge = (status: Status) => <StatusBadge status={status} domain="project" />;
 
-  const getCategoryBadge = (category: any) => {
+  /**
+   * 行上的类别徽章。
+   *
+   * 类别只回答「给谁做」，**钱的事另挂一个标签** ——
+   * 因为「客户项目」里既有收钱的也有不收钱的（免费维护、售后支持），
+   * 把它们显示成同一个东西，看列表的人就分不出哪些进营收。
+   */
+  const getCategoryBadge = (project: Pick<Project, 'projectCategory' | 'billable'>) => {
+    const category = project.projectCategory;
     const meta = PROJECT_CATEGORY_META[category as keyof typeof PROJECT_CATEGORY_META] || PROJECT_CATEGORY_META.Delivery;
     const tone = category === 'FollowUp' ? 'amber' : category === 'Public' ? 'gray' : 'indigo';
-    return <Badge tone={tone} className="cursor-help" title={`${meta.when}・${meta.money}`}>{meta.label}</Badge>;
+    const earns = isBillable(project);
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1">
+        <Badge tone={tone} className="cursor-help" title={`${meta.when}・${meta.money}`}>{meta.label}</Badge>
+        {category === 'Delivery' && (
+          <Badge tone={earns ? 'emerald' : 'gray'} title={earns ? '做完计入营收' : '这一单不收钱，不计营收，但工时照常记'}>
+            {earns ? '收费' : '不收费'}
+          </Badge>
+        )}
+      </span>
+    );
   };
+
+  /* ── 建项目表单：两个问题推出来的东西 ────────────────────────── */
+
+  /** 「给谁做」的答案。Public 就是「不涉及客户」 */
+  const hasCustomer = formData.projectCategory !== 'Public';
+  /** 「收不收钱」的答案。不涉及客户时恒为否 */
+  const billable = hasCustomer && formData.billable !== false;
+  const derivedCategory = deriveCategory({
+    customerId: hasCustomer ? (formData.customerId || 'pending') : '',
+    billable
+  });
+
+  /**
+   * 当场新建客户。
+   *
+   * 只要一个名字。详细资料（联系人、行业、证书）以后在客户管理里补 ——
+   * 建项目的那一刻他手上多半也只有一个公司名，
+   * 逼他把客户档案填完整，结果是他干脆不建项目。
+   */
+  const handleQuickCreateCustomer = () => {
+    const name = newCustomerName.trim();
+    if (!name) return;
+    const existing = customers.find(c => c.name === name);
+    if (existing) {
+      setFormData(prev => ({ ...prev, customerId: existing.id }));
+      setShowNewCustomer(false);
+      setNewCustomerName('');
+      return;
+    }
+    const created = addCustomer({
+      name,
+      contactPerson: '',
+      totalValue: 0,
+      riskStatus: 'low',
+      activeContracts: 0,
+      status: Status.Active,
+      followUpRecords: [],
+    } as any);
+    setFormData(prev => ({ ...prev, customerId: created.id }));
+    setShowNewCustomer(false);
+    setNewCustomerName('');
+  };
+
+  /**
+   * 类别筛选档位。
+   *
+   * 「售前跟进（旧）」只在库里真的还有这类项目时才出现 ——
+   * 等最后一个收尾完，这一档自己消失，不用谁去清理，
+   * 也不会让新同事看到一个建不出来的选项而困惑。
+   */
+  const categoryFilters = useMemo(
+    () => buildCategoryFilters(projects.some(p => p.projectCategory === 'FollowUp')),
+    [projects]
+  );
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -628,30 +704,50 @@ const Projects = () => {
       return;
     }
     /*
-      ── 客户必填与否，由项目类别决定（2026-09-07 改）──────────
+      ── 客户必填与否，由「给谁做」决定（2026-09-08 重做）────────
 
-      原来一律必填，逻辑上是倒的：变成「必须先建客户，才能建项目」，
-      而现实里往往是先有事、后有客户。
+      原来一律必填，逻辑是倒的：变成「必须先建客户，才能建项目」，
+      而现实里往往先有事、后有客户。
 
       更要紧的是有一类活根本没有客户 ——
       「政府要我们配合通知 2000 家企业营业执照要年检」，
       按原规则**根本进不了系统**。进不了系统不是少一条记录，
       是这件事的工时、进度、谁在做全部回到微信群和个人脑子里。
 
-      现在按类别分：
-        合同项目  必须有客户 —— 它来自合同，没客户结算给谁
-        跟进项目  客户可选 —— 客户还没成，本来就可能只是个线索
-        其他事务  不要客户
+      现在只看第一个问题的答案：
+        选了「某个客户」 → 必须真的选一个（钱和合作记录要落到某一家头上）
+        选了「不涉及客户」 → 这一栏根本不显示
+
+      **不再要求有合同**：台账指导这类小活没有合同、先干后签的活
+      当下也没有合同 —— 拿合同当前提，这些活就都进不来。
     */
     const customerId = String(formData.customerId || '').trim();
-    if (formData.projectCategory === 'Delivery' && !customerId) {
-      alert(`${PROJECT_CATEGORY_META.Delivery.label}必须选归属客户 —— 它来自合同，没有客户就没法统计合作次数和结算。\n\n如果这件事还没有客户，把类别改成「${PROJECT_CATEGORY_META.FollowUp.label}」；如果它不属于任何客户（比如政府交办的事），选「${PROJECT_CATEGORY_META.Public.label}」。`);
+    if (hasCustomer && !customerId) {
+      alert('请选择归属客户 —— 钱和合作记录都要落到某一家头上。\n\n如果客户档案里还没有，用下拉框底下的「找不到？直接新建客户」，输个公司名就行，其他资料以后再补。\n\n如果这件事不属于任何客户（比如政府交办的），上面选「不涉及客户」。');
       return;
     }
+
     // 负责人同时写入用户 ID，保证「我的项目」和数据权限按身份而不是姓名判断
     const ownerUserId = userProfiles.find(u => u.name === manager)?.id;
-    addProject({ ...formData, manager, customerId, ...(ownerUserId ? { ownerUserId } : {}) });
+    /*
+      类别不是人选的，是这两个答案推出来的 —— 存的时候算一次。
+      存下来（而不是每次读时再算）是因为下游的统计、筛选、面板显隐
+      全都在读 projectCategory，改成处处现算等于把这一处的复杂度
+      摊到十几个地方。
+    */
+    addProject({
+      ...formData,
+      manager,
+      customerId,
+      projectCategory: deriveCategory({ customerId: hasCustomer ? (customerId || 'pending') : '', billable }),
+      billable,
+      // 不涉及客户的活没有合同这一说
+      ...(hasCustomer ? {} : { contractRef: '' }),
+      ...(ownerUserId ? { ownerUserId } : {})
+    });
     setIsModalOpen(false);
+    setShowNewCustomer(false);
+    setNewCustomerName('');
 
     /*
       ── 建完必须看得见它（2026-09-07，第二次修）──────────────
@@ -668,7 +764,7 @@ const Projects = () => {
       而且下面那条测试会在新增筛选却忘了处理时失败。
     */
     const mine = manager === currentUser.name || (ownerUserId && ownerUserId === currentUser.id);
-    const category = (formData.projectCategory || 'Delivery') as keyof typeof PROJECT_CATEGORY_META;
+    const category = deriveCategory({ customerId: hasCustomer ? (customerId || 'pending') : '', billable });
 
     // ① 范围：不是自己负责就切到全公司
     setViewScope(mine ? 'related' : 'all');
@@ -826,6 +922,7 @@ const Projects = () => {
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
             <div className="min-w-0 flex-1">
               <div className="text-sm font-black text-gray-900 truncate">{project.name}</div>
+              <div className="mt-1">{getCategoryBadge(project)}</div>
               <div className="text-[11px] text-gray-500 truncate">
                 {linkedCustomer?.name || resolveProjectCustomerName(project)}　·　负责人 {project.manager || '待指派'}
               </div>
@@ -2225,7 +2322,7 @@ const Projects = () => {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <FilterSelect label="状态" value={filterStatus} onChange={v => setFilterStatus(v)} options={STATUS_FILTERS} />
-            <FilterSelect label="类别" value={modeScope} onChange={v => setModeScope(v)} options={CATEGORY_FILTERS} />
+            <FilterSelect label="类别" value={modeScope} onChange={v => setModeScope(v)} options={categoryFilters} />
             <FilterSelect label="范围" value={viewScope} onChange={v => setViewScope(v)} options={SCOPE_FILTERS} />
             {(filterStatus !== 'All' || modeScope !== 'all' || viewScope !== 'related' || searchTerm.trim()) && (
               <button
@@ -2243,7 +2340,7 @@ const Projects = () => {
         <div className="flex items-center justify-between gap-3 pt-1 border-t border-gray-50 text-[11px] text-gray-500">
           <span>
             {SCOPE_FILTERS.find(o => o.value === viewScope)?.label}
-            ・{CATEGORY_FILTERS.find(o => o.value === modeScope)?.label}
+            ・{categoryFilters.find(o => o.value === modeScope)?.label}
             ・{STATUS_FILTERS.find(o => o.value === filterStatus)?.label}
           </span>
           <span className="font-bold text-gray-700">共 {filteredProjects.length} 个项目</span>
@@ -2379,8 +2476,17 @@ const Projects = () => {
                             </td>
                             <td className={tdClass}>
                               <div className="font-bold text-gray-900 line-clamp-1">{project.name}</div>
-                              <div className="mt-1 text-[11px] text-gray-500 line-clamp-1">
-                                {resolveProjectCustomerName(project)}
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                <span className="text-[11px] text-gray-500 line-clamp-1">
+                                  {resolveProjectCustomerName(project)}
+                                </span>
+                                {/*
+                                  类别徽章接到这里（2026-09-08）。
+                                  在这之前 getCategoryBadge 是**定义了从来没调用**的死代码 ——
+                                  也就是说列表上一直看不出一个项目是哪一类。
+                                  分类讲不清，有一半原因是它压根没显示出来过。
+                                */}
+                                {getCategoryBadge(project)}
                               </div>
                             </td>
                             <td className={tdClass}>
@@ -2432,50 +2538,176 @@ const Projects = () => {
 
       {isModalOpen && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-8 animate-in fade-in zoom-in duration-300 border border-gray-100">
-                  <div className="flex justify-between items-center mb-6">
+              {/*
+                ── 弹窗必须能滚，按钮必须永远够得到（2026-09-08）────────
+
+                加了「收不收钱」和「系统归为…」两段之后，弹窗在
+                1280x720 的笔记本上超出了屏幕，**「确认立项」被挤到看不见**，
+                实测点不到 —— 表单填完了提交不了，比表单难用严重得多。
+
+                和新手引导那次是同一个教训：**内容会长，屏幕不会**。
+                所以不再赌高度：整体限高到视口的 90%，正文自己滚，
+                标题和底部按钮各自 shrink-0 固定住。
+              */}
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-300 border border-gray-100">
+                  <div className="flex justify-between items-center shrink-0 px-8 pt-8 pb-4">
                       <h2 className="text-2xl font-black text-gray-900">极速立项</h2>
                       <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-gray-100 rounded-full"><X className="w-6 h-6 text-gray-400"/></button>
                   </div>
-                  <form onSubmit={handleCreate} className="space-y-6">
+                  <form onSubmit={handleCreate} className="flex min-h-0 flex-1 flex-col">
+                    <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-8">
                       <div>
                           <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">项目名称</label>
                           <input required className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="例如：某某工厂ISO认证咨询" />
                       </div>
-                      {/* 公共事务没有客户，这一栏整个不显示 —— 摆一个填不了的必填框只会让人卡住 */}
-                      {formData.projectCategory !== 'Public' && (
+                      {/*
+                        ══════════════════════════════════════════════════
+                        不让人选类别，只问两句话（2026-09-08 重做）
+                        ══════════════════════════════════════════════════
+
+                        前两版都是「三选一挑类别」，而分类轴选错了：
+                        我把「有没有客户 / 收不收钱 / 有没有合同」压进一个字段，
+                        于是「台账指导：有客户、收钱、没合同」三类都装不下。
+
+                        金恩来 2026-09-08：「有些项目小比如台账指导可能就没有
+                        签合同，或者有些项目是先执行，后补合同。」
+
+                        现在只问两个他脑子里本来就有答案的问题，
+                        类别由系统推 —— 他不用学我的分类法。
+                      */}
+
+                      {/* 问题一：这活给谁做？ */}
                       <div>
-                          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">
-                            归属客户 {formData.projectCategory === 'Delivery'
-                              ? <span className="text-red-500">*</span>
-                              : <span className="text-gray-400 normal-case tracking-normal">（可以先空着）</span>}
-                          </label>
-                          <select
-                            required={formData.projectCategory === 'Delivery'}
-                            className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
-                            value={String(formData.customerId || '')}
-                            onChange={e => setFormData({ ...formData, customerId: e.target.value })}
-                          >
-                            <option value="">{formData.projectCategory === 'Delivery' ? '请选择客户' : '暂不关联客户'}</option>
-                            {customers.map(c => (
-                              <option key={c.id} value={c.id}>{c.name}</option>
-                            ))}
-                          </select>
-                          <p className="text-[11px] text-gray-400 mt-2">
-                            {formData.projectCategory === 'Delivery'
-                              ? '必选。不关联客户的话，客户档案里看不到这个项目，合作次数和累计金额也统计不到。'
-                              : '客户还没谈成时可以先空着。以后转成合同项目时再补上，客户档案会自动接上。'}
-                          </p>
+                          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3">这活给谁做？</label>
+                          <div className="space-y-2">
+                            <label className={`flex items-start gap-3 rounded-2xl border-2 p-3 cursor-pointer transition-colors ${hasCustomer ? 'border-indigo-500 bg-indigo-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
+                              <input
+                                type="radio" name="who" className="mt-1 accent-indigo-600"
+                                checked={hasCustomer}
+                                onChange={() => setFormData({ ...formData, projectCategory: 'Delivery' as any })}
+                              />
+                              <span className="flex-1 min-w-0">
+                                <span className="block text-sm font-black text-gray-900">某个客户</span>
+                                {hasCustomer && (
+                                  <span className="mt-2 block">
+                                    <select
+                                      required
+                                      className="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                      value={String(formData.customerId || '')}
+                                      onChange={e => setFormData({ ...formData, customerId: e.target.value })}
+                                    >
+                                      <option value="">请选择客户</option>
+                                      {customers.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                      ))}
+                                    </select>
+
+                                    {/*
+                                      ── 搜不到就当场建，不用先跑去客户管理 ──────────
+
+                                      金恩来 2026-09-08：「那是不是意味着要建立项目先要
+                                      创建客户，然后再去录入合同，最后再来创建项目？
+                                      要建立一个项目准备工作有点多。」
+
+                                      CRM 里这个问题的标准答案不是调整流程顺序，
+                                      是**在原地建**（Dynamics 叫 Quick Create）：
+                                      输个名字就够，详细资料以后在客户管理里补。
+                                      为了建 A 必须先离开去建 B —— 那一步才是真正劝退人的地方。
+                                    */}
+                                    {!showNewCustomer ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowNewCustomer(true)}
+                                        className="mt-2 text-[11px] font-bold text-indigo-600 hover:underline"
+                                      >
+                                        + 找不到？直接新建客户
+                                      </button>
+                                    ) : (
+                                      <span className="mt-2 flex gap-2">
+                                        <input
+                                          autoFocus
+                                          value={newCustomerName}
+                                          onChange={e => setNewCustomerName(e.target.value)}
+                                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleQuickCreateCustomer(); } }}
+                                          placeholder="公司全称，例如：温州XX包装有限公司"
+                                          className="flex-1 min-w-0 bg-white border border-indigo-300 rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={handleQuickCreateCustomer}
+                                          className="shrink-0 rounded-xl bg-indigo-600 px-3 text-xs font-black text-white hover:bg-indigo-700"
+                                        >
+                                          创建并选中
+                                        </button>
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </span>
+                            </label>
+
+                            <label className={`flex items-start gap-3 rounded-2xl border-2 p-3 cursor-pointer transition-colors ${!hasCustomer ? 'border-slate-500 bg-slate-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                              <input
+                                type="radio" name="who" className="mt-1 accent-slate-600"
+                                checked={!hasCustomer}
+                                onChange={() => setFormData({ ...formData, projectCategory: 'Public' as any, customerId: '', contractRef: '', billable: false })}
+                              />
+                              <span>
+                                <span className="block text-sm font-black text-gray-900">不涉及客户</span>
+                                <span className="mt-0.5 block text-[11px] font-bold text-gray-500">政府交办、行业活动、内部建设、员工培训</span>
+                              </span>
+                            </label>
+                          </div>
+                      </div>
+
+                      {/* 问题二：收不收钱。不涉及客户时这一问没有意义，整个不显示 */}
+                      {hasCustomer && (
+                      <div>
+                          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3">这活收不收钱？</label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <label className={`rounded-2xl border-2 p-3 cursor-pointer transition-colors ${billable ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                              <span className="flex items-center gap-2">
+                                <input type="radio" name="billable" className="accent-emerald-600" checked={billable}
+                                  onChange={() => setFormData({ ...formData, billable: true })} />
+                                <span className="text-sm font-black text-gray-900">收</span>
+                              </span>
+                              <span className="mt-1 block text-[11px] font-bold text-gray-500">做完算营收</span>
+                            </label>
+                            <label className={`rounded-2xl border-2 p-3 cursor-pointer transition-colors ${!billable ? 'border-amber-500 bg-amber-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                              <span className="flex items-center gap-2">
+                                <input type="radio" name="billable" className="accent-amber-600" checked={!billable}
+                                  onChange={() => setFormData({ ...formData, billable: false, projectAmount: undefined })} />
+                                <span className="text-sm font-black text-gray-900">不收</span>
+                              </span>
+                              <span className="mt-1 block text-[11px] font-bold text-gray-500">免费维护、售后支持</span>
+                            </label>
+                          </div>
+                          {billable && (
+                            <div className="mt-2">
+                              <input
+                                type="number" min={0}
+                                value={formData.projectAmount ?? ''}
+                                onChange={e => setFormData({ ...formData, projectAmount: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                placeholder="金额（元）—— 现在不知道可以先空着，结项前补上"
+                                className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                            </div>
+                          )}
                       </div>
                       )}
+
+                      {/* 合同永远可选。它是挂件，不是前提 */}
+                      {hasCustomer && (
                       <div>
-                          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">关联合同</label>
+                          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">
+                            关联合同 <span className="text-gray-400 normal-case tracking-normal">（可以先空着，签了再来补）</span>
+                          </label>
                           <select
                             className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
                             value={String(formData.contractRef || '')}
                             onChange={e => setFormData({ ...formData, contractRef: e.target.value })}
                           >
-                            <option value="">暂无合同（后续签约再补）</option>
+                            <option value="">暂无合同</option>
                             {contracts
                               .filter(c => !formData.customerId || c.customerId === formData.customerId)
                               .map(c => (
@@ -2485,54 +2717,26 @@ const Projects = () => {
                               ))}
                           </select>
                           <p className="text-[11px] text-gray-400 mt-2">
-                            只能从已录入的合同里选，避免手打编号对不上。选了客户后这里只显示该客户的合同。
+                            没签、口头约定、先干后补都选「暂无合同」—— 系统不会因此拦你。
+                            收钱的项目缺合同会进财务的「缺合同」提醒，是提醒，不是关卡。
                           </p>
                       </div>
-                      <div>
-                          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">项目类别</label>
-                          {/*
-                            ── 名字之外，把「什么时候建」和「钱怎么算」写在按钮上 ──
+                      )}
 
-                            2026-09-07 金恩来：「名字完全无法 get 到『什么时候建』
-                            以及『钱』这两者内容，我基本都看误解了。」
-
-                            名字确实带不动两条信息 —— 「合同项目」四个字说不了
-                            「合同签了之后建、做完算营收」。所以按钮做成两行：
-                            上面是名字，下面两行小字就是这两个问题的答案，
-                            选之前不用点开也不用猜。
-                          */}
-                          <div className="grid grid-cols-3 gap-2">
-                            {PROJECT_CATEGORY_ORDER.map(cat => {
-                              const meta = PROJECT_CATEGORY_META[cat];
-                              const on = formData.projectCategory === cat;
-                              const tone = cat === 'FollowUp'
-                                ? 'border-amber-500 bg-amber-50 text-amber-900'
-                                : cat === 'Public'
-                                  ? 'border-slate-500 bg-slate-50 text-slate-900'
-                                  : 'border-indigo-500 bg-indigo-50 text-indigo-900';
-                              return (
-                                <button
-                                  key={cat}
-                                  type="button"
-                                  onClick={() => setFormData({
-                                    ...formData,
-                                    projectCategory: cat as any,
-                                    // 其他事务没有客户，切过去就把已选的清掉，免得留个看不见的值
-                                    ...(cat === 'Public' ? { customerId: '' } : {})
-                                  })}
-                                  className={`rounded-2xl border-2 px-2 py-2.5 text-left transition-colors ${on ? tone : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}
-                                >
-                                  <span className="block text-xs font-black">{meta.label}</span>
-                                  <span className="mt-1 block text-[10px] font-bold leading-tight opacity-70">{meta.when}</span>
-                                  <span className="block text-[10px] font-bold leading-tight opacity-70">{meta.money}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <p className="mt-2 text-[11px] font-bold leading-relaxed text-gray-400">
-                            {PROJECT_CATEGORY_META[(formData.projectCategory || 'Delivery') as keyof typeof PROJECT_CATEGORY_META].hint}
-                          </p>
+                      {/* 系统把这活归成什么，当场告诉他，别等建完了才发现分错 */}
+                      <div className="flex items-start gap-2 rounded-2xl bg-gray-50 px-4 py-3">
+                        <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+                        <p className="text-[12px] font-bold leading-relaxed text-gray-600">
+                          系统归为「<span className="text-gray-900">{PROJECT_CATEGORY_META[derivedCategory].label}</span>」
+                          {hasCustomer
+                            ? (billable ? '，做完算营收。' : '，不计营收，但工时照常记。')
+                            : '，不涉及钱，但有人、有进度、有工时。'}
+                          {hasCustomer && billable && !hasContract(formData as any) && (
+                            <span className="text-amber-700">　暂无合同，会出现在财务的「缺合同」提醒里。</span>
+                          )}
+                        </p>
                       </div>
+
                       <div className="grid grid-cols-2 gap-4">
                           <div>
                               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">执行负责人</label>
@@ -2554,10 +2758,12 @@ const Projects = () => {
                               <input type="number" className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none" value={formData.duration} onChange={e => setFormData({...formData, duration: Number(e.target.value)})} />
                           </div>
                       </div>
-                      <div className="flex justify-end pt-4 space-x-3">
-                          <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 font-bold text-gray-400">取消</button>
-                          <button type="submit" className="px-10 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 shadow-xl shadow-indigo-500/20 transition-all active:scale-95">确认立项</button>
-                      </div>
+                    </div>
+                    {/* 按钮那一条不参与滚动 —— 内容再长也永远在屏幕上 */}
+                    <div className="flex shrink-0 justify-end space-x-3 border-t border-gray-100 px-8 py-5">
+                        <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 font-bold text-gray-400">取消</button>
+                        <button type="submit" className="px-10 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 shadow-xl shadow-indigo-500/20 transition-all active:scale-95">确认立项</button>
+                    </div>
                   </form>
               </div>
           </div>

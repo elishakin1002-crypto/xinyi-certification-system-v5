@@ -33,91 +33,126 @@ test('项目有三类，公共事务不要客户', () => {
   assert.match(caps, /showServicePanel: !isIntelOrigin && !isPublicProject/, '公共事务还显示服务项面板');
 });
 
-test('客户必填与否，由类别决定', () => {
+test('客户必填与否，由「给谁做」决定，不再看有没有合同', () => {
   /*
-    原来一律必填，逻辑上是倒的：变成「必须先建客户，才能建项目」，
-    而现实里往往是先有事、后有客户。
+    2026-09-08 金恩来：「就算交付项目是指签合同后建的项目，
+    但那些没有签合同就直接打款或者走流程的项目呢？有些项目小比如
+    台账指导可能就没有签合同，或者有些项目是先执行，后补合同。」
+
+    前两版把「有没有合同」当成分类依据，于是「有客户、收钱、没合同」
+    这类活三个类别一个都装不下 —— 而它们是真实存在且不少的。
   */
   const src = read('pages/Projects.tsx');
-  assert.match(src, /if \(formData\.projectCategory === 'Delivery' && !customerId\)/,
-    '还是一律必填');
-  assert.match(src, /把类别改成「\$\{PROJECT_CATEGORY_META\.FollowUp\.label\}」/,
-    '拒绝时没告诉人该怎么办 —— 只说不行等于把人堵死');
 
-  // 公共事务连这一栏都不显示：摆一个填不了的必填框只会让人卡住
-  assert.match(src, /\{formData\.projectCategory !== 'Public' && \(/,
-    '公共事务还显示归属客户');
-  assert.match(src, /required=\{formData\.projectCategory === 'Delivery'\}/,
-    '跟进项目的客户还是必填');
+  // 只看第一个问题的答案，不看合同
+  assert.match(src, /if \(hasCustomer && !customerId\)/, '客户必填的判断没有改成看「给谁做」');
+  assert.ok(!/projectCategory === 'Delivery' && !customerId/.test(src),
+    '还在按旧的类别判断客户必填');
+
+  // 拒绝时要告诉人下一步怎么办，而且要指向「当场新建」
+  assert.match(src, /找不到？直接新建客户/, '没告诉人客户档案里没有时该怎么办');
+
+  // 合同永远可选：不能有任何「必须先有合同」的拦截
+  assert.match(src, /可以先空着，签了再来补/, '合同没有明确标成可选');
 });
 
-test('三类都要在界面上说清楚「什么时候建」和「钱怎么算」', () => {
+test('当场新建客户 —— 不用为了建项目先跑去客户管理', () => {
   /*
-    2026-09-07 金恩来：「名字完全无法 get 到『什么时候建』以及『钱』
-    这两者内容，我基本都看误解了。」
+    金恩来：「那是不是意味着要建立项目先要创建客户，然后再去录入合同，
+    最后再来创建项目？要建立一个项目准备工作有点多。」
 
-    「交付项目」听起来像「已经交付完的」，实际是「合同签了、接下来要去交付的」——
-    时间方向正好反了。名字换成按来源命名（合同项目 / 跟进项目 / 其他事务），
-    另外两条信息名字带不动，就写在选项底下。
+    CRM 里这个问题的标准答案不是调流程顺序，是**在原地建**
+    （Dynamics 叫 Quick Create）。为了建 A 必须先离开去建 B，
+    那一步才是真正劝退人的地方。
+  */
+  const src = read('pages/Projects.tsx');
+  assert.match(src, /handleQuickCreateCustomer/, '没有当场新建客户的入口');
+  assert.match(src, /创建并选中/, '新建完没有立刻选中 —— 那等于让人再去下拉里找一遍');
+
+  // 只要名字就够；逼人填完整档案，结果是他干脆不建项目
+  const fn = src.slice(src.indexOf('const handleQuickCreateCustomer'), src.indexOf('const handleCreate'));
+  assert.match(fn, /const name = newCustomerName\.trim\(\)/, '新建客户要的不止一个名字');
+  assert.match(fn, /customers\.find\(c => c\.name === name\)/, '同名客户会被重复创建');
+
+  // addCustomer 必须把新建的那条返回出来，否则选不中
+  assert.match(read('context/AppContext.tsx'), /addCustomer: \(customer: Omit<Customer, 'id'>\) => Customer;/,
+    'addCustomer 没有返回新建的客户');
+});
+
+test('不让人选类别，类别由两个答案推出来', () => {
+  /*
+    多一个选项就多一次「我该选哪个」的犹豫。而「给谁做」「收不收钱」
+    这两个问题他不用想 —— 答案本来就在他脑子里。
   */
   const meta = read('src/modules/projectCategory.ts');
-  assert.match(meta, /label: '合同项目'/, '交付项目没有改名');
-  assert.match(meta, /label: '其他事务'/, '公共事务没有改成更笼统的名字');
+  assert.match(meta, /export const deriveCategory/, '没有从两个答案推类别的函数');
+  assert.match(meta, /label: '客户项目'/, '类别没有改成按「给谁做」命名');
+  assert.match(meta, /label: '其他事务'/, '第三类的名字没改');
+  assert.ok(!/label: '合同项目'/.test(meta), '「合同项目」这个把合同当前提的名字还在');
 
-  // 每一类都得回答这两个问题，缺一个就等于让人继续猜
-  ['Delivery', 'FollowUp', 'Public'].forEach((cat) => {
-    const block = meta.slice(meta.indexOf(`${cat}: {`), meta.indexOf(`${cat}: {`) + 400);
-    assert.match(block, /when: '.+'/, `${cat} 没写「什么时候建」`);
-    assert.match(block, /money: '.+'/, `${cat} 没写「钱怎么算」`);
-    assert.match(block, /hint: '.{10,}'/, `${cat} 没写选中时的说明`);
-  });
-
-  // 界面上要真的把 when / money 显示出来，不能只存在常量里
   const src = read('pages/Projects.tsx');
-  assert.match(src, /PROJECT_CATEGORY_ORDER\.map/, '类别选项没有从常量渲染 —— 又会各写各的');
-  assert.match(src, /\{meta\.when\}/, '选项上没显示「什么时候建」');
-  assert.match(src, /\{meta\.money\}/, '选项上没显示「钱怎么算」');
+  assert.match(src, /这活给谁做？/, '表单里没有第一个问题');
+  assert.match(src, /这活收不收钱？/, '表单里没有第二个问题');
+  assert.match(src, /系统归为「/, '没有当场告诉人系统会把这活归成什么');
 });
 
-test('三个筛选默认全开，且放在一起', () => {
+test('收不收钱是属性，不是类别', () => {
   /*
-    金恩来：「默认应该都是全部状态，然后若是要筛选内容，
-    再由登录同事自己根据条件筛选，一切设计不要画蛇添足。」
-
-    默认值每收紧一档，就多一条「东西在库里、人却看不见」的路径，
-    而人看不见的第一反应是「系统坏了」——这个月已经踩了三次。
+    PSA 类工具的通行做法：billable 是项目属性，合同是可选挂件，
+    没有「合同项目 vs 非合同项目」这种分法。
   */
-  const src = read('pages/Projects.tsx');
-  assert.match(src, /useState<'Active' \| 'Completed' \| 'All'>\('All'\)/, '状态默认不是「全部状态」');
-  assert.match(src, /useState<ProjectModeFilter>\('all'\)/, '类别默认不是「全部类别」');
+  assert.match(read('types.ts'), /billable\?: boolean;/, 'Project 上没有 billable 属性');
 
-  // 三组挨在一起，共用一种控件
-  const bar = src.slice(src.indexOf('data-guide-id="project-filters"'), src.indexOf('data-guide-id="project-filters"') + 1200);
-  ['状态', '类别', '范围'].forEach((label) => {
-    assert.ok(bar.includes(`label="${label}"`), `筛选条里没有「${label}」这一组`);
-  });
-  assert.ok(!/两者都看/.test(src), '「两者都看」这个看不出是什么的名字还在');
-});
-
-test('类别筛选不能把某一类藏起来', () => {
-  /*
-    原来只有两档，判断写成「delivery 档排掉 isFollowUp、followup 档排掉非 isFollowUp」。
-    加了第三类之后它的 projectMode 是 'public'、isFollowUp 为 false，于是
-      选「交付项目」不排它 → 混进来；选「跟进项目」排掉它 → 找不到。
-    而立项后代码又特地切到 followup 档 —— 建完一个其他事务，
-    界面正好跳到唯一看不见它的那一档。
-
-    一个筛选器能让某类数据谁都找不到，比多一个选项危险得多。
-  */
-  const src = read('pages/Projects.tsx');
-  assert.match(src, /resolveProjectCapabilities\(p\)\.projectMode === modeScope/,
-    '类别筛选没有按 projectMode 逐一比对，第三类还可能被藏起来');
-  assert.ok(!/modeScope === 'delivery' && isFollowUp/.test(src), '旧的两档判断还在');
-
-  // 三类都要有自己的档位，不能合并成「跟进与其他」
   const meta = read('src/modules/projectCategory.ts');
-  assert.match(meta, /CATEGORY_FILTERS/, '没有集中定义类别档位');
-  assert.match(meta, /PROJECT_CATEGORY_ORDER\.map/, '档位不是从三类派生的 —— 以后加类别又会漏');
+  assert.match(meta, /export const isBillable/, '没有统一的「算不算营收」判断');
+  // 老数据没有这个字段，必须按原口径回推，否则历史报表数字会变
+  assert.match(meta, /return p\.projectCategory === 'Delivery';/,
+    '老数据没有回推规则 —— 加个字段就把历史报表改了数，比不加还糟');
+});
+
+test('售前跟进退出项目，但旧数据不删', () => {
+  /*
+    2026-09-08 金恩来：「把还在争取的客户去掉吧，这个放到项目里来不合理。」
+
+    对的：线索管理本来就在管「还没成的客户」，两边各存一条谁都不准；
+    而且在制项目数、延误率这些指标的分母会被污染。
+
+    但线上已经有 15 个跟进项目、带着 11 条工时 —— 只出不进，不删。
+    和账号那条规矩一样：能删错误，不能删历史。
+  */
+  const meta = read('src/modules/projectCategory.ts');
+  assert.match(meta, /CREATABLE_CATEGORIES[^=]*=\s*\['Delivery', 'Public'\]/,
+    '「售前跟进」还能被新建出来');
+  assert.match(meta, /legacy: true/, 'FollowUp 没有标成停用的旧分类');
+
+  // 筛选里那一档只在还有旧数据时出现，等收尾完自己消失
+  assert.match(meta, /buildCategoryFilters/, '类别档位不是动态的');
+  assert.match(read('pages/Projects.tsx'), /buildCategoryFilters\(projects\.some/,
+    '没有按「库里还有没有旧跟进项目」决定要不要显示那一档');
+
+  // 战略战役不涉及客户，本来就该是「其他事务」
+  assert.match(read('pages/Strategy.tsx'), /projectCategory: 'Public'/,
+    '战略战役还挂在售前跟进下面 —— 它压根没有客户');
+});
+
+test('列表上要看得出一个项目是哪一类', () => {
+  /*
+    2026-09-08 发现：getCategoryBadge 定义了**从来没被调用过**，
+    也就是说列表上一直看不出项目的类别。
+    分类的事反复讲不清，有一半原因是它压根没显示出来过。
+  */
+  const src = read('pages/Projects.tsx');
+  const calls = (src.match(/getCategoryBadge\(/g) || []).length;
+  assert.ok(calls >= 2,
+    `类别徽章只出现 ${calls} 次 —— 定义了不用等于没做（电脑端表格和手机端卡片都要有）`);
+  // 客户项目里既有收钱的也有不收钱的，光显示类别分不出哪些进营收
+  assert.match(src, /\{earns \? '收费' : '不收费'\}/, '没有标出这一单收不收钱');
+});
+
+test('收钱却没合同要有人知道，但不能挡路', () => {
+  const fin = read('pages/Finance.tsx');
+  assert.match(fin, /个收费项目还没关联合同/, '财务页没有「缺合同」提醒');
+  assert.match(fin, /这是提醒，不是错误/, '没说清它不是错误 —— 否则人会以为自己填错了');
 });
 
 test('建完之后，每一个筛选都要调到能看见它', () => {
@@ -138,7 +173,7 @@ test('建完之后，每一个筛选都要调到能看见它', () => {
   const filters = [
     ['setViewScope', '与我相关 / 全公司'],
     ['setFilterStatus', '进行中 / 已完成 / 全部状态'],
-    ['setModeScope', '合同项目 / 跟进项目 / 其他事务 / 全部类别'],
+    ['setModeScope', '客户项目 / 其他事务 / 全部类别'],
     ['setSearchTerm', '搜索框'],
   ];
   const missing = filters.filter(([fnName]) => !fn.includes(fnName)).map(([, label]) => label);
