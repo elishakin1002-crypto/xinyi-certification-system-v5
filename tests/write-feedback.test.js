@@ -53,8 +53,14 @@ test('点不动的按钮不该出现', () => {
     让他填完整张表才在后台被拒。
   */
   const src = read('pages/Projects.tsx');
-  assert.match(src, /const canCreateProject = checkActionPermission\('PROJECT_CREATE', \{\}\)\.allowed/,
-    '没按权限判断能不能建项目');
+  /*
+    注意：**不能传 {}**。顾问的数据范围是「只能操作自己负责的」，
+    权限函数看到有 context 就去查归属，空对象里没有归属信息 → 判定不是你的 → 拒绝。
+    结果是整个「新建项目」按钮对顾问消失了，而权限表里明明有 PROJECT_CREATE。
+    新建类动作本来就没有「现有归属」，不该传。
+  */
+  assert.match(src, /const canCreateProject = checkActionPermission\('PROJECT_CREATE'\)\.allowed/,
+    '没按权限判断能不能建项目，或者又传了 {} 进去');
   assert.match(src, /\{canCreateProject && \(\n\s*<button onClick=\{openCreateModal\}/,
     '「新建项目」按钮没有按权限隐藏');
 });

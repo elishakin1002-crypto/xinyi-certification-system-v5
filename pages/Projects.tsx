@@ -424,7 +424,8 @@ const Projects = () => {
     }), [projects, filterStatus, activeRole, viewScope, modeScope, searchTerm, dashboardFocus, currentUser.name, projectWorkLogs]);
 
   /** 金额与结算只给有 CONTRACT_VIEW_AMOUNT 的角色。咨询师刻意看不到，避免与客户议价、同事比价。 */
-  const canCreateProject = checkActionPermission('PROJECT_CREATE', {}).allowed;
+  // 新建类动作不传归属 context —— 还没建出来的东西谈不上是谁的
+  const canCreateProject = checkActionPermission('PROJECT_CREATE').allowed;
   const canSeeMoney = checkActionPermission('CONTRACT_VIEW_AMOUNT', {}).allowed;
   /**
    * 结算/提成可见性，与「能看合同金额」刻意分开：

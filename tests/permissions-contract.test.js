@@ -227,3 +227,49 @@ test('permission contract: delegated employee actions cannot manage ADMIN accoun
   assert.ok(resetGuardIndex > resetRouteIndex, 'reset password route must check ADMIN target protection');
   assert.ok(resetGuardIndex < resetCallIndex, 'reset password route must check ADMIN target before resetUserPassword');
 });
+
+test('permission contract: 解析出来的动作码不能混进范围值', () => {
+  /*
+    2026-09-07：给顾问加立项权限时写了一段说明注释，
+    服务端解析结果里就多出来一个 'OWN' —— 它把 dataScope: 'OWN'
+    当成了一个动作码。
+
+    **一个会被注释影响的权限解析器是危险的**：它不报错，
+    只是安静地把权限表读错，而权限读错的后果没有上限。
+  */
+  const { loadCapabilities, resetCapabilities } = require('../server/authz/authorize');
+  if (resetCapabilities) resetCapabilities();
+  const caps = loadCapabilities();
+  const SCOPES = ['OWN', 'ALL', 'DEPARTMENT', 'NONE'];
+  const declared = new Set(collectActionCodeUnion());
+
+  for (const [role, conf] of Object.entries(caps)) {
+    const actions = Array.from(conf.actions || []);
+    const junk = actions.filter((a) => SCOPES.includes(a));
+    assert.deepEqual(junk, [], `${role} 的动作清单里混进了范围值：${junk.join('、')}`);
+
+    // 每个动作码都必须是 ActionCode 里声明过的
+    const unknown = actions.filter((a) => !declared.has(a));
+    assert.deepEqual(unknown, [], `${role} 解析出未声明的动作：${unknown.join('、')}`);
+  }
+});
+
+test('permission contract: 空 context 不等于「不是我的」', () => {
+  /*
+    原来只判断 context 是不是真值。传 {} 时它是真值，
+    于是去查归属，而空对象里没有归属信息 —— 判定「不是你的」，拒绝。
+
+    结果是 `{}` 和不传行为完全相反，我自己就踩了：
+    项目页用 {} 判断要不要显示「新建项目」，整个按钮对顾问消失，
+    而权限表里明明有 PROJECT_CREATE。
+
+    更要紧的是**新建类动作本来就没有「现有归属」** ——
+    还没建出来的东西，谈不上是谁的。
+  */
+  const ts2 = require('typescript');
+  const srcFile = fs.readFileSync(path.join(root, 'src/utils/actionPermissions.ts'), 'utf8');
+  assert.match(srcFile, /const hasOwnershipInfo = Boolean\(/,
+    '还在用「context 是不是真值」判断，传 {} 会被误判成不是自己的');
+  assert.match(srcFile, /context\.manager !== undefined \|\| context\.owner !== undefined \|\| context\.tasks !== undefined/,
+    '没有检查 context 里到底有没有归属信息');
+});

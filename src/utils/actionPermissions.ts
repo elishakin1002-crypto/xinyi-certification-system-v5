@@ -66,10 +66,31 @@ export const checkRoleActionPermission = (
     return { allowed: false, reason: `当前身份（${roleLabel(activeRole)}）没有执行此动作的权限。` };
   }
 
-  if (capability.dataScope === 'OWN' && context) {
-    const isOwner = context.manager === currentUser.name ||
-      (context.tasks || []).some(task => task.owner === currentUser.name) ||
-      context.owner === currentUser.name;
+  /*
+    ── 空 context 不等于「不是我的」（2026-09-07 修）──────────────
+
+    原来只判断 `context` 是不是真值。传 `{}` 进来时它是真值，
+    于是去查归属，而空对象里当然没有归属信息 —— 判定「不是你的」，拒绝。
+
+    结果是 **`{}` 和不传，行为完全相反**：
+    checkActionPermission('PROJECT_CREATE')      → 放行
+    checkActionPermission('PROJECT_CREATE', {})  → 拒绝
+
+    我自己就踩了：项目页用 `{}` 判断要不要显示「新建项目」，
+    整个按钮对顾问消失了，而权限表里明明有 PROJECT_CREATE。
+
+    更要紧的是**新建类动作本来就没有「现有归属」**：
+    还没建出来的东西，谈不上是谁的。拿归属去卡新建，逻辑上就不成立。
+
+    所以现在只在 context **确实带了归属信息**时才检查。
+  */
+  const hasOwnershipInfo = Boolean(
+    context && (context.manager !== undefined || context.owner !== undefined || context.tasks !== undefined)
+  );
+  if (capability.dataScope === 'OWN' && hasOwnershipInfo) {
+    const isOwner = context!.manager === currentUser.name ||
+      (context!.tasks || []).some(task => task.owner === currentUser.name) ||
+      context!.owner === currentUser.name;
 
     if (!isOwner) {
       return { allowed: false, reason: '您只能操作自己负责的项目或任务。' };

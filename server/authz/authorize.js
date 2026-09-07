@@ -15,7 +15,22 @@ const { resolveAiLevel, levelRank } = require('./policy');
 let CAPS = null;
 const loadCapabilities = () => {
   if (CAPS) return CAPS;
-  const src = fs.readFileSync(path.resolve(__dirname, '../../constants.ts'), 'utf8');
+  /*
+    ── 解析前先去掉注释（2026-09-07 修）──────────────────────────
+
+    这个解析器是用正则从 constants.ts 里抠权限矩阵的，
+    而注释里出现方括号、引号、大写词都会把它带偏。
+
+    2026-09-07 实际踩到：给顾问加立项权限时写了一段说明注释，
+    解析结果里就多出来一个 'OWN' —— 它把 dataScope: 'OWN' 当成了一个动作码。
+
+    **一个会被注释影响的权限解析器是危险的**：它不报错，
+    只是安静地把权限表读错，而权限读错的后果没有上限。
+
+    去掉注释再解析，正则就只面对真正的代码。
+  */
+  const raw = fs.readFileSync(path.resolve(__dirname, '../../constants.ts'), 'utf8');
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const block = src.match(/export const ROLE_CAPABILITIES[^=]*=\s*\{([\s\S]*?)\n\};/);
   if (!block) throw new Error('解析 ROLE_CAPABILITIES 失败——constants.ts 结构变了');
 
