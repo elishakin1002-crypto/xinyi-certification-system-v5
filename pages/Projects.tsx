@@ -589,24 +589,44 @@ const Projects = () => {
     setIsModalOpen(false);
 
     /*
-      ── 建完要能看见（2026-09-07）────────────────────────────
+      ── 建完必须看得见它（2026-09-07，第二次修）──────────────
 
-      负责人不是自己时，新项目落在「与我相关」之外 ——
-      人点完「确认立项」，列表里什么都没多出来，
-      合理的第一反应是「没建成」，然后再建一次。
+      第一次修只调了「范围」和「状态」两个筛选，**漏了「类别」**。
+      结果金恩来建了三个跟进项目，而列表默认只看交付项目 ——
+      三条全都好好地存在库里，他一条也没看见，
+      得出的结论是「点了没反应」，然后又建了两个。
 
-      **建完就该看见它。** 所以这里自动切到能看到它的范围，
-      并说清楚为什么切 —— 不解释的话，界面自己跳一下同样莫名其妙。
+      **这类 bug 会重复发生**，因为筛选是一个个加上去的，
+      而每加一个就多一条「新建的东西可能被它藏起来」的路径。
+
+      所以这次不再一个个补：**把每一个筛选都调到能看见它的那一档**，
+      而且下面那条测试会在新增筛选却忘了处理时失败。
     */
     const mine = manager === currentUser.name || (ownerUserId && ownerUserId === currentUser.id);
-    if (!mine) {
-      setViewScope('all');
-      setCreatedNotice(`已立项。负责人是「${manager}」，不在「与我相关」里，已切到「全公司」让你看到它。`);
-    } else {
-      setViewScope('related');
-      setCreatedNotice(`已立项，负责人是你自己。`);
-    }
-    if (filterStatus !== 'Active') setFilterStatus('Active');
+    const isFollowUp = formData.projectCategory === 'FollowUp';
+    const isPublic = formData.projectCategory === 'Public';
+
+    // ① 范围：不是自己负责就切到全公司
+    setViewScope(mine ? 'related' : 'all');
+    // ② 状态：新建的一定是进行中
+    setFilterStatus('Active');
+    // ③ 类别：切到新项目所属的那一档
+    setModeScope(isFollowUp || isPublic ? 'followup' : 'delivery');
+    // ④ 搜索框里的关键词也会把它挡掉
+    setSearchTerm('');
+    /*
+      ⑤ 从工作台点进来时带的「聚焦」也是一层筛选（比如「只看逾期未完成任务的项目」）。
+      带着它建项目，新项目一样会被挡在外面 —— 这一条是测试替我找出来的，
+      我自己数筛选时漏了。
+    */
+    setDashboardFocus(null);
+    setDashboardFocusLabel('');
+
+    const where = [
+      mine ? null : `负责人是「${manager}」，已切到「全公司」`,
+      isPublic ? '公共事务归在「跟进项目」这一档下' : (isFollowUp ? '已切到「跟进项目」这一档' : null),
+    ].filter(Boolean).join('；');
+    setCreatedNotice(where ? `已立项 —— ${where}，这样你才看得到它。` : '已立项，负责人是你自己。');
   };
 
   const getWorkLogDraft = (projectId: string) => workLogDrafts[projectId] || defaultWorkLogDraft();

@@ -72,10 +72,10 @@ test('立项之后要能看见它', () => {
     然后再建一次。
   */
   const src = read('pages/Projects.tsx');
-  assert.match(src, /setViewScope\('all'\);\s*\n\s*setCreatedNotice/,
+  assert.match(src, /setViewScope\(mine \? 'related' : 'all'\)/,
     '负责人不是自己时没有自动切到能看到它的范围');
-  assert.match(src, /不在「与我相关」里，已切到「全公司」让你看到它/,
-    '切了范围却不解释 —— 界面自己跳一下同样莫名其妙');
+  assert.match(src, /这样你才看得到它/,
+    '切了筛选却不解释 —— 界面自己跳一下同样莫名其妙');
 
   // 自己排第一并标出来，降低选错概率
   assert.match(src, /name === myName \? `\$\{name\}（我自己）` : name/,
