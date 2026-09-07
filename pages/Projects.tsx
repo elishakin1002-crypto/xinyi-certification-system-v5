@@ -1236,7 +1236,20 @@ const Projects = () => {
         {projectCaps.showServicePanel && (
         <div className="order-3 bg-gray-50/50 rounded-2xl border border-gray-100 p-4 md:p-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-5">
-            <h3 className="font-black text-gray-900 flex items-center"> <LayoutGrid className="w-5 h-5 mr-2 text-indigo-600" /> 服务清单（项目可承载多服务） </h3>
+            {/*
+              ── 三块的名字要一眼分得开（2026-09-07 改）──────────
+
+              原来叫「服务清单」和「任务清单」—— 只差一个字，
+              而它们恰恰是最该分清的两个东西：一个是**卖了什么**，
+              一个是**要做哪些事**。名字最像的两样，含义差最远。
+
+              现在每一块都带一句「它回答什么问题」，
+              人不用去猜三者谁生谁。
+            */}
+            <div>
+              <h3 className="font-black text-gray-900 flex items-center"> <LayoutGrid className="w-5 h-5 mr-2 text-indigo-600" /> 服务项 · 客户买了什么 </h3>
+              <p className="mt-1 text-xs font-bold text-gray-400">来自合同。一个项目可以有多项服务，各有各的负责人；加进来时可以让系统按模板自动生成任务。</p>
+            </div>
             <div className="flex items-center gap-2">
               {!activeServiceDraft && (
                 <button
@@ -1556,7 +1569,10 @@ const Projects = () => {
         {/* 核心新增：交付任务看板 —— 详情里最重要的区块，排在最前 */}
         <div className="order-2 space-y-6">
            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <h3 className="font-black text-gray-900 flex items-center"> <ListTodo className="w-5 h-5 mr-2 text-blue-600" /> {isFollowUpProject ? '跟进任务看板' : '交付任务流水线'} </h3>
+              <div>
+                <h3 className="font-black text-gray-900 flex items-center"> <ListTodo className="w-5 h-5 mr-2 text-blue-600" /> {isFollowUpProject ? '任务 · 这个客户要跟哪些事' : '任务 · 要做哪些事'} </h3>
+                <p className="mt-1 text-xs font-bold text-gray-400">每项服务拆成的具体动作：谁做、什么时候之前做完。延误率算的就是这里。</p>
+              </div>
               <div className="flex flex-wrap gap-2 w-full md:w-auto">
                  {serviceItems.length > 0 && (
                    <div className="flex items-center bg-white border border-gray-200 rounded-xl p-1 shadow-sm">
@@ -1821,7 +1837,7 @@ const Projects = () => {
             <div>
               <h3 className="font-black text-gray-900 flex items-center gap-2">
                 <Clock className="w-5 h-5 text-indigo-600" />
-                工作日志（关联服务/任务）
+                工作日志 · 今天实际做了什么
               </h3>
               <p className="text-xs text-gray-400 font-bold mt-1">
                 日志属于交付过程数据，不做字数考核；用于项目推进、卡点定位与复盘证据。
