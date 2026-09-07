@@ -62,7 +62,7 @@ export const OnboardingTour: React.FC<{
   forceOpen?: boolean;
   onClose?: () => void;
 }> = ({ forceOpen = false, onClose }) => {
-  const { currentUser, previewPersona } = useApp();
+  const { currentUser, previewPersona, setIsTourActive } = useApp();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [i, setI] = useState(0);
@@ -184,6 +184,15 @@ export const OnboardingTour: React.FC<{
     const h = cardRef.current.getBoundingClientRect().height;
     if (h > 0 && Math.abs(h - cardH) > 4) setCardH(h);
   });
+
+  /*
+    告诉各个页面「引导开始了」，它们会摆一条样例行出来。
+    卸载时一定要关掉 —— 忘了关的话样例会一直挂在真实列表上面。
+  */
+  useEffect(() => {
+    setIsTourActive(open);
+    return () => setIsTourActive(false);
+  }, [open, setIsTourActive]);
 
   useEffect(() => {
     if (!open) return;

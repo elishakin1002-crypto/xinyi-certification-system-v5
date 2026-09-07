@@ -62,6 +62,9 @@ export interface AppContextType {
     切到「咨询顾问」看两眼、一点合同管理，菜单又变回全量，巡检等于白做。
   */
   previewPersona: DashboardPersona | null;
+  /** 新手引导正在进行 —— 各列表这时会显示一条「样例」行 */
+  isTourActive: boolean;
+  setIsTourActive: (v: boolean) => void;
   setPreviewPersona: (p: DashboardPersona | null) => void;
   userPermissions: PermissionCode[];
   hasPermission: (permission: PermissionCode) => boolean;
@@ -400,6 +403,22 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     现在 Context 是唯一来源，URL 只在开页时当个种子 ——
     刷新、收藏、直接贴链接进来，两边看到的都是同一个视角。
   */
+  /*
+    ── 引导正在进行（2026-09-07）────────────────────────────────
+
+    引导指着空页面讲等于白讲：新人第一次进来，线索、项目、不符合项
+    全是空的，引导说「点开一个项目，里面是任务清单」——**根本没有项目可点**，
+    他只能看着一片空白想象。
+
+    所以引导期间各个列表会显示一条带「样例」标签的示例行，
+    引导就指着它讲。这个开关告诉页面「现在要摆样例」。
+
+    **样例不写进数据库**：写进去的话在制项目数、金额统计、回款
+    全都会带上假数据 —— 跟历史合同建僵尸项目是同一个坑。
+    它只是渲染出来的一行，刷新就没了。
+  */
+  const [isTourActive, setIsTourActive] = useState(false);
+
   const [previewPersona, setPreviewPersona] = useState<DashboardPersona | null>(() => {
     try {
       // HashRouter：查询串在 # 里面，形如 #/dashboard?persona=sales
@@ -4681,7 +4700,7 @@ ${receivableLines}
       leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, vendors, marketSignals, projectWorkLogs,
       currentUser: normalizedCurrentUser, userProfiles, isAuthRequired: authRequired, switchUser, updateUserProfile, addUserProfile, deleteUserProfile,
       activeRole, setActiveRole, activePersona, availablePersonas, resolveDashboardPersona,
-      previewPersona, setPreviewPersona, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
+      previewPersona, setPreviewPersona, isTourActive, setIsTourActive, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
       addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, updateProjectWorkLog, deleteProjectWorkLog,
       createFollowUpProjectFromLead,
       createFollowUpProjectFromCustomer,

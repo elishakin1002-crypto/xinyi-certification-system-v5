@@ -432,3 +432,48 @@ test('预览别人的引导不留痕、也不主动弹', () => {
   assert.match(src, /第一次登录会看到/,
     '预览时开场白还在对自己说话，读起来前后打架');
 });
+
+test('引导有东西可指：空列表里摆一条「样例」行', () => {
+  /*
+    2026-09-07 金恩来：「引导的卡片做了也几乎等于白做，
+    没有内容谁会看？看了谁又能记得住？」
+
+    说的是实情：新人第一次进来，线索、项目、不符合项全是空的。
+    引导说「点开一个项目，里面是任务清单」——**根本没有项目可点**，
+    他只能看着一片空白想象一遍，转头就忘。
+  */
+  const src = read('components/SampleRow.tsx');
+  assert.match(src, /样例 · 不是真实数据/, '样例没有醒目标签');
+  assert.match(src, /if \(!isTourActive && !empty\) return null/,
+    '样例出现的时机不对：应该是引导中、或者这个列表本来就是空的');
+
+  // 每个业务列表都要有
+  const pages = ['pages/Projects.tsx', 'pages/Leads.tsx', 'pages/Audit.tsx', 'pages/Finance.tsx'];
+  const missing = pages.filter((f) => !read(f).includes('<SampleTr'));
+  assert.deepEqual(missing, [], `这些列表没有样例行：${missing.join('、')}`);
+});
+
+test('样例绝不写进数据库', () => {
+  /*
+    写进去的话，在制项目数、本月签约金额、回款率全都会带上假数据 ——
+    而这些数字正是用来判断「现在忙不忙、钱回来没有」的。
+    跟历史合同顺手建僵尸项目是同一个坑，只是这次是我自己挖的。
+  */
+  const src = read('components/SampleRow.tsx');
+  assert.doesNotMatch(src, /addProject|addLead|addContract|fetch\(/,
+    '样例组件里出现了写数据的调用');
+  assert.match(src, /只是\*\*渲染出来的一行\*\*/, '没有把「不落库」这条写进注释');
+
+  // 引导结束必须关掉，否则样例会一直挂在真实列表上面
+  const tour = read('components/OnboardingTour.tsx');
+  assert.match(tour, /setIsTourActive\(open\);\s*\n\s*return \(\) => setIsTourActive\(false\)/,
+    '引导关闭后没有收掉样例');
+});
+
+test('引导文案要指着样例讲，不是自说自话', () => {
+  const src = read('src/modules/onboarding/steps.ts');
+  const hits = (src.match(/样例/g) || []).length;
+  assert.ok(hits >= 5, `只有 ${hits} 处提到样例 —— 摆了样例却不指它，等于没摆`);
+  assert.match(src, /不是真实数据|刷新就没了/,
+    '没告诉人那条是示例 —— 他会去改它、删它，然后发现改不动');
+});

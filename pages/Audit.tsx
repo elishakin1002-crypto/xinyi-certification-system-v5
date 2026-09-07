@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { SampleTr } from '../components/SampleRow';
 import { AuditEvidence, AuditIssue, KnowledgeDoc } from '../types';
 import {
   Search,
@@ -1427,6 +1428,31 @@ const Audit = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
+              {/* 样例行：新人第一次进来这张表是空的，引导没有可指的东西 */}
+              <SampleTr
+                empty={filteredIssues.length === 0}
+                colSpan={7}
+                caption="真实的不符合项长这样：左边是严重度，中间「审计发现点」要写清事实（不写结论），右边传整改证据。整改死线到了还没传证据会标红。"
+              >
+                <td className={tdClass}>
+                  <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-black text-amber-700">一般不符合</span>
+                </td>
+                <td className={tdClass}>
+                  <div className="font-bold text-gray-900">温州示范包装有限公司</div>
+                  <div className="mt-1 text-[11px] text-gray-500">ISO9001 监督审核</div>
+                </td>
+                <td className={tdClass}>
+                  <div className="text-sm text-gray-800">2026-08 的内审记录缺少管理者代表签字</div>
+                  <div className="mt-1 text-[11px] text-gray-500">整改死线 2026-09-20</div>
+                </td>
+                <td className={tdClass}><span className="text-xs font-bold text-gray-500">已传 1 份 · 待验证</span></td>
+                <td className={tdClass}><span className="text-xs font-bold text-gray-500">未提炼</span></td>
+                <td className={tdClass}>
+                  <span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-black text-blue-700">整改中</span>
+                </td>
+                <td className={`${tdClass} text-right`}><span className="text-xs font-bold text-gray-400">—</span></td>
+              </SampleTr>
+
               {filteredIssues.map(({ issue, relation, topic, evidenceCount, verified, overdue }) => (
                 <tr key={issue.id} className="hover:bg-gray-50/80 transition-colors group align-top">
                   <td className={tdClass}>{getSeverityBadge(issue.severity)}</td>

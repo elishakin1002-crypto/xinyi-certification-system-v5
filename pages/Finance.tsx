@@ -1,6 +1,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { SampleTr } from '../components/SampleRow';
 import { Wallet, Search, CheckCircle, Clock, AlertCircle, RefreshCcw, Filter, Download, X, AlertTriangle, Upload, FileSpreadsheet, Loader2, DollarSign, Building, User } from 'lucide-react';
 import { Receivable, Settlement } from '../types';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -312,6 +313,25 @@ const Finance = () => {
                             </tr> 
                         </thead> 
                         <tbody className="divide-y divide-gray-100"> 
+                            {/* 样例行：让引导有个能指的对象，不是对着空表讲 */}
+                            <SampleTr
+                              empty={filteredReceivables.length === 0}
+                              colSpan={7}
+                              caption="真实回款长这样：过了应收日期还没到账的会标红，那是每天第一眼要看的。点右边「确认到账」之后，项目付款状态和客户价值分级会自动跟着变。"
+                            >
+                              <td className={`${tdClass} font-mono text-gray-600 text-sm`}>2026-08-20</td>
+                              <td className={`${tdClass} font-black text-gray-900 text-base`}>温州示范包装有限公司</td>
+                              <td className={`${tdClass} text-gray-700`}>首付款 50%</td>
+                              <td className={tdClass}><span className="text-xs font-bold text-gray-500">XY-2026-0001</span></td>
+                              <td className={`${tdClass} text-right font-black text-gray-900`}>¥12,000.00</td>
+                              <td className={`${tdClass} text-center`}>
+                                <span className="rounded-md bg-red-50 px-2 py-1 text-xs font-black text-red-700">已逾期 18 天</span>
+                              </td>
+                              <td className={`${tdClass} text-right`}>
+                                <span className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-bold text-gray-400">确认到账</span>
+                              </td>
+                            </SampleTr>
+
                             {filteredReceivables.map((r, idx) => (
                               <tr key={`${r.contractId}-${r.id}-${idx}`} className={`hover:bg-gray-50 transition-colors ${r.displayStatus === 'paid' ? 'bg-gray-50/30' : ''}`}>
                                 <td className={`${tdClass} font-mono text-gray-600 text-sm`}>{r.dueDate || '待定'}</td>

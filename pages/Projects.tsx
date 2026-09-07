@@ -18,6 +18,7 @@ import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { TASK_STATUS, WORK_LOG_SOURCE } from '../src/constants/status.ts';
 import { StatusBadge } from '../src/ui/statusBadge';
 import { Badge, SearchInput, EmptyState, StatCard, StatGrid, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
+import { SampleTr } from '../components/SampleRow';
 
 const normalizeServiceToken = (value: string) => (value || '')
   .toUpperCase()
@@ -2115,6 +2116,33 @@ const Projects = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
+                {/*
+                  样例行：新人第一次进来这张表是空的，
+                  引导说「点开一个项目，里面是任务清单」而他根本没有项目可点。
+                  对着一条具体的行讲才记得住 —— 哪一列是客户、
+                  哪一列是下一步、红色表示什么。
+                */}
+                <SampleTr
+                  empty={filteredProjects.length === 0}
+                  colSpan={6}
+                  caption="真实项目长这样：左边客户和项目名，中间是「下一步要做什么」——这一列最该看，它直接告诉你今天该推什么。"
+                >
+                  <td className="pl-4 text-gray-300"><ChevronRight className="w-4 h-4" /></td>
+                  <td className={tdClass}>
+                    <div className="font-bold text-gray-900">温州示范包装有限公司 ISO9001 换证</div>
+                    <div className="mt-1 text-[11px] text-gray-500">合同 XY-2026-0001 · 交付项目</div>
+                  </td>
+                  <td className={tdClass}>
+                    <div className="text-sm font-bold text-amber-700">整理管理手册（还有 3 天到期）</div>
+                    <div className="mt-1 text-[11px] text-gray-500">共 5 项任务，已完成 2 项</div>
+                  </td>
+                  <td className={tdClass}><span className="text-sm font-bold text-gray-700">李示例</span></td>
+                  <td className={tdClass}><span className="text-sm font-bold text-gray-700">40%</span></td>
+                  <td className={tdClass}>
+                    <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">进行中</span>
+                  </td>
+                </SampleTr>
+
                 {filteredProjects.map(project => (
                     <React.Fragment key={project.id}>
                         <tr className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${expandedProject === project.id ? 'bg-indigo-50/30' : ''}`} onClick={() => setExpandedProject(expandedProject === project.id ? null : project.id)}>

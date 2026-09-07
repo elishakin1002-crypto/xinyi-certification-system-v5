@@ -26,6 +26,7 @@ import { useApp } from '../context/AppContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { StatusBadge } from '../src/ui/statusBadge';
 import { SearchInput, EmptyState, StatCard, StatGrid, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
+import { SampleTr } from '../components/SampleRow';
 import { IngestionUploader } from '../components/IngestionUploader';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
 
@@ -526,6 +527,32 @@ const Leads = () => {
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
+                    {/*
+                      样例行。新人第一次进来这张表是空的，
+                      引导说「加一条跟进记录」，他连一条线索都没有。
+                    */}
+                    <SampleTr
+                      empty={filteredLeads.length === 0}
+                      colSpan={7}
+                      caption="真实线索长这样：AI 评分越高越值得先打；「最后跟进」超过 7 天会标红 —— 那是提醒你该联系了。"
+                    >
+                      <td className={tdClass}>
+                        <div className="font-black text-gray-900 text-base">温州示范包装有限公司</div>
+                        <div className="text-xs text-gray-500 mt-1">包装制造</div>
+                      </td>
+                      <td className={tdClass}>
+                        <div className="font-bold text-gray-800">李示例</div>
+                        <div className="text-xs text-gray-500 mt-0.5">138****0000</div>
+                      </td>
+                      <td className={tdClass}><span className="font-black text-emerald-600">82</span></td>
+                      <td className={tdClass}><span className="text-xs font-bold text-gray-600">ISO9001 换证</span></td>
+                      <td className={tdClass}><span className="text-xs font-bold text-amber-700">9 天前</span></td>
+                      <td className={tdClass}>
+                        <span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-black text-blue-700">跟进中</span>
+                      </td>
+                      <td className="text-right pr-4"><span className="text-xs font-bold text-gray-400">—</span></td>
+                    </SampleTr>
+
                     {filteredLeads.map(lead => (
                         <tr key={lead.id} className="hover:bg-gray-50/80 cursor-pointer transition-colors group" onClick={() => openDetail(lead)}>
                             <td className={tdClass}>
