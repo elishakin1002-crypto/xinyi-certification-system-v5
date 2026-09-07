@@ -1233,8 +1233,19 @@ const Projects = () => {
         </div>
         )}
 
+        {/*
+          ── 服务项排在任务前面（2026-09-07 改）────────────────
+
+          原来任务在上、服务项在下。人打开项目第一眼看到的是空的任务区，
+          自然就去点「+」一条条手加 —— 加完才发现下面有服务项可选，
+          而选一个服务项系统会自动把任务全带出来。
+          白干一遍，还得把手加的删掉。
+
+          先选服务项、任务自动生成，这才是设计好的那条路。
+          界面顺序就该等于做事顺序：先确定卖了什么，再谈怎么做。
+        */}
         {projectCaps.showServicePanel && (
-        <div className="order-3 bg-gray-50/50 rounded-2xl border border-gray-100 p-4 md:p-6">
+        <div className="order-2 bg-gray-50/50 rounded-2xl border border-gray-100 p-4 md:p-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-5">
             {/*
               ── 三块的名字要一眼分得开（2026-09-07 改）──────────
@@ -1566,8 +1577,8 @@ const Projects = () => {
         </div>
         )}
 
-        {/* 核心新增：交付任务看板 —— 详情里最重要的区块，排在最前 */}
-        <div className="order-2 space-y-6">
+        {/* 交付任务：排在服务项后面 —— 任务多数是服务项自动带出来的 */}
+        <div className="order-3 space-y-6">
            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
                 <h3 className="font-black text-gray-900 flex items-center"> <ListTodo className="w-5 h-5 mr-2 text-blue-600" /> {isFollowUpProject ? '任务 · 这个客户要跟哪些事' : '任务 · 要做哪些事'} </h3>
@@ -1826,7 +1837,11 @@ const Projects = () => {
 
              {allTasks.length === 0 && (
                <div className="col-span-full py-12 text-center text-gray-300 border-2 border-dashed border-gray-100 rounded-3xl">
-                  <p className="text-sm font-bold">请点击上方“应用模版”或“+”开始建立任务流水线</p>
+                  <p className="text-sm font-bold">还没有任务</p>
+                  <p className="mt-1.5 text-xs font-bold leading-relaxed text-gray-400">
+                    多数情况不用手加 —— 到上面「服务项」里选一项客户买的服务，
+                    任务会按标准流程自动带出来。真的没有对应服务项，再点「+」手加。
+                  </p>
                </div>
              )}
            </div>

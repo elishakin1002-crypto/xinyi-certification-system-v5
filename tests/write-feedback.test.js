@@ -87,3 +87,45 @@ test('校验没过要说哪里不对，不能只是不动', () => {
   assert.match(src, /先填服务名称，比如「ISO9001 认证咨询」/, '空名称仍然静默拒绝');
   assert.match(src, /activeServiceDraft\.error && \(/, '错误提示没有显示出来');
 });
+
+test('顾问能自己立项，负责人 ID 也要落库', () => {
+  /*
+    2026-09-07 放开：原来只有总经理和总助能立项，理由是「上面派、顾问执行」。
+    这话在流程图上成立，在 13 个人的公司里不成立 ——
+    顾问在客户现场发现要多做一项体系，得回来找总助、总助再找他确认，
+    **一件他自己最清楚的事要绕两个人**，绕不动就记在本子上了。
+  */
+  const { loadCapabilities } = require('../server/authz/authorize');
+  const acts = Array.from(loadCapabilities().CONSULTANT?.actions || []);
+  assert.ok(acts.includes('PROJECT_CREATE'), '顾问还是不能立项');
+  assert.ok(acts.includes('PROJECT_ASSIGN_MANAGER'), '立了项却不能指派负责人，等于建了个死项目');
+
+  /*
+    ownerUserId 落库很关键：丢了它，「与我相关」就退化成按姓名匹配 ——
+    同名的人互相看到对方的项目；有人改了姓名，他名下的项目当场全消失。
+    这两种情况都不会报错。
+  */
+  const ctx = read('context/AppContext.tsx');
+  assert.match(ctx, /\.\.\.\(p\.ownerUserId \? \{ ownerUserId: p\.ownerUserId \} : \{\}\)/,
+    '新建项目时把负责人 ID 丢了');
+  assert.match(ctx, /\.\.\.\(p\.customerId \? \{ customerId: p\.customerId \} : \{\}\)/,
+    '新建项目时把客户 ID 丢了 —— 项目在客户档案里会挂不上');
+});
+
+test('服务项排在任务前面，空任务态指回服务项', () => {
+  /*
+    原来任务在上、服务项在下。人打开项目第一眼是空的任务区，
+    自然去点「+」一条条手加 —— 加完才发现下面有服务项可选，
+    而选一个服务项系统会自动把任务全带出来。白干一遍。
+
+    界面顺序就该等于做事顺序：先确定卖了什么，再谈怎么做。
+  */
+  const src = read('pages/Projects.tsx');
+  const svc = src.indexOf('order-2 bg-gray-50/50');
+  const task = src.indexOf("order-3 space-y-6");
+  assert.ok(svc > 0 && task > 0, '找不到这两块，测试要跟着结构改');
+  assert.ok(svc < task, '服务项还排在任务后面');
+
+  assert.match(src, /多数情况不用手加 —— 到上面「服务项」里选一项客户买的服务/,
+    '任务为空时没有把人指回服务项');
+});

@@ -2262,6 +2262,19 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
       costStatus,
       projectAmount,
       manager: p.manager, // 此时必有值
+      /*
+        ── 负责人 ID 一定要带上（2026-09-07 修）──────────────────
+
+        传进来的 ownerUserId 在这里被丢掉了，落库时 owner_user_id 是空的。
+
+        后果不是马上出错，而是**「与我相关」退化成按姓名匹配**：
+        同名的两个人会互相看到对方的项目；有人改了姓名，
+        他名下的项目当场全部消失 —— 而这两种情况都不会报错。
+
+        customerId 同理：丢了它，项目在客户档案里就挂不上。
+      */
+      ...(p.ownerUserId ? { ownerUserId: p.ownerUserId } : {}),
+      ...(p.customerId ? { customerId: p.customerId } : {}),
       progress: calculateProjectProgress(initialTasks),
       status: Status.Active,
       paymentStatus: 'unpaid',
