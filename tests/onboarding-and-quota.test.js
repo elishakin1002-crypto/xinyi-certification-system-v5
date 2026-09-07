@@ -300,7 +300,7 @@ test('引导框的样子要和系统其他卡片一致', () => {
   const src = read('components/OnboardingTour.tsx');
   assert.doesNotMatch(src, /bg-blue-600 text-white shrink-0/,
     '还是那条实心蓝标题栏');
-  assert.match(src, /rounded-full bg-blue-50 px-2\.5 py-1 text-\[11px\] font-black text-blue-700/,
+  assert.match(src, /rounded-full px-2\.5 py-1 text-\[11px\] font-black/,
     '「新手引导」没有收成小标签');
   assert.match(src, /bg-white border border-gray-200 shadow-xl/,
     '卡片本体不是白底细边，和其他卡片对不上');
@@ -396,4 +396,39 @@ test('手机上被指的那块不能藏在抽屉底下', () => {
     '目标在屏幕下半部分时，抽屉没有让开');
   assert.match(src, /sheetAtTop \? 'items-start justify-center' : 'items-end justify-center'/,
     '抽屉不会换到顶部');
+});
+
+test('切了视角，「重看新手引导」就看那个角色的', () => {
+  /*
+    2026-09-07：金恩来想看看顾问、财务、总经理、总助各自的引导长什么样。
+
+    在这之前只能去借同事的账号登录 —— 而借账号要重置密码，
+    重置完人家下次登录就被要求改密码。
+    为了看一眼引导惊动一个正在干活的同事，代价完全不成比例。
+
+    巡检视角存在的意义就是「看看同事看到什么」，
+    引导是同事看到的第一样东西，没有理由被排除在外。
+  */
+  const src = read('components/OnboardingTour.tsx');
+  assert.match(src, /const previewRole = previewPersona \? PERSONA_TO_ROLE\[previewPersona\] : null/,
+    '引导没有跟着预览视角走');
+  assert.match(src, /getTour\(\(isPreviewing \? \[previewRole!\] : currentUser\?\.roles\) as any\)/,
+    '预览时取的还是自己的引导');
+});
+
+test('预览别人的引导不留痕、也不主动弹', () => {
+  /*
+    那是别人的引导，不该算进自己的进度 ——
+    看完之后自己那份就不弹了，等于把自己的引导跳过了。
+    也不能因为切了视角就自动弹别人的，那是打扰。
+  */
+  const src = read('components/OnboardingTour.tsx');
+  assert.match(src, /if \(currentUser\?\.id && !isPreviewing\) dataService\.set\(seenKey/,
+    '预览时也写了「看过」标记');
+  assert.match(src, /if \(isPreviewing\) return;/, '切视角会自动弹别人的引导');
+  assert.match(src, /预览：\$\{ROLE_LABEL\[previewRole!\] \|\| previewRole\}的引导/,
+    '预览时没标出这是谁的引导 —— 看到「录线索」会以为自己该去录');
+  // 开场白也不能写成「你的名字，欢迎」—— 那句是对本人说的
+  assert.match(src, /第一次登录会看到/,
+    '预览时开场白还在对自己说话，读起来前后打架');
 });

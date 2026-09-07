@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Compass, X, ArrowRight, ArrowLeft, CheckCircle2, CornerLeftUp, MousePointerClick } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useApp } from '../context/AppContext';
+import { PERSONA_TO_ROLE } from '../constants';
 import { dataService } from '../services/dataService';
 import { getTour } from '../src/modules/onboarding/steps';
 
@@ -40,6 +41,12 @@ import { getTour } from '../src/modules/onboarding/steps';
 
 const seenKey = (userId: string) => `onboard_seen_${userId}`;
 
+/** 预览时标题上写谁的引导 */
+const ROLE_LABEL: Record<string, string> = {
+  ADMIN: '总经理', SYS_ADMIN: '系统管理员', MANAGER: '总助',
+  SALES: '销售', CONSULTANT: '咨询顾问', FINANCE: '财务',
+};
+
 /** 高亮框四周留的空隙 */
 const PAD = 8;
 const CARD_W = 380;
@@ -55,7 +62,7 @@ export const OnboardingTour: React.FC<{
   forceOpen?: boolean;
   onClose?: () => void;
 }> = ({ forceOpen = false, onClose }) => {
-  const { currentUser } = useApp();
+  const { currentUser, previewPersona } = useApp();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [i, setI] = useState(0);
@@ -68,18 +75,36 @@ export const OnboardingTour: React.FC<{
   const [cardH, setCardH] = useState(300);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  const tour = getTour(currentUser?.roles as any);
+  /*
+    ── 引导跟着预览视角走（2026-09-07）──────────────────────────
+
+    右上角切视角本来只换工作台和菜单，引导仍然是**自己那一份** ——
+    于是「我想看看顾问的引导长什么样」这件事，只能去借顾问的账号登录，
+    而借账号又要重置密码，重置完人家下次登录就被要求改密码。
+    为了看一眼引导，惊动一个正在干活的同事，代价完全不成比例。
+
+    巡检视角存在的意义就是「看看同事看到什么」，
+    引导是同事看到的第一样东西，没有理由被排除在外。
+
+    **预览时不写「看过」标记**：那是别人的引导，不该算进自己的进度，
+    也不该让自己那份下次不弹了。
+  */
+  const previewRole = previewPersona ? PERSONA_TO_ROLE[previewPersona] : null;
+  const isPreviewing = Boolean(previewRole) && !currentUser?.roles?.includes(previewRole!);
+  const tour = getTour((isPreviewing ? [previewRole!] : currentUser?.roles) as any);
   const isMobile = vw < NARROW;
 
   useEffect(() => {
     if (forceOpen) { setOpen(true); setI(0); return; }
+    // 预览别人的引导只在手动「重看」时出现，不主动弹
+    if (isPreviewing) return;
     if (!tour || !currentUser?.id) return;
     try {
       const seen = Number(dataService.get(seenKey(currentUser.id), 0));
       // 版本比对而不是布尔值：内容有实质更新时 +1，看过旧版的人会再看一次
       if (seen < tour.version) setOpen(true);
     } catch { /* 读不到就不弹，不打扰 */ }
-  }, [forceOpen, tour, currentUser?.id]);
+  }, [forceOpen, tour, currentUser?.id, isPreviewing]);
 
   const step = open && tour && i > 0 ? tour.steps[i - 1] : null;
   const targetSel = step?.target;
@@ -197,7 +222,8 @@ export const OnboardingTour: React.FC<{
 
   const finish = () => {
     try {
-      if (currentUser?.id) dataService.set(seenKey(currentUser.id), tour.version);
+      // 预览别人的引导时不留痕：那不是自己的进度
+      if (currentUser?.id && !isPreviewing) dataService.set(seenKey(currentUser.id), tour.version);
     } catch { /* 记不住就下次再弹一遍，无所谓 */ }
     setOpen(false);
     onClose?.();
@@ -273,9 +299,12 @@ export const OnboardingTour: React.FC<{
       <div className={`flex items-center justify-between gap-3 px-5 shrink-0 ${
         !anchored && isMobile ? 'pt-1.5 pb-2.5' : 'pt-4 pb-3'
       }`}>
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-black text-blue-700">
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-black ${
+          isPreviewing ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'
+        }`}>
           <Compass className="w-3.5 h-3.5" />
-          新手引导
+          {/* 预览时说清这是谁的引导，否则看到「录线索」会以为自己该去录 */}
+          {isPreviewing ? `预览：${ROLE_LABEL[previewRole!] || previewRole}的引导` : '新手引导'}
         </span>
         {/* 跳过键放最显眼的右上角。藏跳过键换来的「完成率」是假的 */}
         <button
@@ -289,7 +318,16 @@ export const OnboardingTour: React.FC<{
       <div className="px-5 pb-1 overflow-y-auto grow">
         {isIntro ? (
           <>
-            <h3 className="text-[17px] font-black leading-snug text-gray-900 mb-2">{currentUser?.name}，欢迎</h3>
+            {/*
+              预览别人的引导时不能写「你的名字，欢迎」——
+              那句话是对本人说的，套在预览上会读成「我是总经理，
+              而这套系统对我来说是……顾问的事」，前后打架。
+            */}
+            <h3 className="text-[17px] font-black leading-snug text-gray-900 mb-2">
+              {isPreviewing
+                ? `${ROLE_LABEL[previewRole!] || previewRole}第一次登录会看到`
+                : `${currentUser?.name}，欢迎`}
+            </h3>
             <div className="text-sm text-gray-800 leading-relaxed prose-sm">
               <ReactMarkdown>{tour.intro}</ReactMarkdown>
             </div>
