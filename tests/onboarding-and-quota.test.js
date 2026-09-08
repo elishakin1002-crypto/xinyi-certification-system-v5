@@ -129,9 +129,9 @@ test('看过就不再自动弹，但内容更新后会再弹一次', () => {
     但用布尔值记的话，引导内容改了也没人会知道 —— 所以比版本号。
   */
   const src = read('components/OnboardingTour.tsx');
-  assert.match(src, /if \(seen < tour\.version\) setOpen\(true\)/,
+  assert.match(src, /if \(seen < tour\.version\) \{ setI\(0\); setOpen\(true\); \}/,
     '没有按版本号判断，改了内容老用户看不到');
-  assert.match(src, /dataService\.set\(seenKey\(currentUser\.id\), tour\.version\)/,
+  assert.match(src, /dataService\.set\(seenKey\(currentUser\.id, tour\.role\), tour\.version\)/,
     '看完没有记下版本号');
 });
 
@@ -420,7 +420,7 @@ test('切了视角，「重看新手引导」就看那个角色的', () => {
   const src = read('components/OnboardingTour.tsx');
   assert.match(src, /const previewRole = previewPersona \? PERSONA_TO_ROLE\[previewPersona\] : null/,
     '引导没有跟着预览视角走');
-  assert.match(src, /getTour\(\(isPreviewing \? \[previewRole!\] : currentUser\?\.roles\) as any\)/,
+  assert.match(src, /getTour\(isPreviewing \? \[previewRole!\] : currentUser\?\.roles, isPreviewing \? previewRole! : currentUser\?\.activeRole\)/,
     '预览时取的还是自己的引导');
 });
 

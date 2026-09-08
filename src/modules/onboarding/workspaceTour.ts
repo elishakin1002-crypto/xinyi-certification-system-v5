@@ -1,30 +1,107 @@
-import { RoleID } from '../../../types';
-import { OnboardTour } from './steps';
+import type { RoleID } from '../../../types';
+import type { OnboardStep, OnboardTour } from './steps';
 
-// 第一层只建立全貌；填单步骤留在模块帮助，避免同一件事讲三遍。
-const roles: Record<RoleID, [string, string]> = {
-  SYS_ADMIN: ['系统管理员', '你关注系统运行、账号权限和使用情况。业务页面帮助你了解同事的工作环境。'],
-  ADMIN: ['总经理', '你关注客户、交付和经营结果，通过各模块了解进展与需要协调的事项。'],
-  MANAGER: ['总助', '你关注客户衔接、项目安排和团队协作，帮助各岗位把工作交接清楚。'],
-  SALES: ['销售', '你关注线索与客户跟进，也可以查看交付进展，及时回应客户。'],
-  CONSULTANT: ['咨询顾问', '你关注服务交付、自己的任务与审核进展，客户和合同提供业务背景。'],
-  FINANCE: ['财务', '你关注合同金额、收付款和开票，客户与项目帮助你核对款项对应的业务。'],
+export interface WorkspaceTour extends OnboardTour {
+  role: RoleID;
+  goal: string;
+  flow: string[];
+  firstTask: { title: string; route: string; steps: string[]; result: string; empty: string };
+}
+const step = (route: string, target: string, title: string, body: string): OnboardStep => ({route, target, title, body});
+const help: OnboardStep = {
+  target: 'help', title: '下一步：跟着模块帮助开始工作',
+  body: '「认识我的工作台」帮你找到岗位的工作路线。\n\n「了解当前模块」带你看当前页面的使用顺序；打开表单后，可以再次查看窗口的说明。\n\n「解释这一项」点选不懂的字段、按钮或状态。讲解期间不会执行操作，退出后由你亲自填写和提交。',
 };
-const tours = Object.fromEntries(Object.entries(roles).map(([role, [name, description]]) => [role, {
-  version: 10,
-  intro: `先认识你的工作台，再按需要了解具体模块。\n\n你当前的岗位是**${name}**。${description}`,
-  steps: [
-    { route: '/dashboard', target: 'nav-dashboard', title: '工作台：每天从这里了解进展', body: `${description}\n\n工作台汇总与你岗位相关的待办和进展，具体业务记录放在对应模块里。不同岗位看到的内容会有所不同。` },
-    { target: 'nav-leads', title: '左侧导航：按业务找到入口', body: '导航是系统的目录，只显示当前视角可见的模块。客户业务关注线索、客户和合同；项目交付关注项目、任务与服务进度。\n\n电脑从左侧进入，手机从左上角菜单进入。切换页面不会改变账号权限。' },
-    { target: 'nav-projects', title: '各模块怎样衔接', body: '线索记录合作机会，客户档案汇集往来信息，合同记录合作约定。项目组织服务交付，任务落实到具体人员；财务记录款项与开票。\n\n这些模块通过关联信息衔接，查看范围和可执行操作由岗位权限决定。' },
-    { route: '/dashboard', target: 'workspace-content', title: '中间工作区：当前模块的内容', body: '选中模块后，内容在这里展开。顶部通常是概况和筛选，中间是列表或看板，详情窗口展示某一笔业务。\n\n想知道当前页面的使用顺序，打开帮助，选择「了解当前模块」。' },
-    { target: role === 'SYS_ADMIN' ? 'nav-employees' : role === 'FINANCE' ? 'nav-finance' : 'nav-my-tasks', title: role === 'SYS_ADMIN' ? '账号与权限：维护同事的工作入口' : role === 'FINANCE' ? '财务管理：核对业务与款项' : '我的任务：找到自己负责的工作', body: role === 'SYS_ADMIN' ? '员工账号用于维护人员和职责。账号权限决定能看哪些内容、能执行哪些操作；预览其他岗位只是查看对应视角。' : role === 'FINANCE' ? '财务页面集中查看收付款和开票情况，并关联客户、合同等业务信息。合同金额、已收款和已开票各有含义，不能互相代替。' : '我的任务集中显示分配给你的工作，项目管理展示整项服务的全貌。两处关联同一批任务，方便从个人工作回到项目背景。' },
-    { target: 'help', title: '需要帮助时，随时回来', body: '「认识我的工作台」看系统全貌。\n\n「了解当前模块」看用途、工作顺序和区域分工。\n\n「解释这一项」点选具体按钮、字段或数据，只解释你选中的内容。' },
-  ],
-}])) as Record<RoleID, OnboardTour>;
+// 岗位引导讲交接关系和结果；字段与提交方法放在第二、三层按需展开。
+const tours: Record<RoleID, WorkspaceTour> = {
+  SALES: {
+    role: 'SALES', version: 11,
+    intro: '你当前是**销售**。先熟悉客户从哪里来、跟进记在哪里、成交后怎样查交付。导航在电脑左侧，手机左上角菜单里。',
+    goal: '找到今天要联系的客户，并知道联系结果该记在哪里。',
+    flow: ['发现线索', '记录跟进', '查看客户', '衔接交付'],
+    steps: [
+      step('/dashboard', 'workspace-content', '每天先看：今天该联系谁', '销售工作台汇总你的线索、跟进和待办。先看今天要联系的对象，再进入线索管理看详情。\n\n没有待办不代表没有客户；可以在对应列表里检查筛选范围。'),
+      step('/leads', 'workspace-content', '线索管理：把每次联系接起来', '线索是还在接洽的合作机会。看客户名称、跟进人和跟进记录，确认上次谈到哪里。\n\n每次联系结束后补充实际结果和后续安排，下一次联系或同事接手时才有依据。标着「样例」的内容只用于认识界面。'),
+      step('/customers', 'workspace-content', '客户管理：查合作背景', '客户档案汇集联系人及关联业务。联系老客户前，先看已有合作和证书信息。\n\n同一家企业已有档案时先查找，避免重复建立；线索转为客户后，要检查关联是否正确。'),
+      step('/projects', 'workspace-content', '交付进展：回答客户时有依据', '客户询问服务进展时，到关联项目查看服务、任务和负责人。\n\n看得见进度不代表可以修改所有任务。需要推进或调整时，与负责交付的同事确认，按实际进展回应客户。'),
+      step('/my-tasks', 'workspace-content', '我的任务：别漏掉交接给你的事', '这里集中展示分配给你的任务。任务属于原来的项目，从任务回到项目可以查看完整背景。\n\n实际做完后再更新状态；有困难先联系负责人，不要为了清空待办提前标完成。'), help,
+    ],
+    firstTask: {title: '从一条待跟进线索开始', route: '/leads', steps: ['找一条由你跟进的真实线索，查看已有记录', '实际联系后，再记录结果和后续安排', '回到该线索确认记录已经显示'], result: '这条线索能看清最近一次联系结果和下一步安排。', empty: '没有分配给你的线索时，先联系总助确认；有真实新机会再使用「新增线索」。'},
+  },
+  CONSULTANT: {
+    role: 'CONSULTANT', version: 11,
+    intro: '你当前是**咨询顾问**。先熟悉自己的任务、项目资料和交付记录。导航在电脑左侧，手机左上角菜单里。',
+    goal: '找到自己今天的任务，知道去哪里补交付进度和工作记录。',
+    flow: ['查看任务', '了解项目', '查找资料', '记录交付'],
+    steps: [
+      step('/my-tasks', 'workspace-content', '每天先看：我的任务', '先查看已超期和近期到期的任务，再确认负责人、截止日期和所属项目。\n\n这里与项目管理关联同一批任务，不需要在两个地方重复登记。'),
+      step('/projects', 'workspace-content', '项目管理：先了解要交什么', '进入你负责的项目，查看客户、服务内容、任务和截止日期。项目说明交付全貌，任务说明具体要做的事。\n\n列表找不到项目时先检查筛选；样例只用于认识界面，不是分配给你的工作。'),
+      step('/knowledge', 'workspace-content', '知识中心：先找可复用的资料', '先按关键词查找标准、模板和已有案例，再判断是否适合当前客户与服务。\n\n上传文件不会自动生成 AI 摘要；需要摘要时再主动使用相应功能。'),
+      step('/audit', 'workspace-content', '不符合项：问题要有后续', '这里记录审核发现的问题及整改进展。先确认问题对应的客户或项目，再查看整改要求、期限和证据。\n\n实际整改与证据齐备后，再按权限推进处理状态。'),
+      step('/projects', 'workspace-content', '交付后：进度和工作记录要跟上', '完成实际工作后，在对应项目更新任务，并核对工作日志。项目详情里的「工作日志」用于记录做了什么和工时。\n\n先检查已有记录再补充，避免重复记；任务状态、日志和交付资料各有用途。'), help,
+    ],
+    firstTask: {title: '从自己的一条任务开始', route: '/my-tasks', steps: ['找一条自己的真实任务，核对期限与项目', '打开所属项目，了解服务内容和完成要求', '实际工作后更新任务，并在项目中核对工作日志'], result: '能从任务回到项目，查到实际进度和对应工作记录。', empty: '没有任务时，先向项目负责人确认安排，不要把样例当作待办。'},
+  },
+  FINANCE: {
+    role: 'FINANCE', version: 11,
+    intro: '你当前是**财务**。先熟悉合同、回款与顾问结算的关系。导航在电脑左侧，手机左上角菜单里。',
+    goal: '找到一笔待核对款项，知道如何查合同依据与处理结果。',
+    flow: ['核对合同', '查看应收', '核实到账', '核对结算'],
+    steps: [
+      step('/finance', 'workspace-content', '每天先看：应收与逾期', '回款概览集中显示应收与已收情况。先查近期应收和逾期款项，确认对应客户与合同。\n\n应收是约定要收到的钱，已收才是已经确认的到账，两者要分开看。'),
+      step('/contracts', 'workspace-content', '合同管理：找到金额依据', '核对客户、合同金额及付款安排，再判断这笔应收是否正确。\n\n历史合同补录与新合同录入用途不同。发现约定不一致时先核实，不直接用到账状态掩盖差异。'),
+      step('/finance', 'workspace-content', '确认到账：以实际收款为准', '先核实真实到账，再使用界面上的「确认到账」。记录中的客户、合同和金额要对应同一笔业务。\n\n提交后回到回款列表核对结果，不能把已开票或客户口头承诺当成到账。'),
+      step('/finance/settlements', 'workspace-content', '顾问结算：先检查明细和依据', '顾问结算与客户回款是不同的工作。先看结算对象、项目和明细，再按实际情况处理。\n\n有差异时核对来源记录并说明原因，不为了结束流程直接确认。'),
+      step('/projects', 'workspace-content', '业务有疑问：回项目查交付背景', '合同说明合作约定，项目说明实际交付。核对结算或业务归属时，到关联项目查看服务和记录。\n\n需要顾问补资料时说清具体项目和缺项，便于对方在原记录补齐。'), help,
+    ],
+    firstTask: {title: '先核对一笔应收', route: '/finance', steps: ['找到一笔真实应收，核对客户、合同与金额', '对照合同约定及实际到账凭据', '确已到账再确认，并回到列表检查结果'], result: '款项能对应到正确合同，列表状态与实际收款一致。', empty: '没有应收记录时，先核对合同和付款安排是否已录入；不要为了练习确认样例。'},
+  },
+  MANAGER: {
+    role: 'MANAGER', version: 11,
+    intro: '你当前是**总助**。先熟悉团队安排、项目交接与跟踪入口。导航在电脑左侧，手机左上角菜单里。',
+    goal: '找到一项需要协调的工作，确认负责人、期限和后续结果。',
+    flow: ['看团队待办', '确认项目', '落实负责人', '跟踪交付'],
+    steps: [
+      step('/dashboard', 'team-capacity', '每天先看：团队工作安排', '先看团队手上的项目和待协调事项，确认哪里需要支持，再安排新工作。\n\n指标帮助发现问题，具体原因要回到项目和任务里核实。'),
+      step('/leads', 'workspace-content', '客户交接：先把背景记清楚', '线索记录合作机会和跟进情况。接到需要协助的客户事项，先查已有记录，再补实际信息。\n\n联系人、跟进人和后续安排清楚，交接才不会只停留在聊天消息里。'),
+      step('/projects', 'workspace-content', '项目管理：让工作有归属', '查看项目的客户、服务内容、负责人和期限。新工作先确认已有项目是否能承接，再决定是否新建。\n\n需要新建时，由当前模块帮助介绍立项流程；避免为同一件事重复建项目。'),
+      step('/my-tasks', 'workspace-content', '派出后的任务：继续看结果', '「我的任务」可以查看自己的工作，也可按界面提供的范围查看「我派出去的」。\n\n派出不等于完成，继续核对负责人、期限和状态；任务具体内容仍在所属项目中。'),
+      step('/projects', 'workspace-content', '卡住的项目：把下一步说清楚', '项目延期或资料缺失时，先确认是哪项任务、谁在负责、需要什么支持。\n\n与负责人沟通后按实际安排更新。款项核实交给财务办理，项目进度不能代替到账确认。'), help,
+    ],
+    firstTask: {title: '检查一项正在推进的工作', route: '/projects', steps: ['找到一项正在推进的真实项目', '查看服务、负责人和最近要完成的任务', '发现缺项时联系负责人补齐，并回到项目核对'], result: '项目能说清谁负责、下一步做什么、何时完成。', empty: '没有项目时，先确认实际工作安排；确有新工作再使用「新建项目」。'},
+  },
+  ADMIN: {
+    role: 'ADMIN', version: 11,
+    intro: '你当前是**总经理**。先熟悉经营风险、团队交付和复盘入口。导航在电脑左侧，手机左上角菜单里。',
+    goal: '从一个经营指标找到具体业务，并明确交给谁跟进。',
+    flow: ['查看风险', '追查业务', '协调负责人', '回看结果'],
+    steps: [
+      step('/dashboard', 'boss-kpi', '每天先看：经营概况与风险', '先看本月业务和逾期回款，再看团队交付情况。数字用于发现需要关注的事项。\n\n合同金额不等于实际收款；判断一件事前，进入对应模块核对明细。'),
+      step('/finance', 'workspace-content', '回款风险：找到具体合同', '在回款概览查看逾期款项对应的客户、合同与金额。需要催收时，先确认实际收款情况，再协调负责同事。\n\n财务核实到账后更新记录，避免只根据看板数字判断。'),
+      step('/projects', 'workspace-content', '交付风险：找到具体负责人', '在项目管理核对服务、负责人和任务进展。遇到延期，先看卡在哪项工作以及需要哪些支持。\n\n协调后回到项目查看实际更新，不把“已安排”当作“已完成”。'),
+      step('/customers', 'workspace-content', '客户经营：看合作和后续机会', '客户档案把合作背景和关联业务汇集在一起。了解重要客户时，结合合同、服务和证书信息查看。\n\n后续跟进要落到具体同事与实际记录，避免只停留在口头安排。'),
+      step('/strategy', 'workspace-content', '经营复盘：把问题变成后续工作', '战略管理用于经营复盘和目标跟进。先看实际数据及缺口，再决定需要推进的工作。\n\n查看角色视角可帮助了解同事界面；预览不改变账号权限，也不是替同事办理业务。'), help,
+    ],
+    firstTask: {title: '从一项经营风险查到明细', route: '/dashboard', steps: ['在工作台选择一项需要关注的风险', '进入相应模块，核对客户、项目或合同明细', '明确负责同事和后续安排，之后回看业务记录'], result: '能说明问题对应哪笔业务、由谁跟进、去哪里看结果。', empty: '没有风险事项时，可查看一个正在进行的项目，熟悉从概况到明细的路径。'},
+  },
+  SYS_ADMIN: {
+    role: 'SYS_ADMIN', version: 11,
+    intro: '你当前是**系统管理员**。先熟悉运行问题、账号权限和审计入口。导航在电脑左侧，手机左上角菜单里。',
+    goal: '找到一个需要处理的系统问题，知道如何定位与回查。',
+    flow: ['看运行问题', '核对账号', '查操作记录', '反馈处理结果'],
+    steps: [
+      step('/dashboard', 'sysadmin-errors', '每天先看：系统有没有影响同事工作', '先查看错误和反馈，了解发生位置、影响人员及现象。\n\n没有错误记录不代表所有体验都正常，还要看同事主动提交的反馈。'),
+      step('/employees', 'workspace-content', '员工账号：先确认人和职责', '这里维护员工账号、状态和职责。为同事处理账号问题前，先确认具体人员和需要的工作范围。\n\n入职、离职和忘记密码分别处理；已有业务记录的人员通常应停用账号，保留历史归属。'),
+      step('/auth-audit', 'workspace-content', '审计日志：按人员和时间找经过', '同事反映操作失败或登录异常时，结合账号、时间和动作查看记录。\n\n日志帮助定位发生了什么，不能仅凭一条失败记录判断原因。'),
+      step('/ai-center', 'workspace-content', 'AI 配置中心：了解运行与用量', '这里集中查看 AI 相关设置、运行情况和用量。先了解当前配置和异常，再判断是否需要调整。\n\n配置变更可能影响同事使用，不以随意修改配置作为入门练习。'),
+      step('/dashboard', 'sysadmin-feedback', '处理后：回到原问题核对', '找到对应反馈，核对现象是否已解决，再说明处理结果。需要复现时明确页面与步骤。\n\n可以通过视角预览了解同事界面；预览不会改变实际账号权限。'), help,
+    ],
+    firstTask: {title: '先检查一条系统反馈', route: '/dashboard', steps: ['查看一条真实错误或同事反馈，确认页面和现象', '按账号、时间及操作到对应模块核对', '确认问题解决后，再更新处理情况'], result: '原问题能对应到核查依据，并能看清当前处理进展。', empty: '没有错误和反馈时，先只读查看员工账号及角色配置，熟悉人员与权限对应关系。'},
+  },
+};
 
-export function getWorkspaceTour(userRoles: RoleID[] | undefined): OnboardTour | null {
-  const role = (['SYS_ADMIN', 'ADMIN', 'MANAGER', 'FINANCE', 'CONSULTANT', 'SALES'] as RoleID[])
-    .find(item => userRoles?.includes(item));
+export function getWorkspaceTour(userRoles: RoleID[] | undefined, activeRole?: RoleID): WorkspaceTour | null {
+  const role = activeRole && userRoles?.includes(activeRole) ? activeRole :
+    (['SYS_ADMIN', 'ADMIN', 'MANAGER', 'FINANCE', 'CONSULTANT', 'SALES'] as RoleID[]).find(item => userRoles?.includes(item));
   return role ? tours[role] : null;
 }

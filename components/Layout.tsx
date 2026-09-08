@@ -41,6 +41,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [replayTour, setReplayTour] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [helpStartMode, setHelpStartMode] = useState<'menu' | 'page'>('menu');
+  const openHelp = () => { setHelpStartMode('menu'); setHelpOpen(true); };
+  const learnCurrentPage = () => { setHelpStartMode('page'); setHelpOpen(true); };
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -490,7 +493,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           <div className="flex items-center space-x-2 shrink-0">
             {/* 手机上更需要这个入口：屏幕小、说明文字都被折叠了 */}
             <button
-              onClick={() => setHelpOpen(true)}
+              onClick={openHelp}
               data-onboard="help" aria-label="帮助"
               className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
             >
@@ -620,7 +623,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
              */}
              <button
                data-onboard="help"
-               onClick={() => setHelpOpen(true)}
+               onClick={openHelp}
                aria-label="帮助"
                title="新手引导：认识我的工作台 / 了解当前模块 / 解释这一项"
                className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
@@ -727,7 +730,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       */}
                       <button
                         type="button"
-                        onClick={() => { setHelpOpen(true); setIsAccountMenuOpen(false); }}
+                        onClick={() => { openHelp(); setIsAccountMenuOpen(false); }}
                         className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
                       >
                         <Compass className="w-4 h-4 shrink-0" />
@@ -809,8 +812,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         )}
         <FeedbackModal open={isFeedbackOpen} onClose={() => setIsFeedbackOpen(false)} />
-        <OnboardingTour forceOpen={replayTour} onClose={() => setReplayTour(false)} onHelp={() => setHelpOpen(true)} />
-        <HelpHub open={helpOpen} onClose={() => setHelpOpen(false)} onOpen={() => setHelpOpen(true)} onReplayTour={() => setReplayTour(true)} />
+        <OnboardingTour forceOpen={replayTour} onClose={() => setReplayTour(false)} onHelp={openHelp} onLearnPage={learnCurrentPage} />
+        <HelpHub initialMode={helpStartMode} open={helpOpen} onClose={() => setHelpOpen(false)} onOpen={openHelp} onReplayTour={() => setReplayTour(true)} />
       </div>
     </div>
   );

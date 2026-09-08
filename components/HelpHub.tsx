@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useApp } from '../context/AppContext';
+import { PERSONA_TO_ROLE } from '../constants';
+import { adaptPageGuide, RolePageGuide } from '../src/modules/help/rolePageGuide';
 import { Compass, FileText, MousePointerClick, X, ArrowLeft, HelpCircle, AlertTriangle, Lightbulb, ArrowRight } from 'lucide-react';
-import { findPageGuide, findModalGuide, GuideEntry } from '../src/modules/help/pageGuide';
+import { findPageGuide, findModalGuide } from '../src/modules/help/pageGuide';
 import { explainControl, ControlKind, ControlHelp } from '../src/modules/help/controlGuide';
 
 /**
@@ -163,15 +166,18 @@ const SELECTABLE = [
 
 export const HelpHub: React.FC<{
   open: boolean;
+  initialMode?: 'menu' | 'page';
   onClose: () => void;
   /** 点「岗位上手」时调用 —— 引导组件由 Layout 持有 */
   onReplayTour: () => void;
   /** 弹窗遮住头部时，用这个从右下角把帮助叫出来 */
   onOpen: () => void;
-}> = ({ open, onClose, onOpen, onReplayTour }) => {
+}> = ({ open, initialMode = 'menu', onClose, onOpen, onReplayTour }) => {
   const location = useLocation();
+  const { activeRole, previewPersona } = useApp();
+  const guideRole = previewPersona ? PERSONA_TO_ROLE[previewPersona] : activeRole;
   const [mode, setMode] = useState<Mode>('menu');
-  const [guide, setGuide] = useState<GuideEntry | null>(null);
+  const [guide, setGuide] = useState<RolePageGuide | null>(null);
   /** 讲的是弹窗还是整页 —— 标题上要说清楚，否则人以为帮助讲错了地方 */
   const [scope, setScope] = useState<'page' | 'modal'>('page');
   const [pick, setPick] = useState<{ rect: Rect; name: string; help: ControlHelp & { matched: boolean } } | null>(null);
@@ -215,7 +221,7 @@ export const HelpHub: React.FC<{
   }, []);
 
   // 每次打开都从菜单开始：上次停在哪一层是我的实现细节，不该由使用者承担
-  useEffect(() => { if (open) { setMode('menu'); setPick(null); } }, [open]);
+  useEffect(() => { if (open) { setPick(null); if (initialMode === 'page') enterPage(); else setMode('menu'); } }, [open, initialMode]);
 
   /**
    * 找出「现在该讲什么」。
@@ -240,8 +246,8 @@ export const HelpHub: React.FC<{
     }
     pageRoot.current = document.querySelector('main');
     setScope('page');
-    setGuide(findPageGuide(location.pathname));
-  }, [location.pathname]);
+    setGuide(adaptPageGuide(location.pathname, findPageGuide(location.pathname), guideRole));
+  }, [location.pathname, guideRole]);
 
   const enterPage = () => { resolveGuide(); setPageIndex(0); setMode('page'); };
 
@@ -249,6 +255,7 @@ export const HelpHub: React.FC<{
     { title: '这个模块负责什么', text: guide.what },
     { title: '通常按什么顺序使用', text: guide.order.map((line, index) => `${index + 1}. ${line}`).join('\n\n') },
     ...guide.areas.map(area => ({ title: area.name, text: area.role })),
+    ...(guide.result ? [{title: '做完后去哪里看结果', text: guide.result + (guide.empty ? '\n\n没有记录时：' + guide.empty : '')}] : []),
     ...(guide.misread ? [{ title: '使用时留意这一点', text: guide.misread }] : []),
   ] : [];
 
@@ -284,7 +291,7 @@ export const HelpHub: React.FC<{
     return () => { observer.disconnect(); window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
   }, [open, mode, pageIndex, guide]);
 
-  useEffect(() => { if (open && mode === 'page') { resolveGuide(); setPageIndex(0); } }, [location.pathname]);
+  useEffect(() => { if (open && mode === 'page') { resolveGuide(); setPageIndex(0); } }, [location.pathname, guideRole]);
 
   /* ── ③ 单项解释：点哪讲哪 ─────────────────────────────── */
 

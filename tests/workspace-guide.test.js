@@ -25,6 +25,25 @@ test('多岗位沿用管理员优先规则，未知岗位不弹错误引导', ()
   assert.equal(getWorkspaceTour(undefined), null);
   assert.equal(getWorkspaceTour([]), null);
   assert.equal(getWorkspaceTour(['UNKNOWN']), null);
-  assert.equal(getWorkspaceTour(['FINANCE']).steps[4].target, 'nav-finance');
-  assert.equal(getWorkspaceTour(['SYS_ADMIN']).steps[4].target, 'nav-employees');
+  assert.equal(getWorkspaceTour(['FINANCE']).firstTask.route, '/finance');
+  assert.ok(getWorkspaceTour(['SYS_ADMIN']).steps.some(step => step.route === '/employees'));
+});
+
+
+test('每个岗位有独立工作路线、上手任务和结果提示', () => {
+  const roles = ['SYS_ADMIN', 'ADMIN', 'MANAGER', 'FINANCE', 'CONSULTANT', 'SALES'];
+  const tours = roles.map(role => getWorkspaceTour([role]));
+  assert.equal(new Set(tours.map(tour => tour.goal)).size, roles.length);
+  assert.equal(new Set(tours.map(tour => tour.steps.slice(0, 5).map(step => step.body).join(''))).size, roles.length);
+  for (const tour of tours) {
+    assert.equal(tour.flow.length, 4);
+    assert.equal(tour.firstTask.steps.length, 3);
+    assert.ok(tour.firstTask.result && tour.firstTask.empty);
+    assert.ok(tour.steps.some(step => step.route === tour.firstTask.route));
+  }
+});
+
+test('多角色账号按当前角色学习，无效的当前角色不能提升权限', () => {
+  assert.equal(getWorkspaceTour(['ADMIN', 'CONSULTANT'], 'CONSULTANT').role, 'CONSULTANT');
+  assert.equal(getWorkspaceTour(['SALES'], 'SYS_ADMIN').role, 'SALES');
 });

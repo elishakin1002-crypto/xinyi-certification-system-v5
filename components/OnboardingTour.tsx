@@ -39,7 +39,7 @@ import { getWorkspaceTour as getTour } from '../src/modules/onboarding/workspace
  * 5）**必须能重看，看过就不再自动弹。**
  */
 
-const seenKey = (userId: string) => `onboard_seen_${userId}`;
+const seenKey = (userId: string, role: string) => `onboard_seen_${userId}_${role}`;
 
 /** 预览时标题上写谁的引导 */
 const ROLE_LABEL: Record<string, string> = {
@@ -62,7 +62,8 @@ export const OnboardingTour: React.FC<{
   forceOpen?: boolean;
   onClose?: () => void;
   onHelp?: () => void;
-}> = ({ forceOpen = false, onClose, onHelp }) => {
+  onLearnPage?: () => void;
+}> = ({ forceOpen = false, onClose, onHelp, onLearnPage }) => {
   const { currentUser, previewPersona, setIsTourActive } = useApp();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -91,8 +92,8 @@ export const OnboardingTour: React.FC<{
     也不该让自己那份下次不弹了。
   */
   const previewRole = previewPersona ? PERSONA_TO_ROLE[previewPersona] : null;
-  const isPreviewing = Boolean(previewRole) && !currentUser?.roles?.includes(previewRole!);
-  const tour = getTour((isPreviewing ? [previewRole!] : currentUser?.roles) as any);
+  const isPreviewing = Boolean(previewRole);
+  const tour = getTour(isPreviewing ? [previewRole!] : currentUser?.roles, isPreviewing ? previewRole! : currentUser?.activeRole);
   const isMobile = vw < NARROW;
 
   useEffect(() => {
@@ -101,9 +102,9 @@ export const OnboardingTour: React.FC<{
     if (isPreviewing) return;
     if (!tour || !currentUser?.id) return;
     try {
-      const seen = Number(dataService.get(seenKey(currentUser.id), 0));
+      const seen = Number(dataService.get(seenKey(currentUser.id, tour.role), 0));
       // 版本比对而不是布尔值：内容有实质更新时 +1，看过旧版的人会再看一次
-      if (seen < tour.version) setOpen(true);
+      if (seen < tour.version) { setI(0); setOpen(true); }
     } catch { /* 读不到就不弹，不打扰 */ }
   }, [forceOpen, tour, currentUser?.id, isPreviewing]);
 
@@ -233,10 +234,16 @@ export const OnboardingTour: React.FC<{
   const finish = () => {
     try {
       // 预览别人的引导时不留痕：那不是自己的进度
-      if (currentUser?.id && !isPreviewing) dataService.set(seenKey(currentUser.id), tour.version);
+      if (currentUser?.id && !isPreviewing) dataService.set(seenKey(currentUser.id, tour.role), tour.version);
     } catch { /* 记不住就下次再弹一遍，无所谓 */ }
     setOpen(false);
     onClose?.();
+  };
+
+  const learnPage = (route: string) => {
+    finish();
+    navigate(route);
+    onLearnPage?.();
   };
 
   const go = (next: number) => {
@@ -349,6 +356,11 @@ export const OnboardingTour: React.FC<{
             </h3>
             <div className="text-sm text-gray-800 leading-relaxed prose-sm">
               <ReactMarkdown>{tour.intro}</ReactMarkdown>
+              <div className="mt-3 rounded-xl bg-blue-50 px-3 py-3 text-sm text-blue-900">
+                <p className="mb-1 text-xs font-semibold text-blue-600">这次先学会</p>
+                <p>{tour.goal}</p>
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-gray-500">{tour.flow.join(' → ')}</p>
             </div>
           </>
         ) : (
@@ -364,7 +376,7 @@ export const OnboardingTour: React.FC<{
                 <span className="ml-2 font-bold text-gray-300">（这一块现在不在屏幕上）</span>
               )}
             </p>
-            <h3 className="text-[17px] font-semibold leading-snug text-gray-900 mb-2">{step!.title}</h3>
+            <h3 className="text-[17px] font-semibold leading-snug text-gray-900 mb-2">{i === total ? tour.firstTask.title : step!.title}</h3>
             {/* 手机上导航是收起来的，先告诉他要点哪儿才能看到 */}
             {viaMenu && (
               <p className="mb-3 flex items-start gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">
@@ -373,7 +385,11 @@ export const OnboardingTour: React.FC<{
               </p>
             )}
             <div className="text-sm text-gray-700 leading-relaxed">
-              <ReactMarkdown>{step!.body}</ReactMarkdown>
+              {i === total ? <>
+                <ol className="space-y-2">{tour.firstTask.steps.map((line, index) => <li key={line} className="flex gap-2"><span className="shrink-0 font-semibold text-blue-600">{index + 1}.</span><span>{line}</span></li>)}</ol>
+                <div className="mt-3 rounded-xl bg-blue-50 px-3 py-3"><p className="mb-1 text-xs font-semibold text-blue-600">做到这里就算上手</p><p>{tour.firstTask.result}</p></div>
+                <details className="mt-3 text-xs leading-relaxed text-gray-500"><summary className="cursor-pointer py-1">没有数据，或不知道怎么操作？</summary><p className="mt-2">{tour.firstTask.empty}</p><p className="mt-2">点击「开始上手」查看当前模块的操作顺序；字段不懂时用「解释这一项」。讲解不会替你提交业务。</p></details>
+              </> : <ReactMarkdown>{step!.body}</ReactMarkdown>}
             </div>
 
             {/*
@@ -409,6 +425,7 @@ export const OnboardingTour: React.FC<{
           </>
         )}
       </div>
+      {!isIntro && i < total && step?.route && onLearnPage && <button onClick={() => learnPage(step.route!)} className="shrink-0 mx-5 mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100">现在就了解这个模块 →</button>}
 
       <div className="flex items-center justify-between gap-3 px-5 py-3.5 mt-2 border-t border-gray-100 shrink-0">
         {/* 抽屉从顶部下来时，把手挪到底边 */}
@@ -432,9 +449,9 @@ export const OnboardingTour: React.FC<{
               {isIntro ? '开始' : '下一步'} <ArrowRight className="w-3.5 h-3.5" />
             </button>
           ) : (
-            <button onClick={finish}
+            <button onClick={() => learnPage(tour.firstTask.route)}
               className="px-4 h-9 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> 开始使用
+              <CheckCircle2 className="w-3.5 h-3.5" /> 开始上手
             </button>
           )}
         </div>
