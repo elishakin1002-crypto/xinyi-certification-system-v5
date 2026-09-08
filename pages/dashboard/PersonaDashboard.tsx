@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Activity, AlertTriangle, ArrowRight, Briefcase, Coins, Percent, Users } from 'lucide-react';
 import { DashboardCard, RoleDashboardMetrics } from '../../services/dashboardMetrics';
 import { openDashboardRoute } from '../../src/modules/dashboardNavigation';
+import { EmptyState } from '../../src/ui';
 import { MyWorkWidget } from '../../components/MyWorkWidget';
 
 export type PersonaSection = {
@@ -61,7 +62,12 @@ const PersonaDashboard: React.FC<Props> = ({ metrics, headline, emphasisId, sect
           <p className="text-xs text-gray-500 mt-1">{headline.subtitle}</p>
         </div>
         {topCards.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-6 text-sm text-gray-400">暂无数据</div>
+          /* 「暂无数据」只说了没有，没说为什么和该干嘛（2026-09-08 换掉）*/
+          <EmptyState
+            compact
+            title="这一块还没有数字"
+            hint="等有了线索、合同或项目，这里会自动算出来 —— 它不需要你手动填。"
+          />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
             {topCards.map(card => {
@@ -138,7 +144,7 @@ const PersonaDashboard: React.FC<Props> = ({ metrics, headline, emphasisId, sect
             </span>
           </div>
           {section.cards.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-6 text-sm text-gray-400">暂无数据</div>
+            <EmptyState compact title="这一块还没有内容" hint="数据够了它会自己出现。" />
           ) : (
             <div className={`grid ${section.cols} gap-3`}>
               {section.cards.map(card => (

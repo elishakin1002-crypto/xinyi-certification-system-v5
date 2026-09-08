@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { SampleTr } from '../components/SampleRow';
 import { Customer, ContactPerson, Status, Contract, Project, CertificateDetail, AuditNode, FollowUpRecord, UserProfile, KnowledgeDoc, RoleID, AuditIssue } from '../types';
 import { Search, MoreHorizontal, ShieldAlert, BadgeCheck, X, Building, FileText, Briefcase, Globe, Users, Phone, MessageCircle, MapPin, Wallet, Edit3, Save, Plus, Trash2, CalendarClock, Send, Sparkles, Loader2, FileCheck, ArrowRight, Activity, Layers, Target, ChevronRight, Hash, CreditCard, AlignLeft, ScanLine, Eye, Download, Zap, RefreshCw, BellRing, BrainCircuit, MessageSquare, ListTree, Clock, CheckCircle, UploadCloud, Lock } from 'lucide-react';
 import { aiService } from '../services/aiService';
@@ -936,6 +937,12 @@ const Customers = () => {
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
+                    {/* 空状态样例（2026-09-08 补，见 npm run checkup）*/}
+                    <SampleTr empty={filteredCustomers.length === 0} colSpan={6} caption="真实的一行长这样：**累计金额是已签合同的合计，不是已收到的钱** —— 收没收到看回款页。">
+                      <td className="px-4 py-3 text-sm font-bold text-gray-900" colSpan={6}>
+                        温州示范包装有限公司 · 已合作 2 次 · 累计 ¥48,000
+                      </td>
+                    </SampleTr>
                     {filteredCustomers.map(cust => (
                         <tr key={cust.id} className="hover:bg-gray-50/80 cursor-pointer transition-colors group" onClick={() => openDetail(cust)}>
                             <td className={tdClass}>

@@ -1443,7 +1443,41 @@ const Audit = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/*
+          手机上给卡片，不给横向拖的表格（2026-09-08 补）。
+          不符合项这张表有六列（严重度/客户/发现点/整改人/期限/状态），
+          手机上横拖看不完 —— 而顾问在客户现场用的就是手机。
+        */}
+        <div className="block md:hidden divide-y divide-gray-100">
+          {filteredIssues.length === 0 && (
+            <div className="p-4 text-center text-sm font-bold text-gray-400">当前筛选下没有不符合项</div>
+          )}
+          {filteredIssues.map(({ issue }) => (
+            <button
+              key={issue.id}
+              type="button"
+              onClick={() => handleOpenModal(issue)}
+              className="w-full px-4 py-3 text-left active:bg-gray-50"
+            >
+              <div className="flex items-center gap-2">
+                <span className={`rounded-md px-2 py-0.5 text-[10px] font-black ${
+                  issue.severity === 'Major' ? 'bg-red-50 text-red-700'
+                    : issue.severity === 'Minor' ? 'bg-amber-50 text-amber-700'
+                    : 'bg-gray-100 text-gray-600'
+                }`}>
+                  {issue.severity === 'Major' ? '严重' : issue.severity === 'Minor' ? '一般' : '观察'}
+                </span>
+                <span className="truncate text-sm font-black text-gray-900">{issue.customerName}</span>
+              </div>
+              <p className="mt-1 line-clamp-2 text-[12px] font-bold text-gray-600">{issue.findings}</p>
+              <p className="mt-1 text-[11px] font-bold text-gray-500">
+                {issue.status === 'Closed' ? '已关闭' : `整改中 · 期限 ${issue.deadline || '未定'}`}
+              </p>
+            </button>
+          ))}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm text-left">
             <thead className="bg-gray-50 text-gray-600 font-bold text-sm uppercase tracking-widest border-b border-gray-100">
               <tr>

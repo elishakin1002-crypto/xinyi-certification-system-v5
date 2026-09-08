@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ToggleLeft, ToggleRight, Sliders, AlertCircle, ShieldCheck, Lock, EyeOff, FileKey, Activity, Database, ArrowRight, Users, Plus, Trash2, Save } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
+import { EmptyState } from '../src/ui';
 import { RoleID, UserProfile } from '../types';
 import { SYSTEM_ROLES } from '../constants';
 
@@ -14,15 +15,7 @@ const AICenter = () => {
   const [dashboardFocusLabel, setDashboardFocusLabel] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
-  const { userProfiles, updateUserProfile, addUserProfile, deleteUserProfile } = useApp();
-  const [isCreatingUser, setIsCreatingUser] = useState(false);
-  const [newUser, setNewUser] = useState<UserProfile>({
-    id: '',
-    name: '',
-    roles: ['CONSULTANT'],
-    activeRole: 'CONSULTANT',
-    positionTags: []
-  });
+  const { userProfiles, updateUserProfile } = useApp();
 
   const sortedUsers = useMemo(() => {
     return [...userProfiles].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
@@ -261,6 +254,14 @@ const AICenter = () => {
               </div>
 
               <div className="space-y-2">
+                {/* 空状态（2026-09-08 补，见 npm run checkup）*/}
+                {sortedUsers.length === 0 && (
+                  <EmptyState
+                    compact
+                    title="花名册是空的"
+                    hint="人员在「员工账号」页管理，这里只展示。那边开了号，这里就会出现。"
+                  />
+                )}
                 {sortedUsers.map(u => (
                   <div key={u.id} className="p-3 rounded-2xl border border-gray-100 bg-gray-50/30 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                     <div className="flex items-center gap-3 min-w-0">
@@ -281,96 +282,20 @@ const AICenter = () => {
                 ))}
               </div>
 
-              {isCreatingUser && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-                  <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl p-8 animate-in fade-in zoom-in duration-300 border border-gray-100">
-                    <div className="flex justify-between items-center mb-6">
-                      <h2 className="text-xl font-black text-gray-900">新增成员</h2>
-                      <button
-                        onClick={() => { setIsCreatingUser(false); setNewUser({ id: '', name: '', roles: ['CONSULTANT'], activeRole: 'CONSULTANT', positionTags: [] }); }}
-                        className="px-3 py-2 rounded-xl bg-gray-50 border border-gray-100 text-gray-600 text-xs font-bold"
-                      >
-                        关闭
-                      </button>
-                    </div>
+              {/*
+                ── 这里原来有一个「新增人员」弹窗，2026-09-08 拆掉了 ──────
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">成员ID</div>
-                        <input
-                          className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
-                          value={newUser.id}
-                          onChange={(e) => setNewUser(prev => ({ ...prev, id: e.target.value.trim() }))}
-                          placeholder="例如：U-017"
-                        />
-                      </div>
-                      <div>
-                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">姓名</div>
-                        <input
-                          className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
-                          value={newUser.name}
-                          onChange={(e) => setNewUser(prev => ({ ...prev, name: e.target.value }))}
-                          placeholder="例如：张三"
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">岗位标签</div>
-                        <input
-                          className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
-                          value={(newUser.positionTags || []).join('，')}
-                          onChange={(e) => setNewUser(prev => ({ ...prev, positionTags: parseTags(e.target.value) }))}
-                          placeholder="例如：台账指导兼职"
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">角色</div>
-                        <div className="flex flex-wrap gap-2">
-                          {roleOptions.map(r => (
-                            <button
-                              key={r.id}
-                              onClick={() => {
-                                const roles = newUser.roles.includes(r.id)
-                                  ? newUser.roles.filter(x => x !== r.id)
-                                  : [...newUser.roles, r.id];
-                                if (roles.length === 0) return;
-                                const activeRole = roles.includes(newUser.activeRole) ? newUser.activeRole : roles[0];
-                                setNewUser(prev => ({ ...prev, roles, activeRole }));
-                              }}
-                              className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
-                                newUser.roles.includes(r.id)
-                                  ? 'bg-indigo-600 text-white border-indigo-600'
-                                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                              }`}
-                            >
-                              {r.name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
+                它调 addUserProfile 往**浏览器里的花名册**加一条，
+                而花名册每次都会从「员工账号」(auth_users) 重新同步覆盖
+                （见 AppContext 里 hydrateProfilesFromAuth）。
 
-                    <div className="flex justify-end gap-3 mt-8">
-                      <button
-                        onClick={() => { setIsCreatingUser(false); setNewUser({ id: '', name: '', roles: ['CONSULTANT'], activeRole: 'CONSULTANT', positionTags: [] }); }}
-                        className="px-6 py-3 font-bold text-gray-400"
-                      >
-                        取消
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (!newUser.id || !newUser.name || newUser.roles.length === 0) return;
-                          addUserProfile(newUser);
-                          setIsCreatingUser(false);
-                          setNewUser({ id: '', name: '', roles: ['CONSULTANT'], activeRole: 'CONSULTANT', positionTags: [] });
-                        }}
-                        className="px-10 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 shadow-xl shadow-indigo-500/20 transition-all active:scale-95"
-                      >
-                        确认新增
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
+                也就是说：人认真填完表、点了「确认新增」，
+                **下次刷新那个人就没了，而且全程不报错**。
+                比功能缺失更糟 —— 缺失至少他知道要去别处办。
+
+                这一页自己写着「人员统一在员工账号页管理，此处仅展示」，
+                代码却和这句话相反。留着的是那句话，拆掉的是这个入口。
+              */}
           </div>
       </div>
     </div>

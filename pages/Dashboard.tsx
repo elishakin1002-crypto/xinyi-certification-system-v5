@@ -19,6 +19,7 @@ import {
   Database
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { EmptyState } from '../src/ui';
 import { AggregatedReminder, Reminder, DashboardPersona, Status } from '../types';
 import { useLocation, useNavigate } from 'react-router-dom';
 import SysAdminBoard from './dashboard/SysAdminBoard';
@@ -1621,10 +1622,18 @@ const Dashboard = () => {
                   </div>
                 ))}
 
+              {/*
+                空状态换成统一组件（2026-09-08）。
+                原来只有一句「恭喜！暂无待办任务」—— 它说了「没有」，
+                但**没说这一块本来会放什么**。
+                新人第一次进来看到的就是这一屏，一句"恭喜"帮不上他。
+              */}
               {reminderView === 'detail' && detailReminders.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-full py-12 text-center opacity-40">
-                  <CheckCircle className="w-12 h-12 text-gray-300 mb-3" />
-                  <p className="text-gray-400 text-sm font-medium">恭喜！暂无待办任务</p>
+                <div className="py-6">
+                  <EmptyState
+                    title="没有待办，可以歇会儿"
+                    hint="证书快到期、回款逾期、任务超期时，提醒会自动出现在这里 —— 不用你去别处翻。"
+                  />
                 </div>
               )}
 

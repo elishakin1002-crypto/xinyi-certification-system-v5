@@ -20,6 +20,8 @@ import {
   CalendarCheck
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { EmptyState } from '../src/ui';
+import { SampleRow } from '../components/SampleRow';
 import { StrategicTask } from '../types';
 import { useLocation } from 'react-router-dom';
 import MonthlyReview from '../components/MonthlyReview';
@@ -405,7 +407,32 @@ const Strategy = () => {
                               <span className="bg-gray-200 text-gray-600 text-[10px] px-2 py-0.5 rounded-full font-bold">{strategicTasks.filter(t => t.status === 'Pending').length}</span>
                           </div>
                           <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
-                              {strategicTasks.filter(t => t.status === 'Pending').map(task => <TaskCard key={task.id} task={task} />)}
+                              {/*
+                                空状态 + 样例（2026-09-08 补，见 npm run checkup）。
+                                战略页是最容易空着的一页 —— 一年只动几次，
+                                而空着的看板不会告诉人「这里本来该放什么」。
+                              */}
+                              {strategicTasks.filter(t => t.status === 'Pending').length === 0 ? (
+                                <>
+                                  <EmptyState
+                                    compact
+                                    title="还没有战役"
+                                    hint="把今年要打的仗拆成几条，比如「拿下三家食品厂」。它不管某一单，只管方向。"
+                                  />
+                                  <SampleRow
+                                    empty
+                                    className="mt-3"
+                                    caption="真实的一张长这样：写清**要什么结果**，不写「加强…」这种没法验收的话。"
+                                  >
+                                    <div>
+                                      <p className="text-sm font-black text-gray-900">拿下 3 家规模以上食品厂</p>
+                                      <p className="mt-1 text-[11px] font-bold text-gray-500">负责人：金恩来 · 截止 2026-12-31</p>
+                                    </div>
+                                  </SampleRow>
+                                </>
+                              ) : (
+                                strategicTasks.filter(t => t.status === 'Pending').map(task => <TaskCard key={task.id} task={task} />)
+                              )}
                           </div>
                       </div>
 

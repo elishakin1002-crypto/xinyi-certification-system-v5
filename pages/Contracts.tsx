@@ -1,6 +1,7 @@
 
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { SampleTr } from '../components/SampleRow';
 import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search, FileSpreadsheet } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { aiService } from '../services/aiService'; 
@@ -1145,6 +1146,12 @@ const Contracts = () => {
                 </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
+                    {/* 空状态样例（2026-09-08 补，见 npm run checkup）*/}
+                    <SampleTr empty={filteredContracts.length === 0} colSpan={7} caption="真实的一行长这样：**合同金额 ≠ 营收 ≠ 已收款**，三个数不一样是正常的。">
+                      <td className="px-4 py-3 text-sm font-bold text-gray-900" colSpan={7}>
+                        XY-2026-0001 · 温州示范包装有限公司 · 咨询服务合同书 ¥30,000
+                      </td>
+                    </SampleTr>
                 {filteredContracts.map(contract => {
                     const linkedProject = getLinkedProject(contract);
                     const progress = calculateProgress(contract);

@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Check, KeyRound, Loader2, Plus, RefreshCw, Save, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { ACTION_META, ACTION_GROUPS, ROLE_CAPABILITIES, SYSTEM_ROLES } from '../constants';
 import { useApp } from '../context/AppContext';
+import { SampleTr } from '../components/SampleRow';
+import { EmptyState } from '../src/ui';
 import { RoleID, ActionCode } from '../types';
 import { authService, EmployeeAccount, EmployeeAccountInput } from '../services/authService';
 
@@ -334,7 +336,50 @@ const Employees: React.FC = () => {
               加载中
             </div>
           ) : (
-            <div className="overflow-x-auto">
+          <>
+            {/*
+              ── 手机上给卡片，不给横向拖的表格（2026-09-08 补）──────
+
+              这一页原来只有一张 8 列的表格套在 overflow-x-auto 里。
+              技术上"能用"，实际在手机上要左右拖三四次才能看完一个人 ——
+              而**总助和老板恰恰会在手机上开这一页**（停用离职的人、
+              给忘密码的人重置，都是随时随地发生的事）。
+
+              和项目管理同一套做法：窄屏一张卡片一个人，宽屏才用表格。
+            */}
+            <div className="block md:hidden divide-y divide-gray-100">
+              {visibleUsers.length === 0 && (
+                <div className="p-4">
+                  <EmptyState compact title="还没有员工账号" hint="点右上角「新建员工」开号。权限跟着岗位走，不用一项项勾。" />
+                </div>
+              )}
+              {visibleUsers.map(user => (
+                <button
+                  key={user.id}
+                  type="button"
+                  onClick={() => selectUser(user)}
+                  className="w-full px-4 py-3 text-left active:bg-gray-50"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-black text-gray-900">{user.name}</span>
+                    {user.status === 'disabled' && (
+                      <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[10px] font-black text-gray-500">已停用</span>
+                    )}
+                    {user.mustChangePassword && (
+                      <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700">需改密</span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-[11px] font-bold text-gray-500">
+                    {user.username || user.email || '—'}
+                    <span className="mx-1 text-gray-300">·</span>
+                    {(user.roles || []).map(r => SYSTEM_ROLES.find(x => x.id === r)?.name || r).join('、') || '未分配岗位'}
+                  </div>
+                  <div className="mt-1 text-[11px] font-bold text-indigo-600">点这里编辑、停用或重置密码 →</div>
+                </button>
+              ))}
+            </div>
+
+            <div className="hidden md:block overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50 text-xs text-gray-500">
                   <tr>
@@ -354,6 +399,16 @@ const Employees: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
+                  {/* 空状态样例（2026-09-08 补，见 npm run checkup）*/}
+                  <SampleTr
+                    empty={visibleUsers.length === 0}
+                    colSpan={5}
+                    caption="真实的一行长这样：人走了点「停用」不要点删除 —— 删了他做过的记录就成了「不知道谁做的」。"
+                  >
+                    <td className="px-4 py-3 text-sm font-bold text-gray-900" colSpan={5}>
+                      张示例 · 咨询顾问 · 最近登录 2026-09-08
+                    </td>
+                  </SampleTr>
                   {/* 整行都能点开编辑 —— 小按钮不是每个人都会去找 */}
                   {visibleUsers.map(user => (
                     <tr
@@ -442,6 +497,7 @@ const Employees: React.FC = () => {
                 </tbody>
               </table>
             </div>
+          </>
           )}
         </section>
 

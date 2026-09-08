@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { SampleRow } from '../components/SampleRow';
+import { EmptyState } from '../src/ui';
 import { FileText, Download, Search, X, Upload, Loader2, BrainCircuit, Trash2, Database, Zap, BookOpen, Sparkles, ArrowRight, Bot, ExternalLink, RefreshCw, Lock, Eye, ShieldCheck, FileKey, Paperclip } from 'lucide-react';
 import { AuditEvidence, AuditIssue, KnowledgeDoc, RoleID } from '../types';
 import { SYSTEM_ROLES } from '../constants';
@@ -569,10 +571,38 @@ const Knowledge = () => {
               </div>
           );})}
       </div>
+      {/*
+        空状态 + 样例（2026-09-08 补）。
+
+        金恩来 2026-09-07：「每个板块中因为需要引导新手介绍功能，
+        需要保留一个例子……否则新手引导的卡片做了也几乎等于白做，
+        没有内容谁会看？看了谁又能记得住？」
+
+        当时我只做了引导走到的 5 个页面，这一页是补上的。
+        体检表（npm run checkup）就是为了不再让这种事靠人记。
+      */}
       {filteredDocs.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-gray-200 bg-white py-10 text-center text-sm text-gray-400">
-              当前筛选下暂无知识文档。
-          </div>
+        <>
+          <EmptyState
+            title="这里还没有文档"
+            hint="把体系文件、模板、以前项目的复盘传上来。传的时候花五秒选对分类，以后能省很多找的时间。"
+          />
+          <SampleRow
+            empty
+            className="mt-4"
+            caption="真实的一份长这样：标题写清「是什么 + 给谁的」，右上角标着可信层级 —— 「标准原文」可以直接照着答，「我们的经验」AI 引用时会说明是经验不是规定。"
+          >
+            <div>
+              <p className="text-sm font-black text-gray-900">经验｜塑编 SC｜车间隔离不到位</p>
+              <p className="mt-1 text-[11px] font-bold text-gray-500">
+                经验沉淀 · 我们的经验 · 由不符合项关闭时记录
+              </p>
+              <p className="mt-2 text-[12px] leading-relaxed text-gray-600">
+                塑编厂的车间隔离，进场第一天就要看有没有物理隔断，光看平面图会漏。
+              </p>
+            </div>
+          </SampleRow>
+        </>
       )}
 
       {/* Upload Modal with Security Toggle */}

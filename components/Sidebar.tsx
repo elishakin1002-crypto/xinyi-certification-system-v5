@@ -15,8 +15,7 @@ import {
   ClipboardCheck,
   X,
   UserCog,
-  FileClock
-} from 'lucide-react';
+  FileClock, ListTodo } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { ROLE_PERMISSIONS, ROLE_CAPABILITIES, PERSONA_TO_ROLE } from '../constants';
 import { ActionCode, PermissionCode, RoleID } from '../types';
@@ -123,10 +122,29 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
 
       <nav className="flex-1 overflow-y-auto px-2 py-4 space-y-1 no-scrollbar">
         {/* Workspace */}
+        {/*
+          ── 个人视角的两项放最上面，不进任何分组（2026-09-08 调整）──
+
+          金恩来：「导航栏也会显得干净简单一些」—— 目标是对的，
+          但他的方案（把我的任务并进项目管理当开关）会把最高频的入口藏起来。
+
+          换了一刀：**工作台和我的任务是「个人视角」，不是业务模块**，
+          所以它们不该待在业务分组里。提到最上面并列，
+          原来的「项目交付」组就只剩项目管理一个孩子，正好打平。
+
+          成熟工具都是这么摆的：Asana 的 My Tasks、Linear 的 My Issues、
+          Jira 的 Your work，全是侧边栏顶级项 —— 没有一个藏进项目列表。
+        */}
         <NavLink data-onboard="nav-dashboard" to="/dashboard" className={navClass} onClick={handleLinkClick}>
           <LayoutDashboard className="w-5 h-5 mr-3" />
           工作台
         </NavLink>
+        {hasPermission('NAV_DELIVERY') && inView('NAV_DELIVERY') && (
+          <NavLink data-onboard="nav-my-tasks" to="/my-tasks" className={navClass} onClick={handleLinkClick}>
+            <ListTodo className="w-5 h-5 mr-3" />
+            我的任务
+          </NavLink>
+        )}
 
         {/* CRM Group */}
         {hasPermission('NAV_CRM') && inView('NAV_CRM') && (
@@ -155,35 +173,13 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
         </div>
         )}
 
-        {/* Delivery Group */}
-        {/* 这一项原来漏了 inView —— 预览成财务时，项目交付照样挂在那儿 */}
+        {/* 项目管理：原来是「项目交付」分组，组里只剩它一个孩子，打平（2026-09-08）*/}
         {hasPermission('NAV_DELIVERY') && inView('NAV_DELIVERY') && (
         <div className="pt-2">
-          <button 
-            onClick={() => toggleGroup('delivery')}
-            className="flex items-center justify-between w-full px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-300"
-          >
-            <div className="flex items-center">
-              <Briefcase className="w-4 h-4 mr-2" />
-              项目交付
-            </div>
-            {expandedGroups['delivery'] ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-          </button>
-          
-          {expandedGroups['delivery'] && (
-            <div className="mt-1 space-y-1 pl-4">
-              {/*
-                「我的任务」排在项目管理**前面**：它是使用频率最高的一页。
-
-                在它之前，任务只存在于项目详情里，顾问想知道今天要干什么
-                得把手上每个项目挨个点开 —— 而他可能有五六个项目。
-                结果是大家不看系统，看微信群和记性，
-                于是截止日期成了摆设、延误率也没了意义。
-              */}
-              <NavLink data-onboard="nav-my-tasks" to="/my-tasks" className={navClass} onClick={handleLinkClick}>我的任务</NavLink>
-              <NavLink data-onboard="nav-projects" to="/projects" className={navClass} onClick={handleLinkClick}>项目管理</NavLink>
-            </div>
-          )}
+          <NavLink data-onboard="nav-projects" to="/projects" className={navClass} onClick={handleLinkClick}>
+            <Briefcase className="w-5 h-5 mr-3" />
+            项目管理
+          </NavLink>
         </div>
         )}
 
@@ -210,27 +206,13 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
         </div>
         )}
 
-        {/* Audit Group */}
+        {/* 不符合项管理：原来是「审核与整改」分组，只有一个孩子，打平（2026-09-08）*/}
         {hasPermission('NAV_AUDIT') && inView('NAV_AUDIT') && (
         <div className="pt-2">
-          <button 
-            onClick={() => toggleGroup('audit')}
-            className="flex items-center justify-between w-full px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-300"
-          >
-             <div className="flex items-center">
-              <FileText className="w-4 h-4 mr-2" />
-              审核与整改
-            </div>
-            {expandedGroups['audit'] ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-          </button>
-           {expandedGroups['audit'] && (
-            <div className="mt-1 space-y-1 pl-4">
-              <NavLink data-onboard="nav-audit" to="/audit" className={navClass} onClick={handleLinkClick}>
-                <ClipboardCheck className="w-4 h-4 mr-3" />
-                不符合项管理
-              </NavLink>
-            </div>
-          )}
+          <NavLink data-onboard="nav-audit" to="/audit" className={navClass} onClick={handleLinkClick}>
+            <ClipboardCheck className="w-5 h-5 mr-3" />
+            不符合项管理
+          </NavLink>
         </div>
         )}
 

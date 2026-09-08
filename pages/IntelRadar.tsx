@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { EmptyState } from '../src/ui';
+import { SampleRow } from '../components/SampleRow';
 import { INTEL_INDUSTRIES, INTEL_REGIONS } from '../constants';
 import { MarketSignal } from '../types';
 import { intelService } from '../services/intelService';
@@ -836,8 +838,22 @@ const IntelRadar = () => {
               )}
               <div className="divide-y divide-gray-100 max-h-[60vh] lg:max-h-none overflow-y-auto lg:overflow-visible">
                 {filtered.length === 0 ? (
-                  <div className="p-10 text-center text-gray-400 text-sm">
-                    暂无情报。点击右上角“抓取今日情报”开始。
+                  /* 空状态 + 样例（2026-09-08 补，见 npm run checkup）*/
+                  <div className="p-4">
+                    <EmptyState
+                      title="今天还没有情报"
+                      hint="系统每天早上 08:55 自动扫一遍，也可以点右上角「抓取今日情报」手动来一次。这里的东西是「线索的线索」，准确率本来就不会高。"
+                    />
+                    <SampleRow
+                      empty
+                      className="mt-4"
+                      caption="真实的一条长这样：看完觉得像的，点「转为情报研判任务」；明显不相关的直接忽略，它下次不会再推。"
+                    >
+                      <div>
+                        <p className="text-sm font-black text-gray-900">苍南县发布食品生产企业体系认证补贴申报通知</p>
+                        <p className="mt-1 text-[11px] font-bold text-gray-500">政策 · 高紧急 · 苍南 · 食品加工</p>
+                      </div>
+                    </SampleRow>
                   </div>
                 ) : (
                   filtered.map(s => (

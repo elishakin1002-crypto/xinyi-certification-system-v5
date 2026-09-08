@@ -23,34 +23,28 @@ const SKIP = new Set(['Login', 'ChangePassword']);
   已经达标的页面 —— 这份名单只能加，不能减。
   减一个就意味着某个页面退步了，而那正是这条测试要拦的。
 */
-const MUST_STAY_COMPLETE = ['Projects', 'Audit', 'Leads', 'Finance', 'MyTasks'];
+const MUST_STAY_COMPLETE = [
+  'Projects', 'Audit', 'Leads', 'Finance', 'MyTasks',
+  // 2026-09-08 横扫补齐的：
+  'Customers', 'Contracts', 'Knowledge', 'IntelRadar', 'Strategy', 'Employees', 'AuthAuditLogs',
+];
 
-const app = read('App.tsx');
-const routeOf = (component) => {
-  const re = new RegExp(`<${component}\\s*/>`);
-  for (const frag of app.split('<Route ')) {
-    if (!re.test(frag)) continue;
-    const m = frag.match(/^\s*path="([^"]+)"/);
-    if (m) return m[1];
-  }
-  return '';
-};
+/*
+  判据从 scripts/lib/pageChecks.cjs 引入，**不再自己写一份**。
+  原来这里有一份副本，我在 checkup 脚本里把「手机端」判据改对了
+  却忘了同步这边 —— 于是测试报「Employees 退步了」，而它明明刚加了手机卡片。
+  同一条规则两份副本，漂移一定会发生。
+*/
+const { inspect, CHECKS } = require('../scripts/lib/pageChecks.cjs');
 
-const checks = (name) => {
-  const src = read(`pages/${name}.tsx`);
-  const route = routeOf(name);
-  return {
-    空状态: /EmptyState/.test(src),
-    样例行: /SampleRow|SampleTr/.test(src),
-    本页详解: Boolean(route) && read('src/modules/help/pageGuide.ts').includes(`path: '${route}'`),
-    手机端: (src.match(/\bmd:/g) || []).length >= 5,
-  };
+const missingOf = (name) => {
+  const r = inspect(name);
+  return CHECKS.map((c, i) => (r.results[i] === false ? c.key : null)).filter(Boolean);
 };
 
 test('已经达标的页面不许退步', () => {
   MUST_STAY_COMPLETE.forEach((name) => {
-    const r = checks(name);
-    const missing = Object.entries(r).filter(([, ok]) => !ok).map(([k]) => k);
+    const missing = missingOf(name);
     assert.deepEqual(missing, [],
       `${name} 退步了，缺：${missing.join('、')}。这些是它已经有过的东西，不该在改动中丢掉`);
   });
@@ -67,21 +61,23 @@ test('新增页面必须一次到位', () => {
   */
   const known = new Set([
     ...MUST_STAY_COMPLETE,
-    // 以下是体检时就已存在、还没补齐的存量页面。
-    // **这份名单只能变短，不能变长** —— 补完一个就从这里删掉一个。
-    'Dashboard', 'AICenter', 'Employees', 'AuthAuditLogs',
-    'Customers', 'IntelRadar', 'Knowledge', 'Contracts', 'Strategy',
+    /*
+      这里原来列着 9 个欠账页面，2026-09-08 横扫后**已经清空**。
+      现在只剩两个「样例行不适用」的：工作台和 AI 中心展示的是
+      汇总数字和开关，没有「一行记录」可以做样例（豁免理由写在
+      scripts/checkup.mjs 的 EXEMPT 里）。
+
+      **这份名单只能变短，不能变长。** 想往里加名字之前先问一句：
+      是这个页面真的不适用，还是我只是不想现在做？
+    */
+    'Dashboard', 'AICenter',
   ]);
 
-  const pages = fs.readdirSync(path.join(root, 'pages'))
-    .filter((f) => f.endsWith('.tsx'))
-    .map((f) => f.replace('.tsx', ''))
-    .filter((n) => !SKIP.has(n));
+  const pages = require('../scripts/lib/pageChecks.cjs').listPages();
 
   const brandNew = pages.filter((n) => !known.has(n));
   brandNew.forEach((name) => {
-    const r = checks(name);
-    const missing = Object.entries(r).filter(([, ok]) => !ok).map(([k]) => k);
+    const missing = missingOf(name);
     assert.deepEqual(missing, [],
       `新页面 ${name} 缺：${missing.join('、')}。`
       + `新页面要一次到位 ——「以后再补」在这个项目里的实际含义是「不会补」`);

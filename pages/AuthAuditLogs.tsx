@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, FileClock, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { EmptyState } from '../src/ui';
+import { SampleRow } from '../components/SampleRow';
 import LoginSessions from '../components/LoginSessions';
 import { authService, AuthAuditLog } from '../services/authService';
 
@@ -137,12 +139,63 @@ const AuthAuditLogs: React.FC = () => {
             加载中
           </div>
         ) : latestLogs.length === 0 ? (
-          <div className="h-48 flex items-center justify-center text-sm font-bold text-gray-500">
-            <AlertTriangle className="w-4 h-4 mr-2" />
-            暂无审计日志
+          /*
+            空状态 + 样例（2026-09-08 补，见 npm run checkup）。
+            原来只有一行「暂无审计日志」—— 它说了「没有」，
+            但没说「有的时候长什么样、该看哪一列」。
+            审计日志尤其需要：多数人一辈子只在出事那天打开它一次。
+          */
+          <div className="p-4">
+            <EmptyState
+              title="还没有审计记录"
+              hint="有人登录、改权限、重置密码时，这里会自动记一条。这是「谁做的」这条链的最后一道保险 —— 记录谁都改不了、也删不掉。"
+            />
+            <SampleRow
+              empty
+              className="mt-4"
+              caption="真实的一行长这样：重点看**动作**和**结果**两列 —— 「被拒绝」的记录最值得看，那是有人在碰他不该碰的东西，或者权限配错了。"
+            >
+              <div className="grid grid-cols-2 gap-y-1 text-[12px] md:grid-cols-4">
+                <span className="font-bold text-gray-500">时间</span>
+                <span className="font-bold text-gray-900">2026-09-08 09:14</span>
+                <span className="font-bold text-gray-500">动作</span>
+                <span className="font-bold text-gray-900">重置密码</span>
+                <span className="font-bold text-gray-500">操作人</span>
+                <span className="font-bold text-gray-900">金恩来（总经理）</span>
+                <span className="font-bold text-gray-500">结果</span>
+                <span className="font-bold text-emerald-700">成功</span>
+              </div>
+            </SampleRow>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/*
+            手机上给卡片，不给横向拖的表格（2026-09-08 补）。
+            审计日志的列很多（时间/动作/操作人/对象/IP/结果），
+            在手机上横拖是看不完的 —— 而查日志这件事往往就发生在
+            「出事了、人不在电脑前」的时候。
+          */}
+          <div className="block md:hidden divide-y divide-gray-100">
+            {latestLogs.map((log, i) => (
+              <div key={i} className="px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black text-gray-900">{String((log as any).action || '—')}</span>
+                  <span className={`rounded-md px-2 py-0.5 text-[10px] font-black ${
+                    String((log as any).result || '').includes('拒') || (log as any).ok === false
+                      ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'
+                  }`}>
+                    {(log as any).ok === false ? '被拒绝' : '成功'}
+                  </span>
+                </div>
+                <div className="mt-1 text-[11px] font-bold text-gray-500">
+                  {String((log as any).createdAt || (log as any).at || '')}
+                  <span className="mx-1 text-gray-300">·</span>
+                  {String((log as any).actorName || (log as any).actor || '—')}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 text-xs text-gray-500">
                 <tr>
@@ -178,6 +231,7 @@ const AuthAuditLogs: React.FC = () => {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </section>
     </div>
