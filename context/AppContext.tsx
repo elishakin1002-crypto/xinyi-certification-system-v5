@@ -2031,7 +2031,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
 
         project.tasks.forEach(async (task) => {
           // --- AI Worker 自动执行逻辑 ---
-          if (task.status === 'Pending' && (task.owner === 'AI 助手' || task.owner === 'AI-WORKER')) {
+          if ((task.status === 'Pending' || task.status === 'InProgress') && (task.owner === 'AI 助手' || task.owner === 'AI-WORKER')) {
              console.log(`[AI Worker] 开始执行任务: ${task.title}`);
              try {
                  const execution = await aiService.executeProjectTask(task, project);

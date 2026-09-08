@@ -7,6 +7,7 @@ import Leads from './pages/Leads';
 import Customers from './pages/Customers';
 import Contracts from './pages/Contracts';
 import Projects from './pages/Projects';
+import MyTasks from './pages/MyTasks';
 import Finance from './pages/Finance';
 import Knowledge from './pages/Knowledge';
 import IntelRadar from './pages/IntelRadar';
@@ -100,6 +101,7 @@ const App = () => {
               <Route path="/leads" element={<ProtectedRoute permission="NAV_CRM"><Leads /></ProtectedRoute>} />
               <Route path="/customers" element={<ProtectedRoute permission="NAV_CRM"><Customers /></ProtectedRoute>} />
               <Route path="/contracts" element={<ProtectedRoute permission="NAV_CRM"><Contracts /></ProtectedRoute>} />
+              <Route path="/my-tasks" element={<ProtectedRoute permission="NAV_DELIVERY"><MyTasks /></ProtectedRoute>} />
               <Route path="/projects" element={<ProtectedRoute permission="NAV_DELIVERY"><Projects /></ProtectedRoute>} />
               <Route path="/finance" element={<ProtectedRoute permission="NAV_FINANCE"><Finance /></ProtectedRoute>} />
               <Route path="/finance/settlements" element={<ProtectedRoute permission="NAV_FINANCE"><Finance /></ProtectedRoute>} />

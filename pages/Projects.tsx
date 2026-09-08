@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { TaskSkipButton } from '../components/TaskSkipButton';
+import { TaskStatusControl } from '../components/TaskStatusControl';
+import { canBePrerequisite, knockOnDelays } from '../src/modules/taskFlow';
 import { ProjectCompleteChecklist } from '../components/ProjectCompleteChecklist';
 import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog, TaskSkipReason, TASK_SKIP_REASON_LABEL } from '../types';
 import { SERVICE_CATALOG, SERVICE_CATEGORIES, SERVICE_CATEGORY_DELIVERY_MODE, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY } from '../constants';
@@ -253,7 +255,16 @@ const Projects = () => {
     if ((project.serviceItems || []).some(si => String((si as any).ownerUserId || '') === currentUser.id || String(si.owner || '') === currentUser.name)) return true;
     return (project.tasks || []).some(task => String(task.owner || '') === currentUser.name);
   };
-  const isOpenTask = (task: ProjectTask) => task.status !== 'Completed';
+  /**
+   * 还没了结的任务。
+   *
+   * ── 已跳过的不算（2026-09-08 修）─────────────────────────────
+   * 原来只排除 Completed，于是**已跳过的任务照样被算成「超期」** ——
+   * 而跳过是人主动交代过原因的决定，不是没做完。
+   * 生产上「超期未完成任务 22」里就掺着这些，
+   * 一个掺了水的数字，看的人很快就不再信它。
+   */
+  const isOpenTask = (task: ProjectTask) => task.status !== 'Completed' && task.status !== 'Skipped';
   const isOverdueTask = (task: ProjectTask) => isOpenTask(task) && new Date(String(task.deadline || '')).getTime() < Date.now();
   const isDueSoonTask = (task: ProjectTask) => {
     const diff = Math.ceil((new Date(String(task.deadline || '')).getTime() - Date.now()) / (24 * 3600 * 1000));
@@ -691,6 +702,33 @@ const Projects = () => {
     () => buildCategoryFilters(projects.some(p => p.projectCategory === 'FollowUp')),
     [projects]
   );
+
+  /**
+   * 改任务截止日期。
+   *
+   * ── 改期要说出连带影响（2026-09-08）───────────────────────────
+   *
+   * 前置任务这个字段的价值不在于画甘特图，在这里：
+   * 一个任务往后挪，**它后面等着的那几件跟着挪** ——
+   * 而这件事原来只有排流程的那个人知道，改期的人根本看不见。
+   *
+   * 客户问「还要多久」时答不上来，多半就是因为这层连带
+   * 从来没在系统里显式存在过。
+   *
+   * 只提醒直接下游一层：一层说得清，两层就没人看了。
+   */
+  const changeTaskDeadline = (project: Project, task: ProjectTask, nextDeadline: string) => {
+    const affected = knockOnDelays(task, project.tasks || [], nextDeadline);
+    if (affected.length > 0) {
+      const lines = affected.map(a => `· ${a.task.title}（现定 ${a.task.deadline}，会晚 ${a.daysLate} 天）`).join('\n');
+      const ok = window.confirm(
+        `这条改到 ${nextDeadline} 之后，下面这些等着它的任务也来不及了：\n\n${lines}\n\n`
+        + `确定改吗？改完记得把它们的日期也往后调 —— 系统不会替你改，那是你和客户要重新谈的事。`
+      );
+      if (!ok) return;
+    }
+    updateProjectTask(project.id, task.id, { deadline: nextDeadline });
+  };
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1254,7 +1292,8 @@ const Projects = () => {
                     原来是一个 confirm() 什么都不问——项目关了，未完成任务永远挂着，
                     也没人知道为什么没做。
                   */
-                  const pending = (project.tasks || []).filter(t => t.status === 'Pending');
+                  // 未完成 = 没做 + 在做（跳过的已经交代过原因，不用再问一遍）
+                  const pending = (project.tasks || []).filter(t => t.status === 'Pending' || t.status === 'InProgress');
                   if (pending.length > 0) { setCompleting({ project, pending }); return; }
                   await doCompleteProject(project);
                 }} className="w-full md:w-auto bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center hover:bg-blue-700 transition-all active:scale-95 shadow-md shadow-blue-200">
@@ -1847,9 +1886,12 @@ const Projects = () => {
                          return (
                            <div key={task.id} className={`relative p-4 pb-4 rounded-2xl border transition-all hover:shadow-md group ${task.status === 'Skipped' ? 'bg-gray-50 border-gray-200 opacity-70' : task.status === 'Completed' ? 'bg-gray-50/50 border-gray-100' : isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100 shadow-sm'}`}>
                              <div className="flex justify-between items-start mb-3">
-                               <button onClick={() => updateProjectTask(project.id, task.id, { status: task.status === 'Completed' ? 'Pending' : 'Completed' })}>
-                                 {task.status === 'Completed' ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <div className={`w-5 h-5 rounded-full border-2 ${isOverdue ? 'border-red-300' : 'border-gray-200'} hover:border-indigo-400`} />}
-                               </button>
+                               <TaskStatusControl
+                                 task={task}
+                                 allTasks={project.tasks || []}
+                                 disabled={!checkActionPermission('TASK_COMPLETE', project).allowed}
+                                 onChange={(u) => updateProjectTask(project.id, task.id, u)}
+                               />
                                <div className="flex items-center gap-0.5">
                            <TaskSkipButton
                              task={task}
@@ -1864,7 +1906,7 @@ const Projects = () => {
                              <div className="flex justify-between items-center">
                                 <div className="flex items-center text-[10px] font-mono text-gray-400">
                                    <Timer className={`w-3 h-3 mr-1 ${isOverdue ? 'text-red-500' : ''}`} />
-                                   <input type="date" className="bg-transparent focus:outline-none" value={task.deadline} onChange={e => updateProjectTask(project.id, task.id, { deadline: e.target.value })} />
+                                   <input type="date" className="bg-transparent focus:outline-none" value={task.deadline} onChange={e => changeTaskDeadline(project, task, e.target.value)} />
                                 </div>
                                 <div className="flex items-center gap-2">
                                   {serviceItems.length > 0 && (
@@ -1877,6 +1919,30 @@ const Projects = () => {
                                       {serviceItems.map(si => (
                                         <option key={si.id} value={si.id}>{si.name}</option>
                                       ))}
+                                    </select>
+                                  )}
+                                  {/*
+                                    前置任务。
+                                    ISO 交付有硬顺序：体系文件没定稿 → 内审做不了 →
+                                    管理评审开不了 → 不能报认证。这个顺序原来只在顾问脑子里，
+                                    新人接手就断了。
+
+                                    只给单选：真实的交付流程基本是一条线，
+                                    多选的界面代价换不来对应的信息量。模型本身支持多个。
+                                  */}
+                                  {(project.tasks || []).length > 1 && (
+                                    <select
+                                      title="选一个必须先做完的任务。前置没做完时会提醒，但不拦你"
+                                      className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
+                                      value={(task.dependsOn || [])[0] || ''}
+                                      onChange={e => updateProjectTask(project.id, task.id, { dependsOn: e.target.value ? [e.target.value] : [] })}
+                                    >
+                                      <option value="">无前置</option>
+                                      {(project.tasks || [])
+                                        .filter(t => canBePrerequisite(t, task, project.tasks || []))
+                                        .map(t => (
+                                          <option key={t.id} value={t.id}>先做：{t.title.slice(0, 12)}</option>
+                                        ))}
                                     </select>
                                   )}
                                   <span
@@ -1919,9 +1985,12 @@ const Projects = () => {
                          return (
                            <div key={task.id} className={`relative p-4 pb-4 rounded-2xl border transition-all hover:shadow-md group ${task.status === 'Skipped' ? 'bg-gray-50 border-gray-200 opacity-70' : task.status === 'Completed' ? 'bg-gray-50/50 border-gray-100' : isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100 shadow-sm'}`}>
                              <div className="flex justify-between items-start mb-3">
-                               <button onClick={() => updateProjectTask(project.id, task.id, { status: task.status === 'Completed' ? 'Pending' : 'Completed' })}>
-                                 {task.status === 'Completed' ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <div className={`w-5 h-5 rounded-full border-2 ${isOverdue ? 'border-red-300' : 'border-gray-200'} hover:border-indigo-400`} />}
-                               </button>
+                               <TaskStatusControl
+                                 task={task}
+                                 allTasks={project.tasks || []}
+                                 disabled={!checkActionPermission('TASK_COMPLETE', project).allowed}
+                                 onChange={(u) => updateProjectTask(project.id, task.id, u)}
+                               />
                                <div className="flex items-center gap-0.5">
                            <TaskSkipButton
                              task={task}
@@ -1936,7 +2005,7 @@ const Projects = () => {
                              <div className="flex justify-between items-center">
                                 <div className="flex items-center text-[10px] font-mono text-gray-400">
                                    <Timer className={`w-3 h-3 mr-1 ${isOverdue ? 'text-red-500' : ''}`} />
-                                   <input type="date" className="bg-transparent focus:outline-none" value={task.deadline} onChange={e => updateProjectTask(project.id, task.id, { deadline: e.target.value })} />
+                                   <input type="date" className="bg-transparent focus:outline-none" value={task.deadline} onChange={e => changeTaskDeadline(project, task, e.target.value)} />
                                 </div>
                                 <div className="flex items-center gap-2">
                                   {serviceItems.length > 0 && (
@@ -1949,6 +2018,30 @@ const Projects = () => {
                                       {serviceItems.map(si => (
                                         <option key={si.id} value={si.id}>{si.name}</option>
                                       ))}
+                                    </select>
+                                  )}
+                                  {/*
+                                    前置任务。
+                                    ISO 交付有硬顺序：体系文件没定稿 → 内审做不了 →
+                                    管理评审开不了 → 不能报认证。这个顺序原来只在顾问脑子里，
+                                    新人接手就断了。
+
+                                    只给单选：真实的交付流程基本是一条线，
+                                    多选的界面代价换不来对应的信息量。模型本身支持多个。
+                                  */}
+                                  {(project.tasks || []).length > 1 && (
+                                    <select
+                                      title="选一个必须先做完的任务。前置没做完时会提醒，但不拦你"
+                                      className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
+                                      value={(task.dependsOn || [])[0] || ''}
+                                      onChange={e => updateProjectTask(project.id, task.id, { dependsOn: e.target.value ? [e.target.value] : [] })}
+                                    >
+                                      <option value="">无前置</option>
+                                      {(project.tasks || [])
+                                        .filter(t => canBePrerequisite(t, task, project.tasks || []))
+                                        .map(t => (
+                                          <option key={t.id} value={t.id}>先做：{t.title.slice(0, 12)}</option>
+                                        ))}
                                     </select>
                                   )}
                                   <span
@@ -1988,9 +2081,12 @@ const Projects = () => {
                    return (
                      <div key={task.id} className={`relative p-4 pb-4 rounded-2xl border transition-all hover:shadow-md group ${task.status === 'Skipped' ? 'bg-gray-50 border-gray-200 opacity-70' : task.status === 'Completed' ? 'bg-gray-50/50 border-gray-100' : isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100 shadow-sm'}`}>
                        <div className="flex justify-between items-start mb-3">
-                         <button onClick={() => updateProjectTask(project.id, task.id, { status: task.status === 'Completed' ? 'Pending' : 'Completed' })}>
-                           {task.status === 'Completed' ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <div className={`w-5 h-5 rounded-full border-2 ${isOverdue ? 'border-red-300' : 'border-gray-200'} hover:border-indigo-400`} />}
-                         </button>
+                         <TaskStatusControl
+                           task={task}
+                           allTasks={project.tasks || []}
+                           disabled={!checkActionPermission('TASK_COMPLETE', project).allowed}
+                           onChange={(u) => updateProjectTask(project.id, task.id, u)}
+                         />
                          <div className="flex items-center gap-0.5">
                            <TaskSkipButton
                              task={task}
@@ -2005,7 +2101,7 @@ const Projects = () => {
                        <div className="flex justify-between items-center">
                           <div className="flex items-center text-[10px] font-mono text-gray-400">
                              <Timer className={`w-3 h-3 mr-1 ${isOverdue ? 'text-red-500' : ''}`} />
-                             <input type="date" className="bg-transparent focus:outline-none" value={task.deadline} onChange={e => updateProjectTask(project.id, task.id, { deadline: e.target.value })} />
+                             <input type="date" className="bg-transparent focus:outline-none" value={task.deadline} onChange={e => changeTaskDeadline(project, task, e.target.value)} />
                           </div>
                           <div className="flex items-center gap-2">
                             {serviceItems.length > 0 && (

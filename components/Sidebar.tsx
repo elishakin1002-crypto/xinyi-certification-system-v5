@@ -172,6 +172,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, className = '' }) => {
           
           {expandedGroups['delivery'] && (
             <div className="mt-1 space-y-1 pl-4">
+              {/*
+                「我的任务」排在项目管理**前面**：它是使用频率最高的一页。
+
+                在它之前，任务只存在于项目详情里，顾问想知道今天要干什么
+                得把手上每个项目挨个点开 —— 而他可能有五六个项目。
+                结果是大家不看系统，看微信群和记性，
+                于是截止日期成了摆设、延误率也没了意义。
+              */}
+              <NavLink data-onboard="nav-my-tasks" to="/my-tasks" className={navClass} onClick={handleLinkClick}>我的任务</NavLink>
               <NavLink data-onboard="nav-projects" to="/projects" className={navClass} onClick={handleLinkClick}>项目管理</NavLink>
             </div>
           )}

@@ -138,13 +138,29 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const getPageTitle = () => {
     const path = location.pathname;
-    if (path === '/dashboard') return '工作台';
-    if (path === '/leads') return '线索管理';
-    if (path === '/projects') return '项目管理';
-    if (path === '/finance') return '财务回款';
-    if (path === '/employees') return '员工账号';
-    if (path === '/auth-audit') return '审计日志';
-    return '信义系统';
+    /*
+      少一条的后果不是标题错，是**手机上顶栏显示「信义系统」**——
+      人不知道自己在哪一页。加页面时最容易漏的就是这里。
+    */
+    const titles: Record<string, string> = {
+      '/dashboard': '工作台',
+      '/leads': '线索管理',
+      '/customers': '客户管理',
+      '/contracts': '合同管理',
+      '/my-tasks': '我的任务',
+      '/projects': '项目管理',
+      '/finance': '财务回款',
+      '/finance/settlements': '顾问结算',
+      '/audit': '不符合项管理',
+      '/knowledge': '知识中心',
+      '/intel': '情报雷达',
+      '/strategy': '战略管理',
+      '/ai-center': 'AI 配置中心',
+      '/employees': '员工账号',
+      '/auth-audit': '审计日志',
+      '/my-devices': '我的登录设备',
+    };
+    return titles[path] || '信义系统';
   };
 
   const unreadReminders = visibleReminders.filter(r => !r.isRead);

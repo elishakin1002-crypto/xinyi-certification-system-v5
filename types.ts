@@ -137,14 +137,23 @@ export interface ProjectTask {
   title: string;
   deadline: string;
   /**
-   * 任务状态。'Skipped'（已跳过）是刻意加的第三态。
+   * 任务状态。
+   *
+   * ── 'InProgress'（进行中）为什么要有（2026-09-08 加）──────────
+   *
+   * 原来只有「未完成 / 已完成」。但「还没开始」和「在做但没做完」
+   * 对管理者是**完全不同的信号**：前者是没排上，后者是卡住了 ——
+   * 而这两种情况原来在系统里长得一模一样。
+   * 总助那块「谁手上活太多」看到的其实是个混合数。
+   *
+   * ── 'Skipped'（已跳过）是刻意加的第三态。
    *
    * 为什么不强制「任务全完成才能完结项目」：
    * 强制不会让人做事，只会让人假打勾——空着至少还知道没做，假勾了你以为做了。
    * 现实中也确实存在客户自行处理、客户放弃该体系、标准变更等情况。
    * 所以改成「不强制完成，但强制交代」：跳过必须填原因。
    */
-  status: 'Pending' | 'Completed' | 'Skipped';
+  status: 'Pending' | 'InProgress' | 'Completed' | 'Skipped';
   /**
    * 跳过原因（status='Skipped' 时必填）。
    * 结构化枚举而不是自由文本——攒起来才能回答
@@ -157,6 +166,17 @@ export interface ProjectTask {
   category: 'Core' | 'Auxiliary' | 'System' | 'ThirdParty'; // 区分核心与辅助任务用于计算进度
   owner: string;
   serviceItemId?: string;
+  /**
+   * 前置任务 ID：这些做完了，这一条才该开始。
+   *
+   * ── 为什么要有（2026-09-08）────────────────────────────────
+   * ISO 交付有硬顺序：体系文件没定稿 → 内审做不了 → 管理评审开不了
+   * → 不能报认证。这个顺序原来只存在于顾问脑子里，新人接手就断了。
+   *
+   * **加它的价值不是画甘特图**，是一个任务延期时能算出后面哪些跟着延 ——
+   * 客户问「还要多久」时给得出有依据的答案，而不是拍脑袋。
+   */
+  dependsOn?: string[];
 }
 
 export type ProjectWorkLogSource = 'manual' | 'task_transition';

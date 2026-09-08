@@ -18,7 +18,10 @@ export const PROJECT_STATUS = {
 
 export const TASK_STATUS = {
   PENDING: 'Pending',
-  COMPLETED: 'Completed'
+  /** 在做但没做完。和「还没开始」是两个信号：一个是没排上，一个是卡住了 */
+  IN_PROGRESS: 'InProgress',
+  COMPLETED: 'Completed',
+  SKIPPED: 'Skipped'
 } as const;
 
 export const MARKET_SIGNAL_STATUS = {
