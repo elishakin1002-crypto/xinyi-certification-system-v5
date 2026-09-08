@@ -65,7 +65,8 @@
     "deploy": "bash deploy/deploy.sh",
     "rollback": "bash deploy/rollback.sh",
     "rollback:list": "bash deploy/rollback.sh --list",
-    "drill": "bash deploy/restore-drill.sh"
+    "drill": "bash deploy/restore-drill.sh",
+    "checkup": "node scripts/checkup.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
