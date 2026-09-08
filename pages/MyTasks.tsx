@@ -170,8 +170,31 @@ const MyTasks: React.FC = () => {
     <div className="p-4 md:p-6" data-guide-id="my-tasks">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">我的任务</h1>
+        {/*
+          两页的分工要写在脸上，不能只活在设计者脑子里。
+
+          金恩来 2026-09-08：「项目管理和我的任务页面是不是太像了？」
+          确实像 —— 两边都能勾任务。但它们看的是**同一批数据的两种角度**：
+            项目管理  按「事」分：这一单活的全貌
+            我的任务  按「时间」排：我今天先干哪件
+          不说清楚，人会以为是两套东西，然后开始怀疑「我在这边勾了，
+          那边会不会没记上」。
+        */}
         <p className="mt-1 text-sm text-gray-500">
-          你名下所有项目的任务放在一起，按时间排好。超期的在最上面，先处理它们。
+          <span className="font-bold text-gray-700">按「时间」看：</span>
+          所有项目里写着你名字的活，抄成一张清单按日子排好。超期的在最上面，先处理它们。
+          想看某一单的全貌，去
+          <button
+            type="button"
+            onClick={() => navigate('/projects')}
+            className="mx-1 font-bold text-indigo-600 hover:underline"
+          >
+            项目管理
+          </button>
+          。
+        </p>
+        <p className="mt-1 text-[12px] font-bold text-gray-400">
+          两边是同一批任务：在这里勾完成，项目那边立刻就变了，不用再记一遍。
         </p>
       </div>
 

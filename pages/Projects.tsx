@@ -2344,8 +2344,27 @@ const Projects = () => {
     <div className="p-6">
       <div className="flex justify-between items-center mb-6">
         <div>
-           <h1 className="text-2xl font-bold text-gray-900">交付工作台</h1>
-           <p className="text-sm text-gray-500 mt-1">下方数字跟随筛选条里的「范围」和「类别」，和列表口径一致（不跟状态和搜索走）。点开项目勾任务推进。</p>
+           {/*
+             标题必须和左边导航一模一样（2026-09-08 改）。
+
+             原来导航写「项目管理」、页面标题写「交付工作台」，
+             而首页又叫「工作台」—— 三个名字打架。
+             标题和导航对不上时，人的第一反应是「我是不是点错了」。
+           */}
+           <h1 className="text-2xl font-bold text-gray-900">项目管理</h1>
+           <p className="text-sm text-gray-500 mt-1">
+             <span className="font-bold text-gray-700">按「事」看：</span>
+             一个项目的全貌 —— 要做哪几样、做到哪了、谁负责、钱收没收。
+             想知道自己今天先干哪件，去
+             <button
+               type="button"
+               onClick={() => navigate('/my-tasks')}
+               className="mx-1 font-bold text-indigo-600 hover:underline"
+             >
+               我的任务
+             </button>
+             。
+           </p>
         </div>
         {/*
           按权限显示（2026-09-07）。

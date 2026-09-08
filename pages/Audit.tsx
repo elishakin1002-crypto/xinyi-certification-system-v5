@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { buildLessonDoc, isLessonWorthKeeping } from '../src/modules/knowledge/lessons';
 import { SampleTr } from '../components/SampleRow';
 import { AuditEvidence, AuditIssue, KnowledgeDoc } from '../types';
 import {
@@ -336,6 +337,8 @@ const Audit = () => {
   });
 
   const [formData, setFormData] = useState<Partial<AuditIssue>>(buildDefaultFormData());
+  /** 关闭时顺手记下的那句教训。空着也能关 */
+  const [lessonText, setLessonText] = useState('');
 
   const resolveIssueRelations = (issue: Partial<AuditIssue>) => buildRelationSnapshot(issue, customers, projects, contracts);
 
@@ -1119,6 +1122,32 @@ const Audit = () => {
       updateAuditIssue(editingIssue.id, payload);
     }
 
+    /*
+      ── 经验层：关闭时把那句教训存成知识条目（2026-09-08）────────
+
+      只在**状态真的切到已关闭**、而且人真的写了东西时才存。
+      废话（「无」「已整改」）会被 isLessonWorthKeeping 挡掉 ——
+      它们进知识库不是"多一条"，是挤掉真正有用的那条：
+      检索按相关度取前几篇，废话也占位置。
+    */
+    if (payload.status === 'Closed') {
+      const verdict = isLessonWorthKeeping(lessonText);
+      if (verdict.ok) {
+        const cust = customers.find(c => c.id === payload.customerId || c.name === payload.customerName);
+        addKnowledgeDoc(buildLessonDoc({
+          issue: { ...payload, id: issueId } as any,
+          lesson: lessonText,
+          author: String(currentUser?.name || '未知'),
+          industry: cust?.industry,
+          standards: cust?.existingCertifications,
+        }) as any);
+      } else if (lessonText.trim()) {
+        // 写了但挡下来了，要说清为什么 —— 否则人以为存进去了
+        alert(`「这次的教训」这一句没有存进知识库：${verdict.reason}。\n\n不影响关闭，但下次遇到同类问题它也帮不上忙。`);
+      }
+    }
+    setLessonText('');
+
     if (payload.deadline) {
       addReminder({
         id: `REM-AUDIT-DEADLINE-${issueId}`,
@@ -1833,6 +1862,39 @@ const Audit = () => {
                   <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">验证结论</label>
                   <textarea className="w-full bg-white border border-gray-200 rounded-2xl p-4 text-sm min-h-[110px] outline-none focus:ring-2 focus:ring-emerald-500/20" placeholder="例如：已抽查 3 个岗位、2 份记录、1 次现场，整改项已满足要求，可关闭。" value={String(formData.verification?.notes || '')} onChange={e => setFormData(prev => ({ ...prev, verification: { verifiedBy: String(prev.verification?.verifiedBy || currentUser.name || ''), verifiedAt: String(prev.verification?.verifiedAt || new Date().toISOString().split('T')[0]), notes: e.target.value } }))}></textarea>
                 </div>
+                {/*
+                  ══════════════════════════════════════════════════
+                  经验层：在关闭的那一刻问一句（2026-09-08 加）
+                  ══════════════════════════════════════════════════
+
+                  三层知识里这一层最值钱：ISO 条文全世界一样，
+                  但「温州塑编厂做 SC，车间隔离最容易被外审挑」这种话
+                  只有做过的人知道 —— **这是信义真正的护城河**。
+
+                  而它最难攒的原因是：经验产生的那一刻，人正忙着别的事。
+                  关闭不符合项时顾问想的是「终于闭环了」，不是「我该记点什么」。
+                  等他闲下来，细节已经忘了。所以问要问在这一刻。
+
+                  **不填也能关。** 强制填只会得到「无」「已整改」这种废话，
+                  而废话进了知识库比没有更糟 —— 它会挤占检索位置。
+                */}
+                <div>
+                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">
+                    这次的教训（选填，但值钱）
+                  </label>
+                  <textarea
+                    className="w-full bg-white border border-amber-200 rounded-2xl p-4 text-sm min-h-[80px] outline-none focus:ring-2 focus:ring-amber-500/20"
+                    placeholder="下次遇到同类客户，怎么提前避开这个坑？例如：塑编厂的车间隔离，进场第一天就要看有没有物理隔断，光看平面图会漏。"
+                    value={lessonText}
+                    onChange={e => setLessonText(e.target.value)}
+                  />
+                  <p className="mt-2 text-[11px] font-bold leading-relaxed text-gray-400">
+                    写一句就够。行业、标准、客户、严重程度系统会自动带上 ——
+                    以后有人问「食品厂做 SC 要注意什么」，AI 会把这条捞出来，
+                    并且说明「据我们以往经验」而不是当成标准规定。
+                  </p>
+                </div>
+
                 <div className="rounded-2xl border border-emerald-100 bg-white/70 px-4 py-3 text-xs leading-6 text-emerald-800">
                   <div className="font-black mb-1 flex items-center"><Clock3 className="w-3 h-3 mr-1" /> 关闭校验规则</div>
                   <div>1. 至少 1 份整改证据；2. 验证人/验证日期/验证结论齐全；3. 保存时状态切到“已关闭”。</div>
