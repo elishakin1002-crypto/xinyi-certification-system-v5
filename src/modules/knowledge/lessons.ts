@@ -1,4 +1,5 @@
 import { AuditIssue, KnowledgeDoc } from '../../../types';
+import { groupIndustry } from '../industry';
 
 /**
  * 经验层 —— 把「这次踩的坑」变成下次能被检索到的一句话。
@@ -82,7 +83,15 @@ export const buildLessonDoc = (params: {
     「经验｜塑编 SC｜车间隔离不到位」比「关于XX公司的整改总结」有用得多 ——
     后者只有点开才知道讲什么。
   */
-  const titleBits = [industry, (standards || [])[0]].filter(Boolean).join(' ');
+  /*
+    标题用**行业大类**而不是工商行业值（2026-09-08 改）。
+
+    工商值太细：「塑料丝、绳及编织品制造」写进标题，
+    以后没人会用这个词去搜。用大类「塑料橡胶」，
+    同一批人搜「塑料厂常见问题」才找得到。
+  */
+  const group = groupIndustry(industry);
+  const titleBits = [group === '其他' ? '' : group, (standards || [])[0]].filter(Boolean).join(' ');
   const title = `经验｜${titleBits || '通用'}｜${issue.findings.slice(0, 20)}`;
 
   const content = [
@@ -126,7 +135,12 @@ export const buildLessonDoc = (params: {
     trustLevel: 'ourExperience',
     industry,
     standards,
-    tags: ['经验', '不符合项', severityLabel, industry, ...(standards || [])].filter(Boolean) as string[],
+    /*
+      标签里**两个都留**：大类用来聚合（「包装印刷最常见的 5 个坑」），
+      原始工商行业留着以防以后要更细的口径 —— 丢了就找不回来。
+    */
+    tags: ['经验', '不符合项', severityLabel, group, industry, ...(standards || [])]
+      .filter(Boolean).filter((x, i, a) => a.indexOf(x) === i) as string[],
     reviewedAt: dateStr,
     reviewedBy: author,
   };

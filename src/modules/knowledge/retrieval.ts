@@ -21,6 +21,8 @@
  * 由下面的区分度过滤兜住。
  */
 
+import { groupIndustry, isSameIndustryGroup } from '../industry';
+
 export interface RetrievableDoc {
   id: string;
   title?: string;
@@ -118,7 +120,26 @@ const FIELD_WEIGHT = { title: 8, summary: 4, content: 2 } as const;
 export const rankDocs = <T extends RetrievableDoc>(
   query: string,
   docs: T[],
-  { limit = 4, minScore = 4 }: { limit?: number; minScore?: number } = {}
+  {
+    limit = 4,
+    minScore = 4,
+    /**
+     * 提问时所在的行业（客户的工商行业值即可，内部会归大类）。
+     *
+     * ── 2026-09-08 加上，因为 industry 字段一直是死的 ────────────
+     *
+     * `RetrievableDoc` 上早就有 industry，但**从来没有参与过打分** ——
+     * 声明了没用，和当初那个 getCategoryBadge 一样。
+     *
+     * 金恩来：「只要这个行业我们之前做过，大部分体系文件是可以复用的。」
+     * 那么"同行业"就该是检索里最强的信号之一。
+     *
+     * 关键是按**大类**比，不是按工商值精确比 ——
+     * 线上 466 条记录散在 180 个工商行业值里，精确比等于永远比不中。
+     * 见 src/modules/industry.ts。
+     */
+    industry,
+  }: { limit?: number; minScore?: number; industry?: string } = {}
 ): ScoredDoc<T>[] => {
   const terms = extractTerms(query);
   if (!terms.length || !docs.length) return [];
@@ -155,6 +176,22 @@ export const rankDocs = <T extends RetrievableDoc>(
         AI 草稿降权最狠：它还没人审过，只配当提示，不配当依据。
       */
       score *= TRUST_WEIGHT[doc.trustLevel || 'ourExperience'] ?? 1;
+
+      /*
+        同行业加权。
+
+        为什么是 1.6 而不是更高：同行业**很有参考价值，但不是决定性的** ——
+        ISO 9001 的条文对谁都一样，跨行业的标准原文照样该被找到。
+        乘一个中等系数，让同行业的经验在同等相关度下排到前面，
+        而不是把跨行业的好材料挤出去。
+
+        为什么不做成硬过滤：那样「包装厂第一次做 SC」这种问题
+        会一篇都搜不到 —— 而这正是最需要帮助的时刻。
+      */
+      if (industry && doc.industry && isSameIndustryGroup(industry, doc.industry)) {
+        score *= 1.6;
+        hits.push(`同行业·${groupIndustry(industry)}`);
+      }
 
       /*
         过期的知识**比没有知识更危险**——它看起来仍然权威。

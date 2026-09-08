@@ -24,16 +24,29 @@ const fs = require('node:fs');
 
   检索是知识中心唯一重要的功能，不能因为「是 TS 测不了」就不测。
 */
-const ts = require('typescript');
+/*
+  ── 2026-09-08 从 typescript.transpileModule 换成 esbuild --bundle ──
+
+  transpileModule 只转译**单个文件**，不解析 import。
+  retrieval.ts 开始引用 ../industry 之后，六条用例全部
+  `Cannot find module '../industry'` —— 而代码是对的。
+
+  esbuild 会把依赖一起打进来。项目里本来就有它（npm run build:metrics 在用），
+  taskFlow 和 industry 的测试也都是这么加载的。
+*/
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
+
+let _retrieval = null;
 const loadRetrieval = () => {
-  const file = path.resolve(__dirname, '../src/modules/knowledge/retrieval.ts');
-  const { outputText } = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  });
-  const mod = { exports: {} };
-  // eslint-disable-next-line no-new-func
-  new Function('module', 'exports', 'require', outputText)(mod, mod.exports, require);
-  return mod.exports;
+  if (_retrieval) return _retrieval;
+  const out = path.join(os.tmpdir(), `retrieval-${process.pid}.cjs`);
+  execFileSync(path.resolve(__dirname, '../node_modules/.bin/esbuild'), [
+    path.resolve(__dirname, '../src/modules/knowledge/retrieval.ts'),
+    '--bundle', '--platform=node', '--format=cjs', `--outfile=${out}`,
+  ], { stdio: 'pipe' });
+  _retrieval = require(out);
+  return _retrieval;
 };
 
 /** 信义库里真实存在的文档标题 */

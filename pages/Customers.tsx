@@ -11,7 +11,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { IngestionUploader } from '../components/IngestionUploader';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
-import { SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
+import { SearchInput, EmptyState, FilterSelect, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
+import { groupIndustry, INDUSTRY_GROUPS, INDUSTRY_GROUP_META, IndustryGroup } from '../src/modules/industry';
 
 const Customers = () => {
   const { customers, updateCustomer, addCustomer, addCustomerFollowUp, checkActionPermission, contracts, projects, auditIssues, addReminder, runSystemScans, generateAuditPlan, updateCertificateAuditStatus, scheduleRenewalFollowUp, currentUser, knowledgeDocs, addKnowledgeDoc, visibleReminders } = useApp();
@@ -497,9 +498,24 @@ const Customers = () => {
     return true;
   };
 
+  const [industryGroup, setIndustryGroup] = useState<IndustryGroup | 'all'>('all');
+
   const filteredCustomers = useMemo(() => {
     const baseSource = activeTab === 'conversion' ? conversionPool : customers;
-    const source = baseSource.filter(matchesDashboardFocus);
+    let source = baseSource.filter(matchesDashboardFocus);
+    /*
+      ── 按行业大类筛（2026-09-08 加）────────────────────────────
+
+      金恩来：「只要这个行业我们之前做过，大部分体系文件是可以复用的。」
+      那么「之前做过哪几家包装厂」就是每接一单新活时最该先问的问题。
+
+      按工商行业值筛没用 —— 线上 466 条记录散在 180 个值里，
+      「包装装潢及其他印刷」和「纸和纸板容器制造」在工商是两行，
+      在信义眼里是同一类厂。所以筛的是**大类**，见 src/modules/industry.ts。
+    */
+    if (industryGroup !== 'all') {
+      source = source.filter(c => groupIndustry(c.industry) === industryGroup);
+    }
     const q = searchTerm.trim().toLowerCase();
     if (!q) return source;
     return source.filter(cust => {
@@ -518,7 +534,7 @@ const Customers = () => {
         .join(' ');
       return hay.includes(q);
     });
-  }, [activeTab, conversionPool, customers, searchTerm, dashboardFocus, currentUser.name]);
+  }, [activeTab, conversionPool, customers, searchTerm, dashboardFocus, currentUser.name, industryGroup]);
 
   useEffect(() => {
       const state: any = location.state || {};
@@ -903,8 +919,18 @@ const Customers = () => {
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-         <div className="p-4 border-b border-gray-100 flex flex-col gap-3 bg-gray-50/30">
+         {/* 搜索和筛选同一行 —— 它们是一类东西，分两行看着像两个功能 */}
+         <div className="p-4 border-b border-gray-100 flex flex-col gap-3 bg-gray-50/30 md:flex-row md:flex-wrap md:items-center">
             <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="搜索客户…" className="w-full md:w-96" />
+            <FilterSelect
+              label="行业"
+              value={industryGroup}
+              onChange={v => setIndustryGroup(v)}
+              options={[
+                { value: 'all' as const, label: '全部行业', title: '不按行业筛' },
+                ...INDUSTRY_GROUPS.map(g => ({ value: g, label: g, title: INDUSTRY_GROUP_META[g].hint })),
+              ]}
+            />
             {dashboardFocusLabel && (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">

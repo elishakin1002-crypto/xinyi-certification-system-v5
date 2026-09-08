@@ -704,7 +704,24 @@ const AIChatWidget = () => {
           这类失效不报错：AI 照样答，只是没用上公司自己的知识，
           看上去像「AI 不懂我们业务」，实际是检索压根没生效。
         */
-        const scoredDocs = rankDocs(q, allowedDocs, { limit: MAX_RAG_DOCS });
+        /*
+          ── 问题里提到哪家客户，就带上那家的行业（2026-09-08）──────
+
+          金恩来：「只要这个行业我们之前做过，大部分体系文件是可以复用的。」
+          所以「同行业」是检索里最强的信号之一 —— 但前提是知道"哪个行业"。
+
+          做法很土但有效：在问句里找已知客户的名字，命中就用它的行业。
+          找不到就不传，检索退回纯关键词 —— **不猜**。
+          猜错行业的代价是把不相关的同行资料排到前面，比不加权更糟。
+        */
+        const mentioned = customers.find(c => {
+          const n = String(c.name || '').trim();
+          return n.length >= 3 && q.includes(n);
+        });
+        const scoredDocs = rankDocs(q, allowedDocs, {
+          limit: MAX_RAG_DOCS,
+          industry: mentioned?.industry,
+        });
 
         if (scoredDocs.length > 0) {
           ragContext = '\n\n### 内部知识库（已授权）';
