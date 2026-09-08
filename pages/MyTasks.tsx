@@ -47,22 +47,49 @@ const DAY = 24 * 3600 * 1000;
 const MyTasks: React.FC = () => {
   const { projects, currentUser, updateProjectTask, checkActionPermission } = useApp();
   const navigate = useNavigate();
-  const [scope, setScope] = useState<'mine' | 'all'>('mine');
+  const [scope, setScope] = useState<'mine' | 'assigned' | 'all'>('mine');
   const [statusFilter, setStatusFilter] = useState<'open' | 'doing' | 'all'>('open');
   const [search, setSearch] = useState('');
   const [showLater, setShowLater] = useState(false);
 
+  const me = String(currentUser?.name || '').trim();
+
+  /** 我是不是这个项目的负责人 */
+  const iOwnProject = (project: Project) => (
+    project.ownerUserId && currentUser?.id
+      ? project.ownerUserId === currentUser.id
+      : String(project.manager || '').trim() === me
+  );
+
   /** 这条任务是不是我的。姓名和用户 ID 都认 —— 老数据只有姓名 */
   const isMine = (task: ProjectTask, project: Project) => {
-    const me = String(currentUser?.name || '').trim();
     const owner = String(task.owner || '').trim();
-    if (owner && me && owner === me) return true;
+    if (owner && me) return owner === me;
     // 任务没写负责人时，算项目负责人的
-    if (!owner) {
-      if (project.ownerUserId && currentUser?.id) return project.ownerUserId === currentUser.id;
-      return String(project.manager || '').trim() === me;
-    }
+    if (!owner) return iOwnProject(project);
     return false;
+  };
+
+  /**
+   * 「我派出去的」：我负责的项目里，派给别人的任务。
+   *
+   * ── 为什么加这一档（2026-09-08）──────────────────────────────
+   *
+   * 金恩来问：「每个人可以看到全公司的任务合适吗？对提高工作效率有帮助吗？」
+   *
+   * 想清楚之后：**看全公司的任务清单，对绝大多数人没用**。
+   * 别人的任务你既改不了也不该改，翻一遍只是消耗注意力。
+   *
+   * 但「全公司」底下藏着一个**真需求**：项目负责人想知道
+   * 「我派给别人的活做了没」。原来只能切到全公司再自己一条条挑，
+   * 那正是把噪音塞给他之后再让他自己过滤。
+   *
+   * 所以把那个真需求单独做成一档 —— 它才是项目负责人每天要看的。
+   */
+  const isAssignedByMe = (task: ProjectTask, project: Project) => {
+    if (!iOwnProject(project)) return false;
+    const owner = String(task.owner || '').trim();
+    return Boolean(owner) && owner !== me;
   };
 
   const rows = useMemo<Row[]>(() => {
@@ -70,6 +97,7 @@ const MyTasks: React.FC = () => {
     (projects || []).forEach(p => {
       (p.tasks || []).forEach(t => {
         if (scope === 'mine' && !isMine(t, p)) return;
+        if (scope === 'assigned' && !isAssignedByMe(t, p)) return;
         if (statusFilter === 'open' && !isOpenTask(t)) return;
         if (statusFilter === 'doing' && t.status !== 'InProgress') return;
         const q = search.trim();
@@ -133,7 +161,7 @@ const MyTasks: React.FC = () => {
               {task.deadline || '没定日期'}
               {overdue && ' 已超期'}
             </span>
-            {scope === 'all' && task.owner && (
+            {scope !== 'mine' && task.owner && (
               <>
                 <span className="text-gray-300">·</span>
                 <span>{task.owner}</span>
@@ -211,7 +239,8 @@ const MyTasks: React.FC = () => {
             label="范围" value={scope} onChange={v => setScope(v)}
             options={[
               { value: 'mine' as const, label: '我的任务', title: '我名下的任务' },
-              { value: 'all' as const, label: '全公司', title: '所有人的任务（只读了解，不是让你去代做）' },
+              { value: 'assigned' as const, label: '我派出去的', title: '我负责的项目里、派给别人的任务 —— 看他们做了没' },
+              { value: 'all' as const, label: '全公司', title: '所有人的任务。多数时候是噪音，找人顶班或接手时才用得上' },
             ]}
           />
           <FilterSelect
@@ -229,10 +258,14 @@ const MyTasks: React.FC = () => {
       {rows.length === 0 ? (
         <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
           <EmptyState
-            title={scope === 'mine' ? '你名下没有未完成的任务' : '没有符合条件的任务'}
+            title={scope === 'mine' ? '你名下没有未完成的任务'
+              : scope === 'assigned' ? '你负责的项目里，没有派给别人的未完成任务'
+              : '没有符合条件的任务'}
             hint={scope === 'mine'
               ? '要么确实做完了，要么任务还没派到你名下 —— 去项目里看看，或者问一下项目负责人。'
-              : '换个筛选条件试试。'}
+              : scope === 'assigned'
+                ? '要么都做完了，要么这些项目的任务都在你自己名下 —— 那也说明没人替你分担。'
+                : '换个筛选条件试试。'}
           />
           <SampleRow empty caption="真实的一行长这样：左边勾完成、点「开始做」标记你正在做它；中间是任务名，下面能点进对应项目；红色是已经超期的。">
             <div className="flex items-start gap-3">

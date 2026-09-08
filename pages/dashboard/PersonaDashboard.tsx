@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Activity, AlertTriangle, ArrowRight, Briefcase, Coins, Percent, Users } from 'lucide-react';
 import { DashboardCard, RoleDashboardMetrics } from '../../services/dashboardMetrics';
 import { openDashboardRoute } from '../../src/modules/dashboardNavigation';
+import { MyWorkWidget } from '../../components/MyWorkWidget';
 
 export type PersonaSection = {
   key: string;
@@ -106,6 +107,20 @@ const PersonaDashboard: React.FC<Props> = ({ metrics, headline, emphasisId, sect
           </div>
         )}
       </div>
+
+      {/*
+        「我今天的活」摘要 —— 紧跟在 KPI 后面。
+
+        金恩来 2026-09-08：「是不是把任务管理直接融入到工作台就好了？」
+        答案是主从不是二选一：工作台放三五条摘要（它是「看」的地方），
+        我的任务放全量和操作（它是「做」的地方）。
+
+        在这一块出现之前，两页是**断的**：工作台看完知道有事，
+        却还要自己走去侧边栏点「我的任务」。少的就是这一步。
+
+        放在所有角色的工作台上 —— 每个人都有活，包括总助和财务。
+      */}
+      <MyWorkWidget />
 
       {/* 中部 / 下部区块 */}
       {sections.map(section => (

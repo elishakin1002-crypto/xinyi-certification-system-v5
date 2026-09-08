@@ -169,3 +169,82 @@ test('三处任务列表共用同一个状态控件', () => {
   assert.ok(!/status: task\.status === 'Completed' \? 'Pending' : 'Completed'/.test(proj),
     '还有手写的勾选逻辑没换掉');
 });
+
+test('工作台和我的任务是主从关系，不是二选一', () => {
+  /*
+    2026-09-08 金恩来：「是不是把任务管理直接融入到工作台就好了？
+    为什么要单独做一页？」
+
+    答案是主从：工作台放三五条摘要（它是「看」的地方），
+    我的任务放全量和操作（它是「做」的地方）。
+    硬塞全量进工作台只有两个结局：截断（那还得有个「查看全部」，
+    等于又回到单独一页），或者工作台变成长列表（它就不再是概览了）。
+
+    在这个摘要块出现之前，两页是**断的** —— 工作台看完知道有事，
+    却要自己走去侧边栏点「我的任务」。
+  */
+  const w = read('components/MyWorkWidget.tsx');
+  assert.match(w, /MAX_ROWS = \d/, '摘要没有条数上限 —— 放多了它就不是概览了');
+  assert.match(w, /navigate\('\/my-tasks'\)/, '摘要没有通往完整清单的入口');
+  assert.match(w, /<TaskStatusControl/, '摘要里不能直接勾完成 —— 看到了要走两步才能处理，人就会先放着');
+
+  /*
+    **每一套工作台都要挂上。**
+    第一版只加在 PersonaDashboard 上，而老板和系统管理员的工作台
+    是各写一套的 —— 于是老板那边压根没有，典型的「改一处漏一处」。
+    系统管理员那块故意不加：他不做交付，加上去恒为空，只是噪音。
+  */
+  assert.match(read('pages/dashboard/PersonaDashboard.tsx'), /<MyWorkWidget \/>/, '共用工作台没挂');
+  assert.match(read('pages/dashboard/BossDashboard.tsx'), /<MyWorkWidget \/>/,
+    '老板工作台没挂 —— 信义的老板同时是最大的销售，他名下有真实的活');
+});
+
+test('「全公司」之外要有「我派出去的」', () => {
+  /*
+    金恩来：「每个人可以看到全公司的任务和项目合适吗？
+    对提高工作效率有帮助吗？」
+
+    想清楚之后：看全公司的任务清单对绝大多数人没用 ——
+    别人的任务你既改不了也不该改，翻一遍只是消耗注意力。
+    但「全公司」底下藏着一个真需求：项目负责人想知道
+    「我派给别人的活做了没」。原来只能切到全公司再自己一条条挑，
+    那是把噪音塞给他之后再让他自己过滤。
+  */
+  const src = read('pages/MyTasks.tsx');
+  assert.match(src, /const isAssignedByMe/, '没有「我派出去的」这一档');
+  assert.match(src, /label: '我派出去的'/, '筛选里没有这个选项');
+  // 默认仍然只看自己的 —— 能看 ≠ 默认看
+  assert.match(src, /useState<'mine' \| 'assigned' \| 'all'>\('mine'\)/,
+    '默认不该是全公司 —— 能看和默认看是两回事');
+});
+
+test('新增页面要进新手引导，而且引导不能变长', () => {
+  const steps = read('src/modules/onboarding/steps.ts');
+  assert.match(steps, /nav-my-tasks/, '「我的任务」没有进引导 —— 做了没人知道等于没做');
+
+  /*
+    加一步就要减一步。项目自己的规矩是不超过六步
+    （「十步以上的引导，人会从第四步开始一路点下一步，等于没看」）。
+    加了「我的任务」之后顾问和总助都变成 7 步，
+    是把「工时记录」并进项目管理、把总助那步并进工作台才压回去的。
+  */
+  const roles = [...steps.matchAll(/^  ([A-Z_]+): \{/gm)];
+  roles.forEach((m, i) => {
+    const end = i + 1 < roles.length ? roles[i + 1].index : steps.length;
+    const body = steps.slice(m.index, end);
+    const n = (body.match(/^      \{/gm) || []).length
+      + (body.match(/COMMON_END,/g) || []).length
+      + (body.match(/FEEDBACK_END,/g) || []).length;
+    assert.ok(n <= 6, `${m[1]} 的引导有 ${n} 步，超过六步就没人看完了`);
+  });
+});
+
+test('新控件要有单项解释', () => {
+  /*
+    三层帮助的第三层按名字匹配。新加的控件如果没配规则，
+    点上去只会得到通用兜底 —— 而那正是「暂无说明」的变体。
+  */
+  const src = read('src/modules/help/controlGuide.ts');
+  ['开始做', '前置', '我派出去的', '我的任务', '我今天的活'].forEach(k =>
+    assert.ok(src.includes(k), `单项解释里没有「${k}」`));
+});

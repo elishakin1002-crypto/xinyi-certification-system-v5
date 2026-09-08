@@ -1,4 +1,5 @@
 import React from 'react';
+import { MyWorkWidget } from '../../components/MyWorkWidget';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, ArrowRight, Briefcase, Coins, Percent, TrendingUp, Users } from 'lucide-react';
 import { DashboardCard } from '../../services/dashboardMetrics';
@@ -77,6 +78,18 @@ const BossDashboard: React.FC<Props> = ({ overviewCards, teamCards }) => {
           );
         })}
       </div>
+
+      {/*
+        「我今天的活」—— 老板工作台也要有（2026-09-08）。
+
+        这块最初只加在 PersonaDashboard 上，而**老板和系统管理员的工作台
+        是各写一套的**，于是老板那边压根没有 —— 典型的「改一处漏一处」。
+        信义的老板同时是最大的销售，他名下有真实的活。
+
+        系统管理员那块**故意不加**：他不做交付，加上去永远是空的，
+        而一个恒空的块只是噪音。
+      */}
+      <MyWorkWidget />
 
       {/* 团队产能与执行 */}
       <div data-onboard="team-capacity" className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
