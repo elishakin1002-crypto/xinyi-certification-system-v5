@@ -86,6 +86,25 @@ echo '  服务: '\$(systemctl is-active xinyi nginx postgresql | paste -sd' ' -)
 printf '  首页 80    '; curl -sS -m 8 -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1/
 printf '  后端健康   '; curl -sS -m 8 http://127.0.0.1:3001/api/auth/health | head -c 120; echo
 printf '  鉴权闸门   '; curl -sS -m 8 -o /dev/null -w '/api/state/batch 未登录 -> HTTP %{http_code}（应为 401）\n' http://127.0.0.1:3001/api/state/batch
+# 扫描器防护自检。
+#
+# 2026-09-08 踩到：我在服务器上直接改了 nginx 加了这段防护，
+# 下一次部署第 4 步重新下发配置，**加固被静默覆盖**——
+# 而自检只看首页 200，看不出防护没了，我是靠手动 curl 才发现的。
+# 现在把它变成一条会说话的检查：SCAN 应为 000（连接被直接关闭）。
+SCAN=\$(curl -s -o /dev/null -m 5 -w '%{http_code}' http://127.0.0.1/.env 2>/dev/null; true)
+if [ \"\$SCAN\" = \"000\" ]; then
+  echo '  扫描器防护 已生效（探测路径被直接断开）'
+else
+  echo \"  扫描器防护 ⚠️ 失效！/.env 返回 \$SCAN（应为 000）—— nginx 配置可能被覆盖\"
+fi
+# 本站自己的资源必须完好 —— 上次那条规则写宽了，把 /vendor/ 全掐了
+VEND=\$(curl -s -o /dev/null -m 5 -w '%{http_code}' http://127.0.0.1/vendor/tailwind.min.js 2>/dev/null; true)
+if [ \"\$VEND\" = \"200\" ]; then
+  echo '  本站资源   /vendor/ 正常（防护规则没有误伤）'
+else
+  echo \"  本站资源   ⚠️ /vendor/tailwind.min.js 返回 \$VEND（应为 200）—— 防护规则误伤了自己的文件\"
+fi
 EXT=\$(grep -oE 'https://[^\"'\'' )]+' $APP/dist/index.html | grep -vE 'aistudiocdn|esm.sh' | wc -l)
 echo \"  外部 CDN 引用: \$EXT 处（应为 0，非 0 说明本地化被改回去了）\"
 # 通知通道丢了不会报任何错，只是从此再也收不到错误摘要。
