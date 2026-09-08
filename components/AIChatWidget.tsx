@@ -468,7 +468,7 @@ const AIChatWidget = () => {
         }
         if (actionData.convert_signal) {
           const r: any = await convertSignalToFollowUpProject(actionData.convert_signal.signalId);
-          sys(r && r.ok === false ? `❌ 无法转化：${r.reason}` : '✅ 情报已转为跟进项目');
+          sys(r && r.ok === false ? `❌ 无法转化：${r.reason}` : '✅ 情报已转为研判任务');
           return 'convert_signal';
         }
         if (actionData.diagnose) {

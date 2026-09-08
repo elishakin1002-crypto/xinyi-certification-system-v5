@@ -203,3 +203,56 @@ test('页面上的列表筛选，全都要在立项后处理过', () => {
   assert.deepEqual(forgotten, [],
     `这些筛选参与列表过滤，但立项后没有重置 —— 新项目可能被藏起来：${forgotten.join('、')}`);
 });
+
+test('提醒就是提醒，不许顺手建项目', () => {
+  /*
+    2026-09-08 挖到的根子：addReminder 在 linkType 是 lead / customer 时，
+    会**先去建一个「跟进项目」**，把提醒挂上去再存；建不成就 return，
+    提醒被静默丢掉。
+
+    线上 15 个跟进项目几乎全是这么冒出来的 —— 每条证书到期提醒
+    自动变成一个项目，把在制项目数、延误率、日志覆盖率的分母全污染了。
+    金恩来说的「还在争取的客户不该放进项目」，根子在这个函数，
+    不在那几个按钮。
+
+    而这个绕路从一开始就没必要：提醒模型本来就有 linkType lead/customer，
+    铃铛也早就能跳 /leads 和 /customers。
+  */
+  const ctx = read('context/AppContext.tsx');
+  const fn = ctx.slice(ctx.indexOf('const addReminder = (r: any)'), ctx.indexOf('const addReminder = (r: any)') + 2600);
+  assert.ok(!/createFollowUpProjectFrom(Customer|Lead)/.test(fn),
+    'addReminder 还在为了挂提醒去建项目');
+  assert.match(fn, /rawLinkType === 'lead' \|\| rawLinkType === 'customer'/,
+    '线索/客户的提醒没有直接存下来');
+});
+
+test('线索和客户上的「跟进」不再建项目，改成排提醒', () => {
+  ['pages/Leads.tsx', 'pages/Customers.tsx'].forEach((f) => {
+    const src = read(f);
+    assert.match(src, /scheduleRenewalFollowUp/, `${f} 没有改用排提醒`);
+    assert.ok(!/createFollowUpProjectFrom/.test(src), `${f} 还在建跟进项目`);
+    assert.match(src, /排跟进提醒/, `${f} 按钮文案还写着「生成跟进项目」`);
+  });
+
+  // 排不出来要说清为什么该去补什么，不能只是没反应
+  assert.match(read('pages/Leads.tsx'), /排不了 —— \$\{r\.reason\}/, '排不出来时没有解释原因');
+});
+
+test('情报转出来的是「其他事务」，而且转线索的路不能断', () => {
+  /*
+    情报转出来的三个任务是「研判政策 / 匹配潜在客户 / 建立触达节奏」——
+    这是内部要干的活，没有客户、不涉及钱，正好是其他事务，
+    原来归到售前跟进是分错了。
+  */
+  const svc = read('server/services/convertSignal.js');
+  assert.match(svc, /projectCategory: 'Public'/, '情报转出来的还是售前跟进');
+  assert.match(svc, /projectMode: 'public'/, 'projectMode 没跟着改');
+
+  /*
+    改类别最容易漏的是连带：「转为线索」原来的开关是
+    isIntelOrigin && isFollowUpProject，类别一改它就恒为 false，
+    按钮直接消失、还不报错 —— 情报→线索这条链路会被悄悄弄断。
+  */
+  assert.match(read('pages/Projects.tsx'), /const isIntelFollowUpProject = projectCaps\.isIntelOrigin;/,
+    '「转为线索」还挂在类别上 —— 改类别会把这条链路弄断');
+});

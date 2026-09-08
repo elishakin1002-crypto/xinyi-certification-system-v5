@@ -1283,7 +1283,7 @@ const Dashboard = () => {
                   {aiOpenState.intel ? (
                     <p className="text-xs text-gray-500 mt-1 leading-relaxed cursor-pointer" onClick={() => navigate('/intel')}>
                       {intelToday.length > 0
-                        ? `今日新增 ${intelToday.length} 条情报，高紧急 ${intelHigh.length} 条。点击进入一键转化为跟进项目。`
+                        ? `今日新增 ${intelToday.length} 条情报，高紧急 ${intelHigh.length} 条。点击进入转为情报研判任务。`
                         : '暂无今日情报。进入情报雷达抓取最新政策/行业/企业动态。'}
                     </p>
                   ) : (

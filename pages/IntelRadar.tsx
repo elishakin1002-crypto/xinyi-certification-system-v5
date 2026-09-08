@@ -783,7 +783,7 @@ const IntelRadar = () => {
                 <Sparkles className="w-4 h-4 mr-2 text-indigo-600" /> 贾维斯建议（下一步）
               </div>
               <div className="text-xs text-gray-500 mt-2 leading-relaxed">
-                这里的提醒不放“全部内容”，只放可执行建议：先处理高紧急信号 → 一键生成跟进项目 → 成交后自动生成 PDCA 复盘。
+                这里的提醒不放“全部内容”，只放可执行建议：先处理高紧急信号 → 转为情报研判任务 → 成交后自动生成 PDCA 复盘。
               </div>
             </div>
           </div>
@@ -1006,7 +1006,7 @@ const IntelRadar = () => {
                           : 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
                       }`}
                     >
-                      一键生成跟进项目
+                      转为情报研判任务
                     </button>
                     <button
                       onClick={() => markTriaged(selected.id)}

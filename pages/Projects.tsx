@@ -815,7 +815,15 @@ const Projects = () => {
   const renderProjectDetail = (project: Project) => {
     const projectCaps = resolveProjectCapabilities(project);
     const isFollowUpProject = projectCaps.isFollowUpProject;
-    const isIntelFollowUpProject = projectCaps.isIntelOrigin && projectCaps.isFollowUpProject;
+    /*
+      「转为线索」只看**来源是不是情报**，不看类别（2026-09-08 改）。
+
+      原来是 isIntelOrigin && isFollowUpProject。情报研判任务的类别
+      从 FollowUp 改成 Public 之后，这个条件会变成 false，
+      **「转为线索」按钮就此消失** —— 情报→线索这条链路会被悄悄弄断，
+      而且不报错，只是按钮不见了。改类别时最容易漏掉的正是这种连带。
+    */
+    const isIntelFollowUpProject = projectCaps.isIntelOrigin;
     const sourceSignalId = isIntelFollowUpProject ? projectCaps.sourceRef : '';
     const sourceSignal = sourceSignalId ? marketSignals.find(s => s.id === sourceSignalId) : undefined;
     const selectedCustomerId = followUpCustomerBinding[project.id] || project.customerId || '';
@@ -1082,7 +1090,7 @@ const Projects = () => {
               <div>
                 <h3 className="text-base font-black text-amber-900">情报/跟进闭环面板</h3>
                 <p className="text-xs text-amber-700 font-bold mt-1">
-                  跟进项目默认不进入财务结算与回款，签约后请在合同管理录入合同并自动立项为合同项目。
+                  这类项目不进入财务结算与回款。签约后在合同管理录入合同并勾选「同时创建项目」即可。
                 </p>
               </div>
               <div className="flex items-center gap-2">

@@ -1,5 +1,16 @@
-// 情报→跟进项目 转化（后端）—— 忠实移植 convertSignalToFollowUpProject。
-// 建情报跟进项目(intel/followup, 3任务) + 回写 signal.status=converted, convertedTo.projectId，单事务。
+// 情报→研判任务 转化（后端）。
+// 建情报研判任务(intel/public, 3任务) + 回写 signal.status=converted, convertedTo.projectId，单事务。
+//
+// ── 2026-09-08：类别从 FollowUp 改成 Public ─────────────────────
+//
+// 金恩来：「把还在争取的客户去掉吧，这个放到项目里来不合理。」
+//
+// 但情报转出来的这个东西**本来就不是在争取某个客户** ——
+// 看它的三个任务就知道：研判政策适用范围、匹配潜在客户、建立触达节奏。
+// 这是公司内部要干的一件活，没有客户、不涉及钱、但有人有进度有工时，
+// 正好是「其他事务」。原来归到售前跟进是分错了。
+//
+// 找到具体企业之后，在项目详情里「转为线索」进销售流程 —— 那一步不变。
 const { withTransaction } = require('../db/pool');
 const { signalRepo } = require('../repos/batch4Repos');
 const { projectRepo } = require('../repos/projectRepo');
@@ -17,7 +28,7 @@ const convertSignalToProject = async (signalId, opts = {}) => {
   const ts = Date.now();
   const projectId = `P-INTEL-${ts}`;
   const manager = opts.manager || 'ai-agent';
-  const name = `【情报跟进】${signal.title || ''}`.slice(0, 60);
+  const name = `【情报研判】${signal.title || ''}`.slice(0, 60);
 
   const project = {
     id: projectId, name,
@@ -35,8 +46,8 @@ const convertSignalToProject = async (signalId, opts = {}) => {
         sourceRef    来源对象的 ID
     */
     contractRef: '',
-    sourceType: 'intel', sourceRef: signal.id, projectMode: 'followup',
-    projectCategory: 'FollowUp', manager, progress: 0, status: 'Active',
+    sourceType: 'intel', sourceRef: signal.id, projectMode: 'public',
+    projectCategory: 'Public', billable: false, manager, progress: 0, status: 'Active',
     paymentStatus: 'unpaid', deadline: signal.deadline || nowStr, duration: 14, projectType: 'Self-Operated',
     tasks: [
       { id: `T-INTEL-${ts}-1`, title: '快速研判：适用范围/截止时间/申报入口', deadline: nowStr, status: 'Pending', priority: 'High', category: 'Core', owner: manager },

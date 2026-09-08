@@ -46,7 +46,7 @@ const normalizeCertDate = (raw: string): string => {
   return Number.isNaN(Date.parse(iso)) ? '' : iso;
 };
 const Leads = () => {
-  const { leads, addLead, updateLead, addLeadFollowUp, createFollowUpProjectFromLead, importExcel, currentUser } = useApp();
+  const { leads, addLead, updateLead, addLeadFollowUp, scheduleRenewalFollowUp, importExcel, currentUser } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -317,7 +317,7 @@ const Leads = () => {
       }
 
       setIsMining(false);
-      alert("已完成重点线索标记。\n\n系统会在满足到期阈值时自动生成跟进项目，你也可以进入线索详情点击“生成跟进项目”。");
+      alert("已完成重点线索标记。\n\n进入线索详情点「排跟进提醒」，系统会按证书到期前 30 / 15 / 7 天各提醒你一次。");
   };
 
 
@@ -341,13 +341,34 @@ const Leads = () => {
     }
   };
 
-  const handleCreateFollowUpProject = () => {
+  /**
+   * 排一轮证书到期跟进。
+   *
+   * ── 从「生成跟进项目」改过来（2026-09-08）────────────────────
+   *
+   * 金恩来：「把还在争取的客户去掉吧，这个放到项目里来不合理。」
+   *
+   * 原来这个按钮建的所谓项目，实质就是三条提醒（到期前 30/15/7 天）。
+   * 为这三条提醒造一个带进度条、带任务清单的「项目」，
+   * 代价是在制项目数虚高、延误率被稀释，
+   * 而且同一个潜在客户在线索和项目里各有一条，谁都不准。
+   *
+   * 现在提醒就挂在这条线索上，人留在线索页 —— 那才是他要干活的地方。
+   */
+  const handleScheduleFollowUp = () => {
       if (!selectedLead) return;
-      const projectId = createFollowUpProjectFromLead(selectedLead.id, { owner: '销售 / 咨询', expiryDate: editingLeadData?.targetCertExpiryDate });
-      if (projectId) {
-          setSelectedLead(null);
-          navigate('/projects', { state: { openDetailId: projectId } });
-      }
+      const expiry = editingLeadData?.targetCertExpiryDate || selectedLead.targetCertExpiryDate;
+      const r = scheduleRenewalFollowUp({
+        kind: 'lead',
+        id: selectedLead.id,
+        name: selectedLead.company || selectedLead.name,
+        expiryDate: expiry,
+        owner: currentUser?.name,
+      });
+      // 排不出来要说清为什么、以及该去补什么，不能只是没反应
+      alert(r.ok
+        ? `已排 ${r.count} 条跟进提醒：证书到期前 30 / 15 / 7 天各提醒一次。\n\n提醒会出现在右上角铃铛里，点进去直接回到这条线索。`
+        : `排不了 —— ${r.reason}\n\n在下面「目标证书到期日」填上日期，再点一次。`);
   };
 
   const handleAddFollowUp = () => {
@@ -635,11 +656,11 @@ const Leads = () => {
                             </div>
                         ) : (
                             <button
-                              onClick={handleCreateFollowUpProject}
+                              onClick={handleScheduleFollowUp}
                               className="flex-1 md:flex-none px-3 py-2 bg-indigo-600 text-white rounded-xl font-bold shadow-md hover:bg-indigo-700 transition-colors flex items-center justify-center text-xs md:text-sm"
                             >
                               <Briefcase className="w-3.5 h-3.5 md:w-4 md:h-4 mr-1.5 md:mr-2" />
-                              生成跟进项目
+                              排跟进提醒
                             </button>
                         )}
                         {isEditing ? (

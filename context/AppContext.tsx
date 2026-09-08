@@ -167,6 +167,10 @@ export interface AppContextType {
   // 原有业务保全
   toggleReceivableStatus: (contractId: string, receivableId: string) => void;
   addReminder: (reminder: Omit<Reminder, 'id' | 'isRead'> & { id?: string }) => void;
+  /** 给线索/客户排证书到期跟进（30/15/7 天三条提醒），替代原来的「生成跟进项目」 */
+  scheduleRenewalFollowUp: (params: {
+    kind: 'lead' | 'customer'; id: string; name: string; expiryDate?: string; owner?: string;
+  }) => { ok: boolean; count: number; reason?: string };
   dismissReminder: (id: string) => void;
   /*
     标记已读 ≠ 删除。
@@ -1603,8 +1607,8 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         // 转化通知是前端衍生（后端不建），仅首次转化时补建。
         if (!res.already && res.projectId) {
           addReminder({
-            title: `📡 情报已转化为跟进项目`,
-            content: `已基于“${signal.title}”生成跟进项目`,
+            title: `📡 情报已转为研判任务`,
+            content: `已基于“${signal.title}”生成情报研判任务`,
             date: todayStr(),
             type: 'opportunity',
             linkId: res.projectId,
@@ -4656,6 +4660,99 @@ ${receivableLines}
     dataService.set('aiDecisionLogs_v1', aiDecisionLogs);
   }, [aiDecisionLogs]);
 
+  /**
+   * 加一条提醒。
+   *
+   * ══════════════════════════════════════════════════════════════
+   * 2026-09-08：**提醒不再顺手建项目**
+   * ══════════════════════════════════════════════════════════════
+   *
+   * 原来这里有一段很隐蔽的逻辑：linkType 是 lead / customer 时，
+   * 它会**先去建一个「跟进项目」**，把提醒挂到那个项目上再存；
+   * 建不成就 `return` —— 提醒被静默丢掉，没有任何报错。
+   *
+   * 后果有两层：
+   *   ① 线上 15 个「跟进项目」几乎全是这么冒出来的 ——
+   *      每一条证书到期提醒都自动变成一个项目，
+   *      在制项目数、延误率、日志覆盖率的分母全被它们污染；
+   *   ② 金恩来 2026-09-08：「把还在争取的客户去掉吧，
+   *      这个放到项目里来不合理。」——他说的正是这个后果，
+   *      而根子在这个函数，不在那几个按钮。
+   *
+   * 而这个绕路**从一开始就没必要**：提醒模型本来就有
+   * linkType: 'lead' | 'customer'，铃铛面板也早就能跳 /leads 和
+   * /customers（见 Layout 的 linkTypeRoute）。绕这一圈唯一的产出
+   * 就是一堆假项目。
+   *
+   * 现在：提醒就是提醒，挂在它本来该挂的东西上。
+   */
+  /**
+   * 给线索或客户排一轮「证书到期跟进」。
+   *
+   * ── 它替代了原来的「生成跟进项目」（2026-09-08）─────────────
+   *
+   * 原来那个按钮建出来的所谓项目，实质就是**三条提醒**：
+   * 到期前 30 / 15 / 7 天各一条（见原 createFollowUpTasks）。
+   * 为了这三条提醒造一个带进度条、带任务清单、带负责人的「项目」，
+   * 代价是：在制项目数虚高、延误率被稀释、
+   * 而且同一个潜在客户在线索和项目里各有一条，谁都不准。
+   *
+   * 现在就存三条提醒，挂在线索/客户本身上。铃铛点进去直接到
+   * /leads 或 /customers —— 那才是他要去处理的地方。
+   *
+   * 返回排了几条，调用方好给一句明确的反馈
+   * （「已排 3 条」比「操作成功」有用得多）。
+   */
+  const scheduleRenewalFollowUp = (params: {
+    kind: 'lead' | 'customer';
+    id: string;
+    name: string;
+    expiryDate?: string;
+    owner?: string;
+  }): { ok: boolean; count: number; reason?: string } => {
+    const { kind, id, name, expiryDate, owner } = params;
+    if (!id) return { ok: false, count: 0, reason: '缺少对象 ID' };
+
+    const base = expiryDate ? new Date(expiryDate) : null;
+    if (!base || Number.isNaN(base.getTime())) {
+      return { ok: false, count: 0, reason: '没有证书到期日，先把到期日填上才排得出跟进节奏' };
+    }
+
+    const fmt = (d: Date) => {
+      const p2 = (x: number) => String(x).padStart(2, '0');
+      return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+    };
+    const who = owner || normalizedCurrentUser.name || '';
+    // 30 / 15 / 7：和原来的节奏保持一致，换的是载体不是节奏
+    const offsets = [30, 15, 7];
+    let count = 0;
+    offsets.forEach(days => {
+      const due = new Date(base.getTime() - days * 24 * 3600 * 1000);
+      addReminder({
+        id: `REM-RENEW-${kind}-${id}-${days}`,
+        title: `${name} 证书到期前 ${days} 天`,
+        content: `${name} 的证书 ${fmt(base)} 到期，还有 ${days} 天。${who ? `跟进人：${who}。` : ''}趁早联系，续期比重新开发省力得多。`,
+        date: fmt(due),
+        type: 'expire',
+        linkType: kind,
+        linkId: id,
+      });
+      count += 1;
+    });
+
+    // 在对象自己的跟进记录里留一条，交接时看得到「已经排过了」
+    const note = {
+      date: fmt(new Date()),
+      type: '系统',
+      content: `已排证书到期跟进：${fmt(base)} 到期，到期前 30/15/7 天各提醒一次。`,
+      operator: who,
+    } as any;
+    if (kind === 'lead') addLeadFollowUp(id, note);
+    else addCustomerFollowUp(id, note);
+
+    return { ok: true, count };
+  };
+
   const addReminder = (r: any) => {
     const rawLinkType = r?.linkType;
     const rawLinkId = r?.linkId;
@@ -4670,24 +4767,22 @@ ${receivableLines}
       return;
     }
 
-    if (rawLinkType && rawLinkType !== 'project') {
-      let projectId: string | null = null;
+    // 线索 / 客户：直接挂在它自己身上，不再为了挂提醒去造一个项目
+    if (rawLinkType === 'lead' || rawLinkType === 'customer') {
+      if (!rawLinkId) return;
+      upsertSystemReminder(r?.id || `REM-${rawLinkType.toUpperCase()}-${rawLinkId}-${Date.now()}`, r);
+      return;
+    }
 
-      if (rawLinkType === 'customer' && rawLinkId) {
-        projectId = createFollowUpProjectFromCustomer(rawLinkId);
-      } else if (rawLinkType === 'lead' && rawLinkId) {
-        projectId = createFollowUpProjectFromLead(rawLinkId);
-      } else if (rawLinkType === 'contract' && rawLinkId) {
-        const existing = projects.find(p => p.contractRef === rawLinkId && p.status === Status.Active);
-        projectId = existing?.id || null;
-      }
-
-      if (projectId) {
-        const normalized = { ...r, linkType: 'project', linkId: projectId };
-        upsertSystemReminder(`REM-${Date.now()}`, normalized);
-        return;
-      }
-
+    /*
+      合同：有在跑的项目就挂到项目上（那样能看到进度），
+      没有就挂在合同上 —— **不再因为找不到项目就把提醒丢掉**。
+    */
+    if (rawLinkType === 'contract') {
+      if (!rawLinkId) return;
+      const existing = projects.find(p => p.contractRef === rawLinkId && p.status === Status.Active);
+      const normalized = existing ? { ...r, linkType: 'project', linkId: existing.id } : r;
+      upsertSystemReminder(r?.id || `REM-${Date.now()}`, normalized);
       return;
     }
 
@@ -4695,6 +4790,7 @@ ${receivableLines}
 
     upsertSystemReminder(r?.id || `REM-${Date.now()}`, r);
   };
+;
   const dismissReminder = (id: string) => {
     setReminders(prev => prev.filter(r => r.id !== id));
     if (reminderService.isEnabled()) {
@@ -4768,7 +4864,7 @@ ${receivableLines}
       upsertMarketSignals, updateMarketSignal, convertSignalToFollowUpProject, convertIntelProjectToLead, bindFollowUpProjectToCustomer,
       strategicInsight, isAnalyzingStrategy, strategicTasks, runDeepAnalysis, generateStrategicTasksFromInsight, addStrategicTask, updateStrategicTaskStatus, deleteStrategicTask,
       runSystemScans, generateAuditPlan, updateCertificateAuditStatus,
-      toggleReceivableStatus, addReminder, dismissReminder, markRemindersRead, markAllRemindersRead,
+      toggleReceivableStatus, addReminder, scheduleRenewalFollowUp, dismissReminder, markRemindersRead, markAllRemindersRead,
       addKnowledgeDoc, updateCustomer,
       aiDecisionLogs, runProjectDiagnosis, completeProject, reopenProject, updateProjectCost,
       importRecords, importExcel // 暴露新功能

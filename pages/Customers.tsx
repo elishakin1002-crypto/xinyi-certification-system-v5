@@ -13,7 +13,7 @@ import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
 import { SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 
 const Customers = () => {
-  const { customers, updateCustomer, addCustomer, addCustomerFollowUp, checkActionPermission, contracts, projects, auditIssues, addReminder, runSystemScans, generateAuditPlan, updateCertificateAuditStatus, createFollowUpProjectFromCustomer, currentUser, knowledgeDocs, addKnowledgeDoc, visibleReminders } = useApp();
+  const { customers, updateCustomer, addCustomer, addCustomerFollowUp, checkActionPermission, contracts, projects, auditIssues, addReminder, runSystemScans, generateAuditPlan, updateCertificateAuditStatus, scheduleRenewalFollowUp, currentUser, knowledgeDocs, addKnowledgeDoc, visibleReminders } = useApp();
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [editingData, setEditingData] = useState<Customer | null>(null);
@@ -190,22 +190,30 @@ const Customers = () => {
       .replace(/股份有限公司|有限责任公司|有限公司|集团|公司/g, '')
       .replace(/[\s\-_/]/g, '');
 
-  const handleCreateFollowUpProject = () => {
+  /**
+   * 排一轮证书到期跟进。
+   *
+   * 从「生成跟进项目」改过来（2026-09-08）：原来那个所谓项目实质就是
+   * 三条提醒（到期前 30/15/7 天），却带来一个占着在制项目数、
+   * 稀释延误率的假项目。现在提醒直接挂在这个客户身上，
+   * 铃铛点进去回到客户档案 —— 续期该在这里谈，不在项目页。
+   */
+  const handleScheduleFollowUp = () => {
     if (!selectedCustomer) return;
-    const certs = (editingData?.certificates || []).filter(c => c.expiryDate);
-    const sorted = [...certs].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
-    const next = sorted[0];
-    const projectId = createFollowUpProjectFromCustomer(selectedCustomer.id, {
-      certificateId: next?.id,
+    const certs = (editingData?.certificates || selectedCustomer.certificates || []).filter((c: any) => c.expiryDate);
+    const next = [...certs].sort((a: any, b: any) => a.expiryDate.localeCompare(b.expiryDate))[0];
+    const r = scheduleRenewalFollowUp({
+      kind: 'customer',
+      id: selectedCustomer.id,
+      name: selectedCustomer.name,
       expiryDate: next?.expiryDate,
-      owner: '销售 / 咨询'
+      owner: currentUser?.name,
     });
-    if (projectId) {
-      setSelectedCustomer(null);
-      setIsCreating(false);
-      navigate('/projects', { state: { openDetailId: projectId } });
-    }
+    alert(r.ok
+      ? `已排 ${r.count} 条跟进提醒：证书到期前 30 / 15 / 7 天各提醒一次。\n\n提醒会出现在右上角铃铛里，点进去直接回到这个客户。`
+      : `排不了 —— ${r.reason}\n\n在「证书」那一栏把到期日填上，再点一次。`);
   };
+;
 
   const compressImage = async (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -1072,7 +1080,7 @@ const Customers = () => {
                     </div>
                     <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto justify-end flex-wrap md:flex-nowrap">
                         <button onClick={createContractForCustomer} className="px-3 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 text-sm font-bold flex items-center transition-all active:scale-95 shadow-md shrink-0"> <FileText className="w-4 h-4 mr-1.5" /> 新建合同 </button>
-                        <button onClick={handleCreateFollowUpProject} className="px-3 py-2 bg-amber-600 text-white rounded-xl hover:bg-amber-700 text-sm font-bold flex items-center transition-all active:scale-95 shadow-md shrink-0"> <Briefcase className="w-4 h-4 mr-1.5" /> 生成跟进项目 </button>
+                        <button onClick={handleScheduleFollowUp} className="px-3 py-2 bg-amber-600 text-white rounded-xl hover:bg-amber-700 text-sm font-bold flex items-center transition-all active:scale-95 shadow-md shrink-0"> <Briefcase className="w-4 h-4 mr-1.5" /> 排跟进提醒 </button>
                         <button onClick={handleUpsellScript} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl hover:shadow-lg text-sm font-bold flex items-center transition-all active:scale-95 shadow-md shrink-0"> <MessageSquare className="w-4 h-4 mr-1.5" /> 二次开发话术 </button>
                         {!isEditing ? ( <button onClick={() => setIsEditing(true)} className="px-4 py-2 border border-gray-200 bg-white text-gray-700 rounded-xl hover:bg-gray-50 flex items-center text-sm font-bold transition-colors shrink-0"> <Edit3 className="w-4 h-4 mr-2" /> 编辑 </button> ) : ( <button onClick={handleSaveEdit} className="px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 flex items-center text-sm font-bold transition-colors shadow-lg shadow-indigo-200 shrink-0"> <Save className="w-4 h-4 mr-2" /> 保存 </button> )}
                         <button onClick={() => { setSelectedCustomer(null); setIsCreating(false); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-500 transition-colors shrink-0"> <X className="w-6 h-6" /> </button>
@@ -1470,7 +1478,7 @@ const Customers = () => {
                                                             )}
                                                             {linkedProject && (
                                                                 <button onClick={() => navigate('/projects', { state: { openDetailId: linkedProject.id } })} className="text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50 flex items-center">
-                                                                    <ArrowRight className="w-3 h-3 mr-1" /> 打开跟进项目
+                                                                    <ArrowRight className="w-3 h-3 mr-1" /> 打开关联项目
                                                                 </button>
                                                             )}
                                                             {selectedCustomer && selectedCustomer.id !== 'temp' && (
@@ -1537,7 +1545,7 @@ const Customers = () => {
                                                         </div>
                                                         <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3">
                                                             <div className="text-[11px] font-bold text-amber-500 uppercase">提醒联动</div>
-                                                            <div className="mt-1 text-sm font-black text-amber-900">{linkedProject ? '已联动工作台' : '待生成跟进项目'}</div>
+                                                            <div className="mt-1 text-sm font-black text-amber-900">{linkedProject ? '已联动工作台' : '点上方「排跟进提醒」'}</div>
                                                             <div className="text-[11px] text-amber-700 mt-1">默认建议：90 / 60 / 30 / 7 天</div>
                                                         </div>
                                                         <div className="rounded-xl border border-green-100 bg-green-50 px-3 py-3">
