@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import { useApp } from '../context/AppContext';
 import { PERSONA_TO_ROLE } from '../constants';
 import { dataService } from '../services/dataService';
-import { getTour } from '../src/modules/onboarding/steps';
+import { getWorkspaceTour as getTour } from '../src/modules/onboarding/workspaceTour';
 
 /**
  * 新手引导。
@@ -61,7 +61,8 @@ export const OnboardingTour: React.FC<{
   /** 手动重看时传 true，绕过「看过就不弹」的判断 */
   forceOpen?: boolean;
   onClose?: () => void;
-}> = ({ forceOpen = false, onClose }) => {
+  onHelp?: () => void;
+}> = ({ forceOpen = false, onClose, onHelp }) => {
   const { currentUser, previewPersona, setIsTourActive } = useApp();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -118,7 +119,7 @@ export const OnboardingTour: React.FC<{
   */
   const measure = useCallback(() => {
     if (!targetSel || typeof document === 'undefined') { setRect(null); setViaMenu(false); return; }
-    const pick = (sel: string) => document.querySelector<HTMLElement>(`[data-onboard="${sel}"]`);
+    const pick = (sel: string) => Array.from(document.querySelectorAll<HTMLElement>(`[data-onboard="${sel}"]`)).find(node => { const r = node.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight; }) || null;
     let el = pick(targetSel);
     let byMenu = false;
 
@@ -279,6 +280,7 @@ export const OnboardingTour: React.FC<{
   const card = (
     <div
       ref={cardRef}
+      role="dialog" aria-modal="true" aria-label="认识我的工作台"
       style={anchored ? cardPos() : undefined}
       className={[
         'bg-white border border-gray-200 shadow-xl overflow-hidden pointer-events-auto flex flex-col',
@@ -308,12 +310,12 @@ export const OnboardingTour: React.FC<{
       <div className={`flex items-center justify-between gap-3 px-5 shrink-0 ${
         !anchored && isMobile ? 'pt-1.5 pb-2.5' : 'pt-4 pb-3'
       }`}>
-        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-black ${
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
           isPreviewing ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'
         }`}>
           <Compass className="w-3.5 h-3.5" />
           {/* 预览时说清这是谁的引导，否则看到「录线索」会以为自己该去录 */}
-          {isPreviewing ? `预览：${ROLE_LABEL[previewRole!] || previewRole}的引导` : '新手引导'}
+          {isPreviewing ? `预览：${ROLE_LABEL[previewRole!] || previewRole}的引导` : '认识我的工作台'}
         </span>
         {/* 跳过键放最显眼的右上角。藏跳过键换来的「完成率」是假的 */}
         <button
@@ -324,6 +326,14 @@ export const OnboardingTour: React.FC<{
         </button>
       </div>
 
+      <div className="px-5 pb-3 shrink-0">
+        <label className="block text-xs text-gray-500">想了解哪一项？
+          <select aria-label="选择工作台讲解内容" value={i} onChange={e => go(Number(e.target.value))} className="mt-1.5 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+            <option value={0}>欢迎 · 认识我的工作台</option>
+            {tour.steps.map((item, index) => <option key={index} value={index + 1}>{index + 1}. {item.title}</option>)}
+          </select>
+        </label>
+      </div>
       <div className="px-5 pb-1 overflow-y-auto grow">
         {isIntro ? (
           <>
@@ -332,7 +342,7 @@ export const OnboardingTour: React.FC<{
               那句话是对本人说的，套在预览上会读成「我是总经理，
               而这套系统对我来说是……顾问的事」，前后打架。
             */}
-            <h3 className="text-[17px] font-black leading-snug text-gray-900 mb-2">
+            <h3 className="text-[17px] font-semibold leading-snug text-gray-900 mb-2">
               {isPreviewing
                 ? `${ROLE_LABEL[previewRole!] || previewRole}第一次登录会看到`
                 : `${currentUser?.name}，欢迎`}
@@ -343,7 +353,7 @@ export const OnboardingTour: React.FC<{
           </>
         ) : (
           <>
-            <p className="text-[11px] font-black text-gray-400 mb-1.5">
+            <p className="text-[11px] font-semibold text-gray-400 mb-1.5">
               第 {i} 步 / 共 {total} 步
               {/*
                 指不到的时候明说，而不是假装指到了。
@@ -354,7 +364,7 @@ export const OnboardingTour: React.FC<{
                 <span className="ml-2 font-bold text-gray-300">（这一块现在不在屏幕上）</span>
               )}
             </p>
-            <h3 className="text-[17px] font-black leading-snug text-gray-900 mb-2">{step!.title}</h3>
+            <h3 className="text-[17px] font-semibold leading-snug text-gray-900 mb-2">{step!.title}</h3>
             {/* 手机上导航是收起来的，先告诉他要点哪儿才能看到 */}
             {viaMenu && (
               <p className="mb-3 flex items-start gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">
@@ -378,14 +388,14 @@ export const OnboardingTour: React.FC<{
             */}
             {howTo.length > 0 && (
               <div className="mt-3.5 rounded-xl border border-gray-100 bg-gray-50/80 px-3.5 py-3">
-                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-black text-gray-500">
+                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-gray-500">
                   <MousePointerClick className="w-3.5 h-3.5" />
                   怎么做{isMobile && step!.howToMobile ? '（手机上）' : ''}
                 </p>
                 <ol className="flex flex-col gap-1.5">
                   {howTo.map((line, n) => (
                     <li key={n} className="flex gap-2 text-[13px] leading-relaxed text-gray-700">
-                      <span className="mt-[3px] flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-black text-gray-500 ring-1 ring-gray-200">
+                      <span className="mt-[3px] flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-gray-500 ring-1 ring-gray-200">
                         {n + 1}
                       </span>
                       <span className="min-w-0 [&_strong]:text-gray-900">
@@ -418,18 +428,19 @@ export const OnboardingTour: React.FC<{
           )}
           {i < total ? (
             <button onClick={() => go(i + 1)}
-              className="px-4 h-9 rounded-xl bg-blue-600 text-white text-xs font-black hover:bg-blue-700 flex items-center gap-1">
+              className="px-4 h-9 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 flex items-center gap-1">
               {isIntro ? '开始' : '下一步'} <ArrowRight className="w-3.5 h-3.5" />
             </button>
           ) : (
             <button onClick={finish}
-              className="px-4 h-9 rounded-xl bg-green-600 text-white text-xs font-black hover:bg-green-700 flex items-center gap-1">
+              className="px-4 h-9 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 flex items-center gap-1">
               <CheckCircle2 className="w-3.5 h-3.5" /> 开始使用
             </button>
           )}
         </div>
       </div>
 
+      {onHelp && <button onClick={() => { finish(); onHelp(); }} className="shrink-0 pb-4 text-xs text-gray-500 hover:text-blue-600">返回帮助选择</button>}
       {!anchored && isMobile && sheetAtTop && (
         <div className="flex justify-center pb-2.5 pt-0.5 shrink-0">
           <span className="h-1 w-9 rounded-full bg-gray-300" />
@@ -439,7 +450,7 @@ export const OnboardingTour: React.FC<{
   );
 
   return (
-    <>
+    <div data-help-ui="1">
       {/*
         遮罩用四块拼出来，中间留个洞。
 
@@ -458,7 +469,7 @@ export const OnboardingTour: React.FC<{
           <div className="fixed z-[70]" onClick={finish}
             style={{ top: hole.top, left: hole.left + hole.width, right: 0, height: hole.height, background: maskColor }} />
           {/* 高亮描边。pointer-events-none：不挡住被指的那个按钮 */}
-          <div className="fixed z-[71] rounded-xl pointer-events-none ring-4 ring-blue-500/70 animate-pulse"
+          <div className="fixed z-[71] rounded-xl pointer-events-none ring-2 ring-blue-500/70"
             style={{ top: hole.top, left: hole.left, width: hole.width, height: hole.height }} />
         </>
       ) : (
@@ -474,7 +485,7 @@ export const OnboardingTour: React.FC<{
           {card}
         </div>
       )}
-    </>
+    </div>
   );
 };
 

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Compass, FileText, MousePointerClick, X, ArrowLeft, HelpCircle, AlertTriangle, Lightbulb } from 'lucide-react';
+import { Compass, FileText, MousePointerClick, X, ArrowLeft, HelpCircle, AlertTriangle, Lightbulb, ArrowRight } from 'lucide-react';
 import { findPageGuide, findModalGuide, GuideEntry } from '../src/modules/help/pageGuide';
 import { explainControl, ControlKind, ControlHelp } from '../src/modules/help/controlGuide';
 
@@ -16,7 +16,7 @@ import { explainControl, ControlKind, ControlHelp } from '../src/modules/help/co
  * 所以入口只有一个问号，点开之后用他自己的话来分：
  *   「我是新来的，先带我走一遍」        → ① 岗位上手（原来的新手引导）
  *   「这一页是干什么的」                → ② 本页详解
- *   「这个按钮是什么意思」              → ③ 单项解释
+ *   「解释这一项」              → ③ 单项解释
  *
  * ── 为什么②要动态看当前在哪 ───────────────────────────────────
  *
@@ -72,7 +72,7 @@ const nameOf = (el: HTMLElement): string => {
 const Rich: React.FC<{ text: string }> = ({ text }) => (
   <>
     {text.split(/\*\*/).map((part, idx) => (
-      idx % 2 === 1 ? <strong key={idx} className="font-black">{part}</strong> : <span key={idx}>{part}</span>
+      idx % 2 === 1 ? <strong key={idx} className="font-semibold">{part}</strong> : <span key={idx}>{part}</span>
     ))}
   </>
 );
@@ -181,6 +181,11 @@ export const HelpHub: React.FC<{
   const [cardH, setCardH] = useState(220);
   const isMobile = vw < NARROW;
 
+  const [pageIndex, setPageIndex] = useState(0);
+  const pageRoot = useRef<HTMLElement | null>(null);
+  const [pageRect, setPageRect] = useState<Rect | null>(null);
+  const pageCard = useRef<HTMLDivElement>(null);
+  const [pageCardH, setPageCardH] = useState(420);
   const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
@@ -226,15 +231,60 @@ export const HelpHub: React.FC<{
       if (top) {
         const heading = top.querySelector('h1, h2, h3')?.textContent || '';
         const found = findModalGuide(heading);
-        if (found) { setScope('modal'); setGuide(found); return; }
-        // 认不出这个弹窗时退回讲整页，而不是给一句「暂无说明」
+        if (found) { pageRoot.current = top; setScope('modal'); setGuide(found); return; }
+        pageRoot.current = top;
+        setScope('modal');
+        setGuide({ title: heading || '当前窗口', what: '这里处理当前选中的业务。先确认对象，再填写和核对资料。', order: ['核对当前处理对象和必填信息', '填写后检查内容，再决定保存或取消'], areas: [{name: '填写区域', role: '具体字段的含义可以用「解释这一项」点选查看。'}] });
+        return;
       }
     }
+    pageRoot.current = document.querySelector('main');
     setScope('page');
     setGuide(findPageGuide(location.pathname));
   }, [location.pathname]);
 
-  const enterPage = () => { resolveGuide(); setMode('page'); };
+  const enterPage = () => { resolveGuide(); setPageIndex(0); setMode('page'); };
+
+  const pageSteps = guide ? [
+    { title: '这个模块负责什么', text: guide.what },
+    { title: '通常按什么顺序使用', text: guide.order.map((line, index) => `${index + 1}. ${line}`).join('\n\n') },
+    ...guide.areas.map(area => ({ title: area.name, text: area.role })),
+    ...(guide.misread ? [{ title: '使用时留意这一点', text: guide.misread }] : []),
+  ] : [];
+
+  // 只定位已有区域，不模拟业务点击。找不到精确位置时保持普通说明卡。
+  useLayoutEffect(() => {
+    if (!open || mode !== 'page') { setPageRect(null); return; }
+    const update = () => {
+      const root = pageRoot.current;
+      let target: HTMLElement | null = null;
+      const visible = (el: HTMLElement) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
+      };
+      if (root) {
+        if (pageIndex === 0) target = Array.from(root.querySelectorAll<HTMLElement>('h1,h2,h3')).find(visible) || null;
+        else if (pageIndex === 1) target = Array.from(root.querySelectorAll<HTMLElement>('form,table,[role="tablist"]')).find(visible) || null;
+        else {
+          const name = guide?.areas[pageIndex - 2]?.name;
+          if (name) target = Array.from(root.querySelectorAll<HTMLElement>('h2,h3,h4,[data-help],[aria-label]')).find(el => visible(el) && (el.textContent?.trim() === name || el.getAttribute('aria-label') === name || el.dataset.help === name)) || null;
+        }
+      }
+      if (target) {
+        const r = target.getBoundingClientRect();
+        setPageRect({ top: Math.max(8, r.top), left: Math.max(8, r.left), width: Math.min(r.right, window.innerWidth - 8) - Math.max(8, r.left), height: Math.min(r.bottom, window.innerHeight - 8) - Math.max(8, r.top) });
+      } else setPageRect(null);
+      if (pageCard.current) setPageCardH(pageCard.current.getBoundingClientRect().height);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    if (pageCard.current) observer.observe(pageCard.current);
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => { observer.disconnect(); window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
+  }, [open, mode, pageIndex, guide]);
+
+  useEffect(() => { if (open && mode === 'page') { resolveGuide(); setPageIndex(0); } }, [location.pathname]);
 
   /* ── ③ 单项解释：点哪讲哪 ─────────────────────────────── */
 
@@ -270,13 +320,21 @@ export const HelpHub: React.FC<{
       setHover({ top: r.top, left: r.left, width: r.width, height: r.height });
     };
 
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setMode('menu'); setPick(null); } };
+    const onPointerDown = (e: PointerEvent) => {
+      if (!inHelpUI(e.target as Element)) { e.preventDefault(); e.stopPropagation(); }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setMode('menu'); setPick(null); }
+      if (!inHelpUI(e.target as Element)) { e.preventDefault(); e.stopPropagation(); }
+    };
 
+    document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('click', onClick, true);
     document.addEventListener('mouseover', onOver, true);
     document.addEventListener('keydown', onKey, true);
     document.body.style.cursor = 'help';
     return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('click', onClick, true);
       document.removeEventListener('mouseover', onOver, true);
       document.removeEventListener('keydown', onKey, true);
@@ -300,7 +358,7 @@ export const HelpHub: React.FC<{
         type="button"
         onClick={onOpen}
         title="这个弹窗要我填什么？"
-        className="fixed bottom-24 right-6 z-[60] flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-indigo-600 shadow-lg transition-transform hover:scale-105"
+        className="fixed bottom-24 right-6 z-[60] flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-lg transition-transform hover:scale-105"
       >
         <HelpCircle className="h-5 w-5" />
       </button>
@@ -330,26 +388,26 @@ export const HelpHub: React.FC<{
           <div className="fixed inset-0 z-[88] pointer-events-none">
             {hover && (
               <div
-                className="absolute rounded-lg ring-2 ring-indigo-400 bg-indigo-400/10 transition-all duration-75"
+                className="absolute rounded-lg ring-2 ring-blue-400 bg-blue-400/10 transition-all duration-75"
                 style={{ top: hover.top - PAD, left: hover.left - PAD, width: hover.width + PAD * 2, height: hover.height + PAD * 2 }}
               />
             )}
             {pick && (
               <div
-                className="absolute rounded-lg ring-2 ring-indigo-600"
+                className="absolute rounded-lg ring-2 ring-blue-600"
                 style={{ top: pick.rect.top - PAD, left: pick.rect.left - PAD, width: pick.rect.width + PAD * 2, height: pick.rect.height + PAD * 2 }}
               />
             )}
           </div>
 
           <div className="fixed inset-x-0 top-3 z-[96] flex justify-center px-4">
-            <div className="flex items-center gap-3 rounded-full bg-indigo-600 px-4 py-2 text-white shadow-lg">
+            <div className="flex items-center gap-3 rounded-full bg-blue-600 px-4 py-2 text-white shadow-lg">
               <MousePointerClick className="h-4 w-4 shrink-0" />
-              <span className="text-xs font-bold">点屏幕上任何东西，看它是什么意思</span>
+              <span className="text-xs font-medium">点选不懂的内容 · 只解释，不执行操作</span>
               <button
                 type="button"
                 onClick={() => { setMode('menu'); setPick(null); }}
-                className="rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-black hover:bg-white/30"
+                className="rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-semibold hover:bg-white/30"
               >
                 退出讲解
               </button>
@@ -361,30 +419,30 @@ export const HelpHub: React.FC<{
               ref={cardRef}
               style={cardStyle()}
               className={isMobile
-                ? 'fixed inset-x-0 bottom-0 z-[95] rounded-t-2xl border-t border-gray-200 bg-white p-4 shadow-2xl'
-                : 'rounded-2xl border border-gray-200 bg-white p-4 shadow-2xl'}
+                ? 'fixed inset-x-0 bottom-0 z-[95] max-h-[65dvh] overflow-y-auto rounded-t-2xl border-t border-gray-200 bg-white p-4 shadow-2xl'
+                : 'max-h-[calc(100dvh-24px)] overflow-y-auto rounded-2xl border border-gray-200 bg-white p-4 shadow-xl'}
             >
               <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-black text-gray-900">{pick.name || '这个元素'}</p>
+                <p className="text-sm font-semibold text-gray-900">{pick.name || '这个元素'}</p>
                 <button onClick={() => setPick(null)} className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100">
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <p className="mt-1.5 text-[13px] font-bold leading-relaxed text-gray-700"><Rich text={pick.help.what} /></p>
+              <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-gray-700"><Rich text={pick.help.what} /></p>
               {pick.help.why && (
-                <p className="mt-2 flex gap-1.5 text-[12px] font-bold leading-relaxed text-gray-500">
+                <p className="mt-2 flex gap-1.5 text-[12px] font-medium leading-relaxed text-gray-500">
                   <Lightbulb className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
                   <span><Rich text={pick.help.why} /></span>
                 </p>
               )}
               {pick.help.warn && (
-                <p className="mt-2 flex gap-1.5 rounded-lg bg-amber-50 px-2.5 py-2 text-[12px] font-bold leading-relaxed text-amber-800">
+                <p className="mt-2 flex gap-1.5 rounded-lg bg-amber-50 px-2.5 py-2 text-[12px] font-medium leading-relaxed text-amber-800">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   <span><Rich text={pick.help.warn} /></span>
                 </p>
               )}
               {!pick.help.matched && (
-                <p className="mt-2 text-[11px] font-bold text-gray-400">
+                <p className="mt-2 text-[11px] font-medium text-gray-400">
                   这一项还没写专门的说明。觉得该有，点顶部的反馈图标说一声。
                 </p>
               )}
@@ -396,28 +454,32 @@ export const HelpHub: React.FC<{
       {/* ── ①②的面板 ── */}
       {mode !== 'inspect' && (
         <>
-          <div className="fixed inset-0 z-[90] bg-black/30" onClick={onClose} />
-          <div className={`fixed z-[91] bg-white shadow-2xl ${isMobile
-            ? 'inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-t-3xl'
-            : 'right-6 top-20 w-[380px] max-h-[76vh] overflow-y-auto rounded-2xl border border-gray-200'}`}
+          <div className={`fixed inset-0 z-[90] ${mode === 'page' && pageRect ? '' : 'bg-black/30'}`} onClick={onClose} />
+          {mode === 'page' && pageRect && <div className="fixed z-[90] pointer-events-none rounded-xl ring-2 ring-blue-500" style={{...pageRect, boxShadow: '0 0 0 9999px rgba(0,0,0,0.3)'}} /> }
+          <div ref={pageCard} role="dialog" aria-modal="true" aria-label={mode === 'menu' ? '新手引导' : '了解当前模块'} style={mode === 'page' && pageRect && !isMobile ? {
+            left: Math.max(12, Math.min(pageRect.left + pageRect.width + 16 + 380 < vw ? pageRect.left + pageRect.width + 16 : pageRect.left - 396 > 12 ? pageRect.left - 396 : vw - 404, vw - 392)),
+            top: Math.max(12, Math.min(pageRect.top, window.innerHeight - pageCardH - 12)), right: 'auto',
+          } : undefined} className={`fixed z-[91] flex flex-col bg-white shadow-xl ${isMobile
+            ? 'inset-x-0 bottom-0 max-h-[75dvh] overflow-hidden rounded-t-3xl'
+            : 'right-6 top-20 w-[380px] max-h-[calc(100dvh-40px)] overflow-hidden rounded-2xl border border-gray-200'}`}
           >
-            <div className="sticky top-0 flex items-center gap-2 border-b border-gray-100 bg-white px-5 py-4">
+            <div className="shrink-0 flex items-center gap-2 border-b border-gray-100 bg-white px-5 py-4">
               {mode === 'page' && (
                 <button onClick={() => setMode('menu')} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100">
                   <ArrowLeft className="h-4 w-4" />
                 </button>
               )}
-              <HelpCircle className="h-5 w-5 text-indigo-600" />
-              <h3 className="flex-1 text-sm font-black text-gray-900">
-                {mode === 'menu' ? '需要哪种帮助？' : `${guide?.title || '这一页'}${scope === 'modal' ? '（当前弹窗）' : ''}`}
+              <HelpCircle className="h-5 w-5 text-blue-600" />
+              <h3 className="flex-1 text-sm font-semibold text-gray-900">
+                {mode === 'menu' ? '你想了解什么？' : `${guide?.title || '这一页'}${scope === 'modal' ? '（当前弹窗）' : ''}`}
               </h3>
-              <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100">
+              <button aria-label="关闭帮助" onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100">
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             {mode === 'menu' && (
-              <div className="space-y-2 p-4">
+              <div className="space-y-3 p-5 overflow-y-auto"><p className="mb-4 text-sm leading-relaxed text-gray-500">第一次用，先认识工作台；工作中有疑问，随时回来查。</p>
                 {/*
                   三个选项用**使用者的话**来分，不是「第一层第二层第三层」。
                   他脑子里的问题只有一个「这什么意思」，
@@ -426,13 +488,13 @@ export const HelpHub: React.FC<{
                 <button
                   type="button"
                   onClick={() => { onClose(); onReplayTour(); }}
-                  className="flex w-full items-start gap-3 rounded-2xl border border-gray-200 p-4 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+                  className="flex w-full items-start gap-3 rounded-2xl border border-gray-200 p-4 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40"
                 >
-                  <Compass className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
+                  <Compass className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
                   <span>
-                    <span className="block text-sm font-black text-gray-900">我是新来的，带我走一遍</span>
-                    <span className="mt-0.5 block text-xs font-bold leading-relaxed text-gray-500">
-                      按你的岗位，从「进来第一件事做什么」开始，四到六步。看过一次以后不会再自动弹。
+                    <span className="block text-sm font-semibold text-gray-900">认识我的工作台</span>
+                    <span className="mt-0.5 block text-xs font-medium leading-relaxed text-gray-500">
+                      认识你的岗位、系统导航与各模块之间的关系。
                     </span>
                   </span>
                 </button>
@@ -440,13 +502,13 @@ export const HelpHub: React.FC<{
                 <button
                   type="button"
                   onClick={enterPage}
-                  className="flex w-full items-start gap-3 rounded-2xl border border-gray-200 p-4 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+                  className="flex w-full items-start gap-3 rounded-2xl border border-gray-200 p-4 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40"
                 >
-                  <FileText className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+                  <FileText className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
                   <span>
-                    <span className="block text-sm font-black text-gray-900">这一页是干什么的</span>
-                    <span className="mt-0.5 block text-xs font-bold leading-relaxed text-gray-500">
-                      每个按钮都认识，但不知道整体该按什么顺序用 —— 看这个。弹窗开着时讲的是弹窗。
+                    <span className="block text-sm font-semibold text-gray-900">了解当前模块</span>
+                    <span className="mt-0.5 block text-xs font-medium leading-relaxed text-gray-500">
+                      了解当前模块的用途、使用顺序和区域分工。打开窗口时，优先介绍当前窗口。
                     </span>
                   </span>
                 </button>
@@ -454,13 +516,13 @@ export const HelpHub: React.FC<{
                 <button
                   type="button"
                   onClick={() => { setMode('inspect'); setPick(null); }}
-                  className="flex w-full items-start gap-3 rounded-2xl border border-gray-200 p-4 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+                  className="flex w-full items-start gap-3 rounded-2xl border border-gray-200 p-4 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40"
                 >
-                  <MousePointerClick className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                  <MousePointerClick className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
                   <span>
-                    <span className="block text-sm font-black text-gray-900">这个按钮是什么意思</span>
-                    <span className="mt-0.5 block text-xs font-bold leading-relaxed text-gray-500">
-                      进入讲解模式，点屏幕上任何东西都会告诉你它是什么、点了会怎样。这期间点什么都不会真的执行。
+                    <span className="block text-sm font-semibold text-gray-900">解释这一项</span>
+                    <span className="mt-0.5 block text-xs font-medium leading-relaxed text-gray-500">
+                      点选不懂的按钮、字段或数据，了解含义和操作结果。讲解期间不会执行操作。
                     </span>
                   </span>
                 </button>
@@ -468,68 +530,34 @@ export const HelpHub: React.FC<{
             )}
 
             {mode === 'page' && (
-              <div className="space-y-5 p-5">
-                {!guide && (
-                  <p className="text-sm font-bold leading-relaxed text-gray-500">
-                    这一页还没写详解。你可以先用「这个按钮是什么意思」逐个看，
-                    或者点顶部的反馈图标告诉我们哪一页最需要说明。
-                  </p>
-                )}
-                {guide && (
-                  <>
-                    <section>
-                      <h4 className="text-[11px] font-black uppercase tracking-widest text-gray-400">这一块负责什么</h4>
-                      <p className="mt-1.5 text-[13px] font-bold leading-relaxed text-gray-700"><Rich text={guide.what} /></p>
-                    </section>
-
-                    <section>
-                      <h4 className="text-[11px] font-black uppercase tracking-widest text-gray-400">通常按这个顺序用</h4>
-                      <ol className="mt-2 space-y-1.5">
-                        {guide.order.map((s, idx) => (
-                          <li key={idx} className="flex gap-2 text-[13px] font-bold leading-relaxed text-gray-700">
-                            <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-black text-indigo-700">
-                              {idx + 1}
-                            </span>
-                            <span><Rich text={s} /></span>
-                          </li>
-                        ))}
-                      </ol>
-                    </section>
-
-                    <section>
-                      <h4 className="text-[11px] font-black uppercase tracking-widest text-gray-400">各块各管什么</h4>
-                      <dl className="mt-2 space-y-2">
-                        {guide.areas.map(a => (
-                          <div key={a.name} className="rounded-xl bg-gray-50 px-3 py-2">
-                            <dt className="text-xs font-black text-gray-900">{a.name}</dt>
-                            <dd className="mt-0.5 text-[12px] font-bold leading-relaxed text-gray-600"><Rich text={a.role} /></dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </section>
-
-                    {guide.misread && (
-                      <section className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
-                        <h4 className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-amber-700">
-                          <AlertTriangle className="h-3.5 w-3.5" />
-                          最容易误会的一点
-                        </h4>
-                        <p className="mt-1 text-[12px] font-bold leading-relaxed text-amber-900"><Rich text={guide.misread} /></p>
-                      </section>
-                    )}
-                  </>
-                )}
-
-                {/* 看完介绍，下一步该是动手 —— 别让人读完了还得自己想「那我现在点哪」 */}
-                <button
-                  type="button"
-                  onClick={() => { setMode('inspect'); setPick(null); }}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-black text-white hover:bg-indigo-700"
-                >
-                  <MousePointerClick className="h-4 w-4" />
-                  接着看具体某一项是什么意思
-                </button>
-              </div>
+              <>
+                <div className="px-5 pt-4 shrink-0">
+                  <div className="h-1 rounded-full bg-gray-100"><div className="h-1 rounded-full bg-blue-600 transition-all" style={{width: `${(pageIndex + 1) / Math.max(1, pageSteps.length) * 100}%`}} /></div>
+                  <label className="mt-4 block text-xs text-gray-500">想了解哪一项？
+                    <select aria-label="选择模块讲解内容" value={pageIndex} onChange={e => setPageIndex(Number(e.target.value))} className="mt-1.5 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+                      {pageSteps.map((item, index) => <option key={index} value={index}>{index + 1}. {item.title}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <div className="overflow-y-auto min-h-0 px-5 py-5">
+                  <p className="mb-2 text-xs text-gray-400">第 {pageIndex + 1} 步 / 共 {pageSteps.length} 步 · {scope === 'modal' ? '当前窗口' : '当前模块'}</p>
+                  <h4 className="mb-3 text-[17px] font-semibold text-gray-900">{pageSteps[pageIndex]?.title || '当前模块'}</h4>
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-gray-700"><Rich text={pageSteps[pageIndex]?.text || '可使用「解释这一项」查看具体内容。'} /></p>
+                </div>
+                <div className="shrink-0 border-t border-gray-100 px-5 pt-3 pb-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <button onClick={onClose} className="py-2 text-xs text-gray-500">稍后再看</button>
+                    <div className="flex gap-2">
+                      {pageIndex > 0 && <button onClick={() => setPageIndex(pageIndex - 1)} className="rounded-xl px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-100">上一步</button>}
+                      <button onClick={() => pageIndex < pageSteps.length - 1 ? setPageIndex(pageIndex + 1) : onClose()} className="flex items-center gap-1 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700">{pageIndex < pageSteps.length - 1 ? '下一步' : '我知道了'}<ArrowRight className="h-3.5 w-3.5" /></button>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex justify-between text-xs text-gray-500">
+                    <button onClick={() => setMode('menu')} className="hover:text-blue-600">返回帮助选择</button>
+                    <button onClick={() => { setMode('inspect'); setPick(null); }} className="hover:text-blue-600">解释这一项</button>
+                  </div>
+                </div>
+              </>
             )}
           </div>
         </>

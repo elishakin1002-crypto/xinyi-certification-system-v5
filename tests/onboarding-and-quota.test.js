@@ -216,7 +216,7 @@ test('引导要指到具体位置，不能只在导航栏跳', () => {
   assert.match(src, /data-onboard="\$\{targetSel\}"/, '组件没有按 target 找元素');
   assert.match(src, /getBoundingClientRect/, '没有量元素位置，就没法指');
   assert.match(src, /scrollIntoView/, '元素在屏幕外时没有滚动过去');
-  assert.match(src, /ring-4 ring-blue-500/, '没有高亮描边');
+  assert.match(src, /ring-2 ring-blue-500/, '没有高亮描边');
   assert.match(src, /cardPos/, '说明气泡没有贴到元素旁边');
 });
 
@@ -308,7 +308,7 @@ test('引导框的样子要和系统其他卡片一致', () => {
   const src = read('components/OnboardingTour.tsx');
   assert.doesNotMatch(src, /bg-blue-600 text-white shrink-0/,
     '还是那条实心蓝标题栏');
-  assert.match(src, /rounded-full px-2\.5 py-1 text-\[11px\] font-black/,
+  assert.match(src, /rounded-full px-2\.5 py-1 text-\[11px\] font-semibold/,
     '「新手引导」没有收成小标签');
   assert.match(src, /bg-white border border-gray-200 shadow-xl/,
     '卡片本体不是白底细边，和其他卡片对不上');

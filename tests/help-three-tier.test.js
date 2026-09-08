@@ -18,7 +18,7 @@ test('一个入口，三层都能进得去', () => {
     那是让他先学一遍我的分类法。所以只有一个问号。
   */
   const hub = read('components/HelpHub.tsx');
-  ['我是新来的，带我走一遍', '这一页是干什么的', '这个按钮是什么意思'].forEach((label) => {
+  ['认识我的工作台', '了解当前模块', '解释这一项'].forEach((label) => {
     assert.ok(hub.includes(label), `帮助菜单里少了「${label}」这一层`);
   });
 

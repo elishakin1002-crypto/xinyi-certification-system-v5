@@ -491,7 +491,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             {/* 手机上更需要这个入口：屏幕小、说明文字都被折叠了 */}
             <button
               onClick={() => setHelpOpen(true)}
-              aria-label="帮助"
+              data-onboard="help" aria-label="帮助"
               className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
             >
               <HelpCircle className="w-5 h-5" />
@@ -622,7 +622,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                data-onboard="help"
                onClick={() => setHelpOpen(true)}
                aria-label="帮助"
-               title="帮助：走一遍岗位 / 这一页是干什么的 / 这个按钮什么意思"
+               title="新手引导：认识我的工作台 / 了解当前模块 / 解释这一项"
                className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
              >
                <HelpCircle className="w-5 h-5" />
@@ -767,7 +767,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50/50">
+        <main data-onboard="workspace-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50/50">
           {children}
         </main>
         <AIChatWidget />
@@ -809,7 +809,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         )}
         <FeedbackModal open={isFeedbackOpen} onClose={() => setIsFeedbackOpen(false)} />
-        <OnboardingTour forceOpen={replayTour} onClose={() => setReplayTour(false)} />
+        <OnboardingTour forceOpen={replayTour} onClose={() => setReplayTour(false)} onHelp={() => setHelpOpen(true)} />
         <HelpHub open={helpOpen} onClose={() => setHelpOpen(false)} onOpen={() => setHelpOpen(true)} onReplayTour={() => setReplayTour(true)} />
       </div>
     </div>
