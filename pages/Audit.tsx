@@ -1,3 +1,4 @@
+import { SampleList } from '../components/SampleRow';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { buildLessonDoc, isLessonWorthKeeping } from '../src/modules/knowledge/lessons';
@@ -1452,7 +1453,7 @@ const Audit = () => {
           {filteredIssues.length === 0 && (
             <div className="p-4 text-center text-sm font-bold text-gray-400">当前筛选下没有不符合项</div>
           )}
-          {filteredIssues.map(({ issue }) => (
+          <SampleList items={filteredIssues} sample={{issue: {id: 'sample-issue', customerName: '示例包装有限公司', findings: '内审记录缺少管理者代表签字', severity: 'Minor', status: 'Rectifying', auditor: '示例顾问', deadline: '2026-09-20', evidences: []}, relation: {customerName: '示例包装有限公司'}, topic: '内审记录', industry: '制造业', evidenceCount: 0, verified: false, overdue: false} as IssueViewModel} render={({ issue }) => (
             <button
               key={issue.id}
               type="button"
@@ -1474,7 +1475,7 @@ const Audit = () => {
                 {issue.status === 'Closed' ? '已关闭' : `整改中 · 期限 ${issue.deadline || '未定'}`}
               </p>
             </button>
-          ))}
+          )} />
         </div>
 
         <div className="hidden md:block overflow-x-auto">
@@ -1492,31 +1493,9 @@ const Audit = () => {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {/* 样例行：新人第一次进来这张表是空的，引导没有可指的东西 */}
-              <SampleTr
-                empty={filteredIssues.length === 0}
-                colSpan={7}
-                caption="真实的不符合项长这样：左边是严重度，中间「审计发现点」要写清事实（不写结论），右边传整改证据。整改死线到了还没传证据会标红。"
-              >
-                <td className={tdClass}>
-                  <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-black text-amber-700">一般不符合</span>
-                </td>
-                <td className={tdClass}>
-                  <div className="font-bold text-gray-900">温州示范包装有限公司</div>
-                  <div className="mt-1 text-[11px] text-gray-500">ISO9001 监督审核</div>
-                </td>
-                <td className={tdClass}>
-                  <div className="text-sm text-gray-800">2026-08 的内审记录缺少管理者代表签字</div>
-                  <div className="mt-1 text-[11px] text-gray-500">整改死线 2026-09-20</div>
-                </td>
-                <td className={tdClass}><span className="text-xs font-bold text-gray-500">已传 1 份 · 待验证</span></td>
-                <td className={tdClass}><span className="text-xs font-bold text-gray-500">未提炼</span></td>
-                <td className={tdClass}>
-                  <span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-black text-blue-700">整改中</span>
-                </td>
-                <td className={`${tdClass} text-right`}><span className="text-xs font-bold text-gray-400">—</span></td>
-              </SampleTr>
 
-              {filteredIssues.map(({ issue, relation, topic, evidenceCount, verified, overdue }) => (
+
+              <SampleList items={filteredIssues} sample={{issue: {id: 'sample-issue', customerName: '示例包装有限公司', findings: '内审记录缺少管理者代表签字', severity: 'Minor', status: 'Rectifying', auditor: '示例顾问', deadline: '2026-09-20', evidences: []}, relation: {customerName: '示例包装有限公司'}, topic: '内审记录', industry: '制造业', evidenceCount: 0, verified: false, overdue: false} as IssueViewModel} render={({ issue, relation, topic, evidenceCount, verified, overdue }) => (
                 <tr key={issue.id} className="hover:bg-gray-50/80 transition-colors group align-top">
                   <td className={tdClass}>{getSeverityBadge(issue.severity)}</td>
                   <td className={tdClass}>
@@ -1584,7 +1563,7 @@ const Audit = () => {
                     </button>
                   </td>
                 </tr>
-              ))}
+              )} />
               {filteredIssues.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-6 py-12 text-center text-sm text-gray-400">暂无匹配问题，可直接加载示例模板开始演示。</td>

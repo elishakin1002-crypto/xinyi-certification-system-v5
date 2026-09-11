@@ -103,6 +103,24 @@ router.post('/api/projects',
   requireAction('PROJECT_CREATE', { resource: projectResource }),
   wrap(async (req, res) => {
   const raw = getProjectPayload(req.body);
+  /*
+    必填校验 —— 2026-09-11 补。空请求体原来返回 500。
+
+    500 和 400 是两件事：400 是「你传的不对」，500 是「服务端自己崩了」，
+    后者意味着未捕获异常，可能已经写了半截数据。
+
+    只校验名字。**不校验负责人** —— 我第一版加了，结果打挂 5 条测试：
+    接口契约本来就允许「先建项目、再指派负责人」
+    （POST /api/projects 不带 manager → PATCH /api/projects/:id/owner），
+    那是个合法流程。前端表单要求填负责人是**前端的策略**，
+    不能拿它去收紧接口契约 —— 那会打断别的调用方。
+
+    教训：补校验时先看**现有测试和调用方在怎么用这个接口**，
+    别照着前端表单的要求去加。我这次差一点把一个正常流程封死。
+  */
+  if (!String(raw?.name || '').trim()) {
+    return sendFail(res, ERROR_CODES.PARAM_ERROR, '项目名称不能为空 —— 列表里会是一行空白，谁也认不出这是什么活。', {}, 400);
+  }
   const tasks = (Array.isArray(raw.tasks) ? raw.tasks : []).map(normTask);
   const project = await projectRepo.create({
     status: 'Active', projectCategory: 'Delivery', projectType: 'Self-Operated',

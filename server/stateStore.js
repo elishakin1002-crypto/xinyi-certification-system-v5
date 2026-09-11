@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { protectedKeys, mergeRows, conflict } = require('./services/stateMerge');
 
 const legacyFileStorePath = path.resolve(__dirname, './state_store.json');
 const fileStorePath = (() => {
@@ -219,7 +220,9 @@ const initStateStore = async () => {
 const upsertStateBatchFile = async (datasets, meta) => {
   const store = readFileStore();
   const now = nowIso();
-  const entries = normalizeDatasetEntries(datasets);
+  const entries = normalizeDatasetEntries(datasets).map(([key, value]) => [key,
+    protectedKeys.has(key) && meta.baseDatasets
+      ? mergeRows(key, meta.baseDatasets[key], value, store.datasets[key]?.value || []) : value]);
   entries.forEach(([datasetKey, datasetValue]) => {
     store.datasets[datasetKey] = {
       value: datasetValue,
@@ -314,7 +317,25 @@ const upsertStateBatchPostgres = async (datasets, meta) => {
   try {
     await client.query('BEGIN');
     let written = 0;
-    for (const [datasetKey, datasetValue] of entries) {
+    // Lock projected tables in a stable order: row-level API writes also respect these locks.
+    const guarded = entries.filter(([key]) => protectedKeys.has(key) && meta.baseDatasets).sort(([a], [b]) => a.localeCompare(b));
+    const { PROJECTED, projectDataset } = require('./services/relationalProjection');
+    for (const [key] of guarded) {
+      await client.query(`LOCK TABLE ${PROJECTED[key].table} IN SHARE ROW EXCLUSIVE MODE`);
+    }
+    for (const entry of entries) {
+      const [datasetKey] = entry;
+      let datasetValue = entry[1];
+      if (protectedKeys.has(datasetKey) && meta.baseDatasets) {
+        const conf = PROJECTED[datasetKey];
+        const current = await client.query(`SELECT * FROM ${conf.table}`);
+        const currentRows = current.rows.map(conf.repo.fromRow);
+        datasetValue = mergeRows(datasetKey, meta.baseDatasets[datasetKey], datasetValue, currentRows);
+        if (datasetKey === 'audit_issues_v1') {
+          await require('./services/auditTaskSync').syncAuditTasks(client, currentRows, datasetValue);
+        }
+        await projectDataset(client, datasetKey, datasetValue, true);
+      }
       await client.query(
         `
           INSERT INTO app_state_latest (
@@ -367,6 +388,11 @@ const upsertStateBatchPostgres = async (datasets, meta) => {
 };
 
 const upsertStateBatch = async (datasets, meta = {}) => {
+  if (meta.requireProtectedBase) {
+    for (const [key] of normalizeDatasetEntries(datasets)) {
+      if (protectedKeys.has(key) && !Array.isArray(meta.baseDatasets?.[key])) throw conflict(key);
+    }
+  }
   if (!backend.ready) await initStateStore();
   const result = (backend.mode === 'postgres' && pool)
     ? await upsertStateBatchPostgres(datasets, meta)
@@ -385,7 +411,7 @@ const upsertStateBatch = async (datasets, meta = {}) => {
   */
   if (backend.mode === 'postgres' && pool) {
     const { projectToRelational } = require('./services/relationalProjection');
-    await projectToRelational(datasets, meta);
+    await projectToRelational(Object.fromEntries(Object.entries(datasets).filter(([key]) => !(protectedKeys.has(key) && meta.baseDatasets))), meta);
   }
 
   return result;

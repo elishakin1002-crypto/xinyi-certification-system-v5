@@ -457,7 +457,7 @@ test('引导有东西可指：空列表里摆一条「样例」行', () => {
 
   // 每个业务列表都要有
   const pages = ['pages/Projects.tsx', 'pages/Leads.tsx', 'pages/Audit.tsx', 'pages/Finance.tsx'];
-  const missing = pages.filter((f) => !read(f).includes('<SampleTr'));
+  const missing = pages.filter((f) => !read(f).includes('<SampleList'));
   assert.deepEqual(missing, [], `这些列表没有样例行：${missing.join('、')}`);
 });
 

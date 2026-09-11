@@ -111,6 +111,13 @@ export const authService = {
       credentials: 'include'
     });
   },
+  listAssignableUsers: async (): Promise<AuthUser[]> => {
+    // Managers retain account-expiry data; colleagues get only the directory.
+    let res = await fetch('/api/auth/users', { credentials: 'include' });
+    if (res.status === 403) res = await fetch('/api/auth/directory', { credentials: 'include' });
+    const body = await parseJson<{ users: AuthUser[] }>(res);
+    return body.data.users;
+  },
   listUsers: async (): Promise<EmployeeAccount[]> => {
     const res = await fetch('/api/auth/users', {
       method: 'GET',

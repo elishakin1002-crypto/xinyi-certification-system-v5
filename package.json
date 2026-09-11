@@ -67,7 +67,14 @@
     "rollback:list": "bash deploy/rollback.sh --list",
     "drill": "bash deploy/restore-drill.sh",
     "checkup": "node scripts/checkup.mjs",
-    "checkup:industry": "node scripts/checkup-industry.mjs"
+    "checkup:industry": "node scripts/checkup-industry.mjs",
+    "checkup:data": "node scripts/checkup-data.mjs",
+    "checkup:coverage": "node scripts/test-coverage-matrix.mjs",
+    "checkup:ui": "node scripts/ui-sweep.mjs",
+    "checkup:authz": "node scripts/authz-matrix-live.mjs",
+    "walkthrough:snapshot": "node scripts/walkthrough-env.mjs snapshot",
+    "walkthrough:reset": "node scripts/walkthrough-env.mjs reset",
+    "walkthrough:status": "node scripts/walkthrough-env.mjs status"
   },
   "dependencies": {
     "cors": "^2.8.5",

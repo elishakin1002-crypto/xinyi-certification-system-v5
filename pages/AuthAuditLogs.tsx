@@ -1,8 +1,10 @@
+import { SampleList } from '../components/SampleRow';
+import { SAMPLE_AUDIT_LOG } from '../src/modules/onboarding/sampleRecords';
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, FileClock, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { EmptyState } from '../src/ui';
-import { SampleRow } from '../components/SampleRow';
+import { SampleRow, SampleTr } from '../components/SampleRow';
 import LoginSessions from '../components/LoginSessions';
 import { authService, AuthAuditLog } from '../services/authService';
 
@@ -138,37 +140,9 @@ const AuthAuditLogs: React.FC = () => {
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
             加载中
           </div>
-        ) : latestLogs.length === 0 ? (
-          /*
-            空状态 + 样例（2026-09-08 补，见 npm run checkup）。
-            原来只有一行「暂无审计日志」—— 它说了「没有」，
-            但没说「有的时候长什么样、该看哪一列」。
-            审计日志尤其需要：多数人一辈子只在出事那天打开它一次。
-          */
-          <div className="p-4">
-            <EmptyState
-              title="还没有审计记录"
-              hint="有人登录、改权限、重置密码时，这里会自动记一条。这是「谁做的」这条链的最后一道保险 —— 记录谁都改不了、也删不掉。"
-            />
-            <SampleRow
-              empty
-              className="mt-4"
-              caption="真实的一行长这样：重点看**动作**和**结果**两列 —— 「被拒绝」的记录最值得看，那是有人在碰他不该碰的东西，或者权限配错了。"
-            >
-              <div className="grid grid-cols-2 gap-y-1 text-[12px] md:grid-cols-4">
-                <span className="font-bold text-gray-500">时间</span>
-                <span className="font-bold text-gray-900">2026-09-08 09:14</span>
-                <span className="font-bold text-gray-500">动作</span>
-                <span className="font-bold text-gray-900">重置密码</span>
-                <span className="font-bold text-gray-500">操作人</span>
-                <span className="font-bold text-gray-900">金恩来（总经理）</span>
-                <span className="font-bold text-gray-500">结果</span>
-                <span className="font-bold text-emerald-700">成功</span>
-              </div>
-            </SampleRow>
-          </div>
         ) : (
           <>
+          {latestLogs.length === 0 && <EmptyState title="还没有审计记录" hint="样例只用于说明列与字段，不是实际操作记录。" />}
           {/*
             手机上给卡片，不给横向拖的表格（2026-09-08 补）。
             审计日志的列很多（时间/动作/操作人/对象/IP/结果），
@@ -176,8 +150,8 @@ const AuthAuditLogs: React.FC = () => {
             「出事了、人不在电脑前」的时候。
           */}
           <div className="block md:hidden divide-y divide-gray-100">
-            {latestLogs.map((log, i) => (
-              <div key={i} className="px-4 py-3">
+            <SampleList items={latestLogs} sample={SAMPLE_AUDIT_LOG} render={log => (
+              <div key={log.id} className="px-4 py-3">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-black text-gray-900">{String((log as any).action || '—')}</span>
                   <span className={`rounded-md px-2 py-0.5 text-[10px] font-black ${
@@ -193,7 +167,7 @@ const AuthAuditLogs: React.FC = () => {
                   {String((log as any).actorName || (log as any).actor || '—')}
                 </div>
               </div>
-            ))}
+            )} />
           </div>
           <div className="hidden md:block overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -207,7 +181,8 @@ const AuthAuditLogs: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {latestLogs.map(log => (
+
+                <SampleList items={latestLogs} sample={SAMPLE_AUDIT_LOG} render={log => (
                   <tr key={log.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 whitespace-nowrap text-gray-700 font-bold">{formatTime(log.createdAt)}</td>
                     <td className="px-4 py-3 whitespace-nowrap">
@@ -227,7 +202,7 @@ const AuthAuditLogs: React.FC = () => {
                       <div className="line-clamp-2">{metadataSummary(log.metadata)}</div>
                     </td>
                   </tr>
-                ))}
+                )} />
               </tbody>
             </table>
           </div>

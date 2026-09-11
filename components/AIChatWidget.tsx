@@ -451,7 +451,8 @@ const AIChatWidget = () => {
         }
         if (actionData.project) {
           const p = actionData.project;
-          addProject({ name: p.name, customerId: p.customerId, contractRef: p.contractRef, manager: p.manager || currentUser?.name, projectAmount: p.projectAmount, costStatus: p.costStatus, tasks: p.tasks || [] } as any);
+          const saved = await addProject({ name: p.name, customerId: p.customerId, contractRef: p.contractRef, manager: p.manager || currentUser?.name, projectAmount: p.projectAmount, costStatus: p.costStatus, tasks: p.tasks || [] } as any);
+          if (!saved) { sys('❌ 项目保存失败，请重试。'); return null; }
           sys(`✅ 已创建合同项目：${p.name || ''}`);
           return 'project';
         }

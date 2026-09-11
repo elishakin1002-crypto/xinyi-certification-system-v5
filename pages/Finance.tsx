@@ -1,3 +1,4 @@
+import {SampleList} from '../components/SampleRow';
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
@@ -366,25 +367,9 @@ const Finance = () => {
                         </thead> 
                         <tbody className="divide-y divide-gray-100"> 
                             {/* 样例行：让引导有个能指的对象，不是对着空表讲 */}
-                            <SampleTr
-                              empty={filteredReceivables.length === 0}
-                              colSpan={7}
-                              caption="真实回款长这样：过了应收日期还没到账的会标红，那是每天第一眼要看的。点右边「确认到账」之后，项目付款状态和客户价值分级会自动跟着变。"
-                            >
-                              <td className={`${tdClass} font-mono text-gray-600 text-sm`}>2026-08-20</td>
-                              <td className={`${tdClass} font-black text-gray-900 text-base`}>温州示范包装有限公司</td>
-                              <td className={`${tdClass} text-gray-700`}>首付款 50%</td>
-                              <td className={tdClass}><span className="text-xs font-bold text-gray-500">XY-2026-0001</span></td>
-                              <td className={`${tdClass} text-right font-black text-gray-900`}>¥12,000.00</td>
-                              <td className={`${tdClass} text-center`}>
-                                <span className="rounded-md bg-red-50 px-2 py-1 text-xs font-black text-red-700">已逾期 18 天</span>
-                              </td>
-                              <td className={`${tdClass} text-right`}>
-                                <span className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-bold text-gray-400">确认到账</span>
-                              </td>
-                            </SampleTr>
 
-                            {filteredReceivables.map((r, idx) => (
+
+                            <SampleList items={filteredReceivables} sample={{id: 'sample-receivable', contractId: 'sample-contract', contractNo: 'XY-SAMPLE-001', customerName: '示例包装有限公司', amount: 3000, node: '示例付款节点', contractTitle: '示例服务合同', paymentClaim: undefined, displayStatus: 'unpaid', status: 'unpaid', dueDate: '2026-09-09', contractAmount: 30000} as (typeof filteredReceivables)[number]} render={(r, idx) => (
                               <tr key={`${r.contractId}-${r.id}-${idx}`} className={`hover:bg-gray-50 transition-colors ${r.displayStatus === 'paid' ? 'bg-gray-50/30' : ''}`}>
                                 <td className={`${tdClass} font-mono text-gray-600 text-sm`}>{r.dueDate || '待定'}</td>
                                 <td className={`${tdClass} font-black text-gray-900 text-base`}>{r.customerName}</td>
@@ -432,7 +417,7 @@ const Finance = () => {
                                   )}
                                 </td>
                               </tr>
-                            ))} 
+                            )} />
 	                            {filteredReceivables.length === 0 && (
                               <tr>
                                 <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
@@ -449,7 +434,7 @@ const Finance = () => {
 
                 {/* Mobile List View - Receivables */}
                 <div className="md:hidden divide-y divide-gray-100">
-                    {filteredReceivables.map(r => (
+                    <SampleList items={filteredReceivables} sample={{id: 'sample-receivable', contractId: 'sample-contract', contractNo: 'XY-SAMPLE-001', customerName: '示例包装有限公司', amount: 3000, node: '示例付款节点', contractTitle: '示例服务合同', paymentClaim: undefined, displayStatus: 'unpaid', status: 'unpaid', dueDate: '2026-09-09', contractAmount: 30000} as unknown as (typeof filteredReceivables)[number]} render={r => (
                         <div key={`${r.contractId}-${r.id}`} className="p-4 active:bg-gray-50">
                             <div className="flex justify-between items-start mb-1">
                                 <div className="font-medium text-gray-900 truncate pr-2 text-sm">{r.customerName}</div>
@@ -472,7 +457,7 @@ const Finance = () => {
                                 )}
                             </div>
                         </div>
-                    ))}
+                    )} />
                 </div>
             </div> 
         </div> 
@@ -539,7 +524,7 @@ const Finance = () => {
                             </tr> 
                         </thead> 
                         <tbody className="divide-y divide-gray-100"> 
-                            {filteredSettlements.map((s) => (
+                            <SampleList items={filteredSettlements} sample={{id: 'sample-settlement', beneficiary: '示例顾问', type: 'Internal', month: '2026-09', amount: 1200, status: 'draft', contractRef: 'XY-SAMPLE-001', date: '2026-09-09'} as (typeof filteredSettlements)[number]} render={(s) => (
                               <tr key={s.id} className="hover:bg-gray-50">
                                 <td className={tdClass}>
                                   {s.type === 'External' ? (
@@ -582,7 +567,7 @@ const Finance = () => {
                                   </div>
                                 </td>
                               </tr>
-                            ))} 
+                            )} />
                             {filteredSettlements.length === 0 && (
                               <tr>
                                 <td colSpan={7} className="py-12 text-center text-gray-400">暂无结算记录</td>
@@ -594,7 +579,7 @@ const Finance = () => {
 
                 {/* Mobile List View - Settlements */}
                 <div className="md:hidden divide-y divide-gray-100">
-                    {filteredSettlements.map(s => (
+                    <SampleList items={filteredSettlements} sample={{id: 'sample-settlement', beneficiary: '示例顾问', type: 'Internal', month: '2026-09', amount: 1200, status: 'draft', contractRef: 'XY-SAMPLE-001', date: '2026-09-09'} as (typeof filteredSettlements)[number]} render={s => (
                         <div key={s.id} className="p-4 active:bg-gray-50">
                             <div className="flex justify-between items-start mb-1">
                                 <div className="font-medium text-gray-900 text-sm">{s.beneficiary}</div>
@@ -618,7 +603,7 @@ const Finance = () => {
                                 </div>
                             </div>
                         </div>
-                    ))}
+                    )} />
                 </div>
             </div> 
         </div> 

@@ -14,7 +14,7 @@ HOST="${DEPLOY_HOST:-124.223.209.102}"
 KEY="${DEPLOY_KEY:-$HOME/.ssh/id_ed25519_xinyi}"
 APP=/opt/xinyi
 REL=/opt/xinyi-releases
-SSH="ssh -i $KEY -o StrictHostKeyChecking=no ubuntu@$HOST"
+SSH="ssh -i $KEY -o StrictHostKeyChecking=yes ubuntu@$HOST"
 
 cd "$(dirname "$0")/.."
 
@@ -37,24 +37,25 @@ else
   echo '    首次部署，无可快照的版本'
 fi"
 
-echo "$(git rev-parse --short HEAD 2>/dev/null || echo nogit)" > VERSION
+echo "$(git rev-parse --short HEAD 2>/dev/null || echo nogit)-$(date -u +%Y%m%dT%H%M%SZ)" > VERSION
 echo ">>> [1/5] 同步代码"
 # --exclude .env.local 是**必须的**：同步过去会用开发配置覆盖生产配置，
 # 而开发配置里 XINYI_SESSION_COOKIE_SECURE、DATABASE_URL 全都不一样，
 # 结果是所有人突然登不进去，而且看不出和这次部署有关。
 rsync -az --delete \
   --exclude node_modules --exclude .git --exclude dist --exclude .runtime \
-  --exclude '.env.local' --exclude '*.log' \
+  --exclude '.env.local' --exclude '.env*' --exclude '*.log' --exclude .artifacts --exclude .DS_Store \
   `# backups 必须排除：rsync --delete 会把服务器上「本地没有」的东西删掉，` \
   `# 而备份天生只存在于服务器。2026-09-03 演练时发现每次部署都在删备份，` \
   `# 账号拆分前那个 29.7MB 的备份就是这么没的 —— 而且全程没有任何提示。` \
   --exclude backups \
   --exclude .codex-work --exclude .claude --exclude outputs --exclude release \
   --exclude test-results --exclude playwright-report \
-  -e "ssh -i $KEY -o StrictHostKeyChecking=no" ./ "ubuntu@$HOST:$APP/"
+  --exclude server/state_store.json --exclude server/auth_store.json --exclude server/intel_store.json \
+  -e "ssh -i $KEY -o StrictHostKeyChecking=yes" ./ "ubuntu@$HOST:$APP/"
 
 echo ">>> [2/4] 安装依赖 + 构建 + 迁移"
-$SSH "cd $APP && npm ci --no-audit --no-fund >/dev/null 2>&1 && npm run build:metrics >/dev/null && npm run build 2>&1 | grep -E 'built in|error' && npm run migrate 2>&1 | tail -2"
+$SSH "set -euo pipefail; cd $APP && npm ci --no-audit --no-fund >/dev/null 2>&1 && npm run build:metrics >/dev/null && npm run build 2>&1 | grep -E 'built in|error' && npm run migrate 2>&1 | tail -2"
 
 echo ">>> [3/5] 修权限（rsync 会把本地的 0700 带过来，每次都要修）"
 $SSH "sudo chmod o+x $APP && sudo chmod -R a+rX $APP/dist $APP/public && chmod 600 $APP/.env.local"
@@ -68,8 +69,8 @@ $SSH "sudo chmod o+x $APP && sudo chmod -R a+rX $APP/dist $APP/public && chmod 6
 # 配置和代码脱节的坏处不是「这次没生效」，
 # 是**下次有人照着仓库里的配置排查线上问题，看到的是一份假的**。
 echo ">>> [4/5] 部署 Nginx / systemd 配置"
-scp -q -i "$KEY" -o StrictHostKeyChecking=no deploy/nginx-xinyi.conf "ubuntu@$HOST:/tmp/nginx-xinyi.conf"
-scp -q -i "$KEY" -o StrictHostKeyChecking=no deploy/xinyi.service      "ubuntu@$HOST:/tmp/xinyi.service"
+scp -q -i "$KEY" -o StrictHostKeyChecking=yes deploy/nginx-xinyi.conf "ubuntu@$HOST:/tmp/nginx-xinyi.conf"
+scp -q -i "$KEY" -o StrictHostKeyChecking=yes deploy/xinyi.service      "ubuntu@$HOST:/tmp/xinyi.service"
 $SSH "set -e
 sudo mv /tmp/nginx-xinyi.conf /etc/nginx/sites-available/xinyi
 sudo ln -sf /etc/nginx/sites-available/xinyi /etc/nginx/sites-enabled/xinyi
@@ -120,5 +121,7 @@ if grep -q '^ADMIN_WEBHOOK_URL=http' $APP/.env.local; then
 else
   echo '  管理通道   !!! 未配置 —— 错误摘要不会发，也不会退回工作群（那是故意的）'
 fi"
+
+$SSH "cd $APP && bash deploy/verify-live.sh"
 
 echo ">>> 完成  http://$HOST"

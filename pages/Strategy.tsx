@@ -29,11 +29,11 @@ import { MonthlyAction } from '../src/modules/review/normalize';
 
 // Fix: Component defined outside to prevent re-renders
 // Explicitly using React.FC to ensure key prop is handled correctly by TS
-const TaskCard: React.FC<{ task: StrategicTask }> = ({ task }) => {
+const TaskCard: React.FC<{ task: StrategicTask; sample?: boolean }> = ({ task, sample = false }) => {
   const { updateStrategicTaskStatus, deleteStrategicTask, addProject } = useApp();
 
-  const handleConvertToProject = () => {
-    addProject({
+  const handleConvertToProject = async () => {
+    const saved = await addProject({
       name: `【战略战役】${task.title}`.slice(0, 60),
       contractRef: `STRATEGY:${task.id}`,
       manager: task.owner || '待指派',
@@ -60,11 +60,13 @@ const TaskCard: React.FC<{ task: StrategicTask }> = ({ task }) => {
         }
       ]
     });
+    if (!saved) return;
     updateStrategicTaskStatus(task.id, 'In Progress');
   };
 
   return (
-      <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group mb-3 cursor-grab active:cursor-grabbing">
+      <div data-sample={sample ? "1" : undefined} data-onboard={sample ? "sample-record" : undefined} onClickCapture={e => { if (sample) { e.preventDefault(); e.stopPropagation(); } }} onKeyDownCapture={e => { if (sample && e.key !== 'Tab') { e.preventDefault(); e.stopPropagation(); } }} className="relative bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group mb-3 cursor-grab active:cursor-grabbing">
+          {sample && <span className="absolute -top-2 left-3 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">样例 · 不是真实数据</span>}
           <div className="flex justify-between items-start mb-2">
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
                   task.priority === 'High' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'
@@ -108,7 +110,7 @@ const TaskCard: React.FC<{ task: StrategicTask }> = ({ task }) => {
 };
 
 const Strategy = () => {
-  const { strategicInsight, isAnalyzingStrategy, runDeepAnalysis, strategicTasks, addStrategicTask, generateStrategicTasksFromInsight } = useApp();
+  const { isTourActive, strategicInsight, isAnalyzingStrategy, runDeepAnalysis, strategicTasks, addStrategicTask, generateStrategicTasksFromInsight } = useApp();
   /*
     默认落在「本月经营判断」，不是 SWOT。
 
@@ -412,6 +414,7 @@ const Strategy = () => {
                                 战略页是最容易空着的一页 —— 一年只动几次，
                                 而空着的看板不会告诉人「这里本来该放什么」。
                               */}
+                              {(isTourActive || !strategicTasks.some(t => t.status === 'Pending')) && <TaskCard sample task={{id: 'sample-strategy', title: '示例：完成重点客户服务回访', status: 'Pending', priority: 'Medium', owner: '示例负责人', deadline: '示例日期', impact: '形成可跟进的客户反馈'}} />}
                               {strategicTasks.filter(t => t.status === 'Pending').length === 0 ? (
                                 <>
                                   <EmptyState
@@ -419,16 +422,7 @@ const Strategy = () => {
                                     title="还没有战役"
                                     hint="把今年要打的仗拆成几条，比如「拿下三家食品厂」。它不管某一单，只管方向。"
                                   />
-                                  <SampleRow
-                                    empty
-                                    className="mt-3"
-                                    caption="真实的一张长这样：写清**要什么结果**，不写「加强…」这种没法验收的话。"
-                                  >
-                                    <div>
-                                      <p className="text-sm font-black text-gray-900">拿下 3 家规模以上食品厂</p>
-                                      <p className="mt-1 text-[11px] font-bold text-gray-500">负责人：金恩来 · 截止 2026-12-31</p>
-                                    </div>
-                                  </SampleRow>
+
                                 </>
                               ) : (
                                 strategicTasks.filter(t => t.status === 'Pending').map(task => <TaskCard key={task.id} task={task} />)

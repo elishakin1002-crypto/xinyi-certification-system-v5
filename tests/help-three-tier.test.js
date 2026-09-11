@@ -136,3 +136,10 @@ function requireTs(source) {
   // eslint-disable-next-line no-new-func
   return new Function(`${js}\nreturn {${names.join(',')}};`)();
 }
+
+test('手机隐藏的 AI 面板和抽屉不能抢走模块说明', () => {
+  const code = read('components/HelpHub.tsx');
+  assert.match(code, /node = node.parentElement/, '必须同时排除透明祖先');
+  assert.match(code, /Number\(style.opacity\) === 0/, '隐藏的全屏面板仍有尺寸，需要检查透明度');
+  assert.match(code, /style.visibility === 'hidden'/);
+});

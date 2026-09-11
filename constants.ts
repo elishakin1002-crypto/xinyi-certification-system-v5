@@ -7,7 +7,7 @@ export const ROLE_CAPABILITIES: Record<RoleID, RoleCapability> = {
   // 老板：业务最高权限
   ADMIN: {
     actions: [
-      'PROJECT_VIEW', 'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER', 'PROJECT_PAUSE',
+      'PROJECT_VIEW', 'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER',
       'TASK_CREATE', 'TASK_COMPLETE', 'TASK_DELETE',
       'CONTRACT_CREATE', 'CONTRACT_VIEW_AMOUNT', 'PAYMENT_CONFIRM', 'SETTLEMENT_VIEW',
       'CUSTOMER_CREATE', 'LEAD_CONVERT',
@@ -27,7 +27,7 @@ export const ROLE_CAPABILITIES: Record<RoleID, RoleCapability> = {
   // 切到 'limited' 后由 resolveSysAdminActions 收窄为业务只读。
   SYS_ADMIN: {
     actions: [
-      'PROJECT_VIEW', 'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER', 'PROJECT_PAUSE',
+      'PROJECT_VIEW', 'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER',
       'TASK_CREATE', 'TASK_COMPLETE', 'TASK_DELETE',
       'CONTRACT_CREATE', 'CONTRACT_VIEW_AMOUNT', 'PAYMENT_CONFIRM', 'SETTLEMENT_VIEW',
       'CUSTOMER_CREATE', 'LEAD_CONVERT',
@@ -46,7 +46,7 @@ export const ROLE_CAPABILITIES: Record<RoleID, RoleCapability> = {
   // 总助：代老板统筹派活与进度，不碰钱
   MANAGER: {
     actions: [
-      'PROJECT_VIEW', 'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER', 'PROJECT_PAUSE',
+      'PROJECT_VIEW', 'PROJECT_CREATE', 'PROJECT_EDIT_INFO', 'PROJECT_ASSIGN_MANAGER',
       'TASK_CREATE', 'TASK_COMPLETE', 'TASK_DELETE',
       'CONTRACT_CREATE', 'CONTRACT_VIEW_AMOUNT',
       'CUSTOMER_CREATE', 'LEAD_CONVERT'
@@ -709,7 +709,6 @@ export const ACTION_META: Record<string, { label: string; group: string; risk?: 
   PROJECT_EDIT_INFO:       { label: '修改项目信息 / 完成项目', group: '项目交付' },
   PROJECT_ASSIGN_MANAGER:  { label: '指派项目负责人', group: '项目交付' },
   PROJECT_ASSIGN_OWNER:    { label: '指派项目归属', group: '项目交付' },
-  PROJECT_PAUSE:           { label: '暂停项目', group: '项目交付' },
   PROJECT_AI_DIAGNOSE:     { label: '运行项目 AI 诊断', group: '项目交付' },
 
   TASK_CREATE:             { label: '新建任务', group: '任务与日志' },

@@ -1,3 +1,5 @@
+import { SampleList } from '../components/SampleRow';
+import { SAMPLE_PROJECT } from '../src/modules/onboarding/sampleRecords';
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
@@ -25,6 +27,9 @@ import {
   PROJECT_CATEGORY_META, deriveCategory, isBillable, hasContract,
   buildCategoryFilters, STATUS_FILTERS, SCOPE_FILTERS, ProjectModeFilter
 } from '../src/modules/projectCategory';
+import { buildSuggestion, buildSuggestionRecord } from '../src/modules/ownerSuggestion';
+import { PROJECT_TYPE_META } from '../types';
+import { SERVICE_GROUPS } from '../src/modules/serviceLine';
 
 const normalizeServiceToken = (value: string) => (value || '')
   .toUpperCase()
@@ -222,6 +227,38 @@ const Projects = () => {
   ]));
   const isValidManager = (value: string) => value === '待指派' || assignableManagers.includes(value);
 
+  /*
+    建议负责人。
+
+    ── 金恩来 2026-09-11 问的就是这个 ──────────────────────────
+    「你这个建议要怎么实现呢？在输入项目名称和项目的服务内容时
+      根据少量信息判断推荐吗？」
+
+    答案：**不只靠刚敲进去的那行字**。项目名只是四个信号里最弱的一个，
+    真正起作用的是「这家客户的这类服务以前是谁做的」——
+    而那条同时也是他另一个担心的解药：
+
+    「全员上的话，难免会遇到同样的客户做同样咨询的抢客户的情况。」
+
+    所以这里把**项目名 + 已选客户**一起喂进去，客户一选上，
+    建议就会从「按方向」变成「按这家客户的历史」。
+
+    ── 为什么只是显示，不自动填 ────────────────────────────────
+    金恩来确认「以建议的形式派活挺好的」。系统不知道谁在休假、
+    谁这周出差、客户点名要谁 —— 自动填会让人觉得系统替他做主，
+    然后他就绕过系统。所以这里只显示，采不采纳是一次明确的点击。
+  */
+  const ownerSuggestion = useMemo(() => buildSuggestion({
+    // 选了服务类型就用选的，没选才退回猜项目名 —— 猜是兜底，不是主路
+    serviceText: String((formData as any).serviceGroup || formData.name || ''),
+    // 选了「外包」就不该再推荐内部人 —— 这一条必须跟着表单变
+    projectType: (formData.projectType || 'Self-Operated') as any,
+    customerId: String(formData.customerId || '').trim() || undefined,
+    customers,
+    projects,
+    activeConsultants: assignableManagers,
+  }), [formData.name, (formData as any).serviceGroup, formData.projectType, formData.customerId, customers, projects, assignableManagers]);
+
   const openCreateModal = () => {
     const defaultManager = String(currentUser?.name || '').trim() || '待指派';
     setFormData({
@@ -406,9 +443,19 @@ const Projects = () => {
     return () => window.clearTimeout(t);
   }, [undoComplete]);
 
-  const [filterStatus, setFilterStatus] = useState<'Active' | 'Completed' | 'All'>('All');
+  const [filterStatus, setFilterStatus] = useState<'Active' | 'Completed' | 'All' | 'Stuck' | 'Overdue'>('All');
   /** 刚建完的一句说明 —— 告诉人东西在哪，而不是让他自己找 */
   const [createdNotice, setCreatedNotice] = useState('');
+  const [creating, setCreating] = useState(false);
+  const projectStatusFilters = [...STATUS_FILTERS, {value: 'Stuck' as const, label: '有任务卡住的项目'}, {value: 'Overdue' as const, label: '超期未完成任务'}];
+  const selectOverview = (status: typeof filterStatus) => { setFilterStatus(status); setSearchTerm(''); setDashboardFocus(null); setDashboardFocusLabel(''); };
+  const matchesOverviewStatus = (p: Project) => {
+    if (filterStatus === 'Active') return p.status === Status.Active;
+    if (filterStatus === 'Completed') return p.status === Status.Completed;
+    if (filterStatus === 'Stuck') return p.status === Status.Active && (p.tasks || []).some(isOverdueTask);
+    if (filterStatus === 'Overdue') return p.status !== Status.Completed && (p.tasks || []).some(isOverdueTask);
+    return true;
+  };
 
   /**
    * 类别筛选。
@@ -466,8 +513,8 @@ const Projects = () => {
 
   const filteredProjects = useMemo(() => projects
     .filter(p => {
-      if (filterStatus === 'Active' && p.status === Status.Completed) return false;
-      if (filterStatus === 'Completed' && p.status !== Status.Completed) return false;
+      if (!matchesOverviewStatus(p)) return false;
+
 
       if (!matchesModeScope(p)) return false;
 
@@ -492,8 +539,8 @@ const Projects = () => {
    * 只有在「与我相关」筛出 0 条时才用得上，所以不必在意它多算一遍。
    */
   const companyWideCount = useMemo(() => projects.filter(p => {
-    if (filterStatus === 'Active' && p.status === Status.Completed) return false;
-    if (filterStatus === 'Completed' && p.status !== Status.Completed) return false;
+    if (!matchesOverviewStatus(p)) return false;
+
     if (!matchesModeScope(p)) return false;
     if (!matchesProjectFocus(p)) return false;
     const q = searchTerm.trim();
@@ -614,7 +661,7 @@ const Projects = () => {
 
   /** 项目的下一步：最近截止的未完成任务。列表里给"该做什么"，比给进度百分比有用。 */
   const getNextTask = (project: Project): ProjectTask | null => {
-    const open = (project.tasks || []).filter(t => t.status !== 'Completed');
+    const open = (project.tasks || []).filter(isOpenTask);
     if (open.length === 0) return null;
     return open.slice().sort((a, b) => {
       const at = new Date(String(a.deadline || '2099-12-31')).getTime();
@@ -730,12 +777,22 @@ const Projects = () => {
     updateProjectTask(project.id, task.id, { deadline: nextDeadline });
   };
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     const manager = String(formData.manager || '').trim();
     if (!manager) {
         alert("必须指定执行负责人！");
         return;
+    }
+    /*
+      外包的单子必须写清合作方 —— 否则「这活谁做的」这条链就断在这里。
+
+      这条和「必须指定负责人」是同一个道理：自己做的活断在负责人，
+      外包的活断在合作方。两边都不能留空。
+    */
+    if (formData.projectType === 'Outsourced' && !String((formData as any).vendorName || '').trim()) {
+      alert('整单外包给第三方，必须写清合作方是哪一家。\n\n否则将来查「这活谁做的」会断在这里 —— 而那是这个系统最不能断的一条链。');
+      return;
     }
     if (!isValidManager(manager)) {
       alert('执行负责人请从列表选择（或选择“待指派”）。');
@@ -773,7 +830,10 @@ const Projects = () => {
       全都在读 projectCategory，改成处处现算等于把这一处的复杂度
       摊到十几个地方。
     */
-    addProject({
+    if (creating) return;
+    setCreating(true);
+    setCreatedNotice('');
+    const saved = await addProject({
       ...formData,
       manager,
       customerId,
@@ -783,6 +843,44 @@ const Projects = () => {
       ...(hasCustomer ? {} : { contractRef: '' }),
       ...(ownerUserId ? { ownerUserId } : {})
     });
+    setCreating(false);
+    if (!saved) return;
+
+    /*
+      ── 把「系统推了谁 / 人最终选了谁」记下来（2026-09-11）──────────
+
+      金恩来：「随 AI 对系统越来越了解，后面推荐肯定也会更有依据和准确」。
+      **那是有前提的**：得先有数据。没有这一笔，推荐规则永远停在
+      我照着花名册写死的那一版，「越用越准」就是一句空话。
+
+      要记的重点不是「推了谁」，是**推的和选的差在哪**：
+      差异里装着规则没编码进去的全部现实（休假、出差、客户点名、处不来）。
+      攒一段时间能直接回答两个问题：
+        · 哪一类服务的推荐最不准 → 那类规则要改
+        · 谁总被推荐却总不被选   → 花名册上的方向是不是过时了
+
+      写进已有的 business_events（detail 是 json 列），不新建表 ——
+      上线前动库结构的风险，换来的只是查询时少一次 json 取值，不划算。
+      和 task.skipped 一样：打点失败绝不能影响建项目，所以 catch 掉。
+    */
+    if (!ownerSuggestion.outsourced && ownerSuggestion.candidates.length > 0) {
+      const rec = buildSuggestionRecord(saved.id, ownerSuggestion, manager);
+      void fetch('/api/business-events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          eventType: rec.overridden ? 'project.owner.suggestion.overridden' : 'project.owner.suggestion.followed',
+          subjectType: 'project',
+          subjectId: rec.projectId,
+          summary: rec.overridden
+            ? `派活建议未被采纳：推荐 ${rec.suggested || '-'}，实际指派 ${rec.chosen}`
+            : `派活建议被采纳：${rec.chosen}`,
+          detail: { ...rec, previousOwner: ownerSuggestion.previousOwner },
+        }),
+      }).catch(() => { /* 打点失败不该打断建项目 */ });
+    }
+
     setIsModalOpen(false);
     setShowNewCustomer(false);
     setNewCustomerName('');
@@ -2399,7 +2497,8 @@ const Projects = () => {
           value={overviewStats.active}
           label="进行中项目"
           tone="blue"
-          onClick={() => setFilterStatus('Active')}
+          selected={filterStatus === 'Active'}
+          onClick={() => selectOverview('Active')}
           title="点击只看进行中的项目"
         />
         <StatCard
@@ -2407,7 +2506,8 @@ const Projects = () => {
           value={overviewStats.completed}
           label="已完成项目"
           tone="emerald"
-          onClick={() => setFilterStatus('Completed')}
+          selected={filterStatus === 'Completed'}
+          onClick={() => selectOverview('Completed')}
           title="点击只看已完成的项目"
         />
         <StatCard
@@ -2415,7 +2515,8 @@ const Projects = () => {
           value={overviewStats.stuck}
           label="有任务卡住的项目"
           tone="amber"
-          onClick={() => setFilterStatus('Active')}
+          selected={filterStatus === 'Stuck'}
+          onClick={() => selectOverview('Stuck')}
           title="进行中项目里存在超期任务的"
         />
         <StatCard
@@ -2423,6 +2524,8 @@ const Projects = () => {
           value={overviewStats.overdueTasks}
           label="超期未完成任务"
           emphasis="danger"
+          selected={filterStatus === 'Overdue'}
+          onClick={() => selectOverview('Overdue')}
           title="所有未完结项目下已过截止日期的任务总数"
         />
       </StatGrid>
@@ -2444,13 +2547,13 @@ const Projects = () => {
       <div data-guide-id="project-filters" className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6 flex flex-col gap-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2">
-            <FilterSelect label="状态" value={filterStatus} onChange={v => setFilterStatus(v)} options={STATUS_FILTERS} />
+            <FilterSelect label="状态" value={filterStatus} onChange={v => setFilterStatus(v)} options={projectStatusFilters} />
             <FilterSelect label="类别" value={modeScope} onChange={v => setModeScope(v)} options={categoryFilters} />
             <FilterSelect label="范围" value={viewScope} onChange={v => setViewScope(v)} options={SCOPE_FILTERS} />
             {(filterStatus !== 'All' || modeScope !== 'all' || viewScope !== 'related' || searchTerm.trim()) && (
               <button
                 type="button"
-                onClick={() => { setFilterStatus('All'); setModeScope('all'); setViewScope('related'); setSearchTerm(''); }}
+                onClick={() => { setFilterStatus('All'); setModeScope('all'); setViewScope('related'); setSearchTerm(''); setDashboardFocus(null); setDashboardFocusLabel(''); }}
                 className="px-2.5 py-2 rounded-lg text-xs font-bold text-gray-400 hover:text-gray-700 hover:bg-gray-50"
               >
                 重置筛选
@@ -2464,9 +2567,9 @@ const Projects = () => {
           <span>
             {SCOPE_FILTERS.find(o => o.value === viewScope)?.label}
             ・{categoryFilters.find(o => o.value === modeScope)?.label}
-            ・{STATUS_FILTERS.find(o => o.value === filterStatus)?.label}
+            ・{projectStatusFilters.find(o => o.value === filterStatus)?.label}
           </span>
-          <span className="font-bold text-gray-700">共 {filteredProjects.length} 个项目</span>
+          <span className="font-bold text-gray-700">{filterStatus === 'Overdue' ? `共 ${filteredProjects.reduce((n, p) => n + (p.tasks || []).filter(isOverdueTask).length, 0)} 项超期任务 · 涉及 ${filteredProjects.length} 个项目` : `共 ${filteredProjects.length} 个项目`}</span>
         </div>
 
         {/*
@@ -2514,10 +2617,18 @@ const Projects = () => {
         )}
       </div>
 
+      {filterStatus === 'Overdue' ? <div data-testid="overdue-task-results" className="rounded-2xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-100">
+        <h2 className="px-4 py-3 font-bold text-gray-900">超期未完成任务</h2>
+        {filteredProjects.flatMap(project => (project.tasks || []).filter(isOverdueTask).map(task => <button key={project.id + ':' + task.id} type="button" onClick={() => { selectOverview('All'); setExpandedProject(project.id); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center justify-between gap-4">
+          <div><p className="font-bold text-gray-900">{task.title}</p><p className="mt-1 text-xs text-gray-500">{project.name} · 负责人：{task.owner || project.manager}</p></div>
+          <div className="shrink-0 text-xs text-red-600">截止 {task.deadline}<span className="block mt-1 text-blue-600">查看所属项目 →</span></div>
+        </button>))}
+        {filteredProjects.length === 0 && <p className="p-6 text-sm text-gray-500">当前范围没有超期未完成任务。</p>}
+      </div> : (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         {/* Mobile Card View */}
         <div className="block md:hidden">
-          {filteredProjects.map(project => (
+          <SampleList items={filteredProjects} sample={SAMPLE_PROJECT} render={project => (
             <div key={project.id} className="p-4 border-b border-gray-100 hover:bg-gray-50 active:bg-gray-100 transition-colors" onClick={() => setExpandedProject(expandedProject === project.id ? null : project.id)}>
               <div className="flex justify-between items-start mb-2">
                 <div>
@@ -2547,7 +2658,7 @@ const Projects = () => {
                 </div>
               )}
             </div>
-          ))}
+          )} />
         </div>
 
         {/* Desktop Table View */}
@@ -2570,28 +2681,9 @@ const Projects = () => {
                   对着一条具体的行讲才记得住 —— 哪一列是客户、
                   哪一列是下一步、红色表示什么。
                 */}
-                <SampleTr
-                  empty={filteredProjects.length === 0}
-                  colSpan={6}
-                  caption="真实项目长这样：左边客户和项目名，中间是「下一步要做什么」——这一列最该看，它直接告诉你今天该推什么。"
-                >
-                  <td className="pl-4 text-gray-300"><ChevronRight className="w-4 h-4" /></td>
-                  <td className={tdClass}>
-                    <div className="font-bold text-gray-900">温州示范包装有限公司 ISO9001 换证</div>
-                    <div className="mt-1 text-[11px] text-gray-500">合同 XY-2026-0001 · 合同项目</div>
-                  </td>
-                  <td className={tdClass}>
-                    <div className="text-sm font-bold text-amber-700">整理管理手册（还有 3 天到期）</div>
-                    <div className="mt-1 text-[11px] text-gray-500">共 5 项任务，已完成 2 项</div>
-                  </td>
-                  <td className={tdClass}><span className="text-sm font-bold text-gray-700">李示例</span></td>
-                  <td className={tdClass}><span className="text-sm font-bold text-gray-700">40%</span></td>
-                  <td className={tdClass}>
-                    <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">进行中</span>
-                  </td>
-                </SampleTr>
 
-                {filteredProjects.map(project => (
+
+                <SampleList items={filteredProjects} sample={SAMPLE_PROJECT} render={project => (
                     <React.Fragment key={project.id}>
                         <tr className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${expandedProject === project.id ? 'bg-indigo-50/30' : ''}`} onClick={() => setExpandedProject(expandedProject === project.id ? null : project.id)}>
                             <td className="pl-4 text-gray-300">
@@ -2615,7 +2707,10 @@ const Projects = () => {
                             <td className={tdClass}>
                               {(() => {
                                 const next = getNextTask(project);
-                                if (!next) return <span className="text-xs text-gray-400">所有任务已完成</span>;
+                                if (!next) return <span className="text-xs text-gray-400">{
+                                  !(project.tasks || []).length ? '尚未安排任务' :
+                                  project.tasks.some(t => t.status === 'Skipped') ? '无待办任务（含已跳过）' : '所有任务已完成'
+                                }</span>;
                                 const overdue = isOverdueTask(next);
                                 return (
                                   <div className="min-w-0">
@@ -2653,11 +2748,13 @@ const Projects = () => {
                             </tr>
                         )}
                     </React.Fragment>
-                ))}
+                )} />
             </tbody>
         </table>
       </div>
       </div>
+
+      )}
 
       {isModalOpen && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
@@ -2682,6 +2779,37 @@ const Projects = () => {
                       <div>
                           <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">项目名称</label>
                           <input required className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="例如：某某工厂ISO认证咨询" />
+                      </div>
+
+                      <div>
+                          {/*
+                            服务类型：**选，不是猜**。
+
+                            ── 为什么加这个（2026-09-11）────────────────────────────
+                            金恩来：「这个名称没有固定规范大家怎么写的可能都有，这也是问题」
+
+                            他说中了。原来是从项目名里猜服务类型，而生产上
+                            10 份合同有 10 种写法（`SC食品生产许可证` / `SC 食品生产许可`…），
+                            靠猜必然不准 —— 而猜错的代价是把活推荐给不对的人。
+
+                            让人选一下，两件事同时解决：
+                              · 推荐有了可靠依据，项目名怎么写都行
+                              · 服务类型这个字段终于有了规范值，
+                                「同服务做过就能复用」的检索才查得出来
+                          */}
+                          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">
+                            服务类型 <span className="ml-1 font-bold normal-case tracking-normal text-gray-400">（决定建议谁来做）</span>
+                          </label>
+                          <select
+                            className="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                            value={String((formData as any).serviceGroup || '')}
+                            onChange={e => setFormData({ ...formData, serviceGroup: e.target.value } as any)}
+                          >
+                            <option value="">— 选一个（不选就按项目名猜，可能不准）—</option>
+                            {SERVICE_GROUPS.filter(g => g !== '未分类').map(g => (
+                              <option key={g} value={g}>{g}</option>
+                            ))}
+                          </select>
                       </div>
                       {/*
                         ══════════════════════════════════════════════════
@@ -2875,7 +3003,154 @@ const Projects = () => {
                                   </option>
                                 ))}
                               </select>
+
+                              {/*
+                                ── 建议怎么出现（2026-09-11 重做）──────────────────────
+
+                                金恩来：「我用梁杰的号登录准备建总经理已经分配给我的项目，
+                                建的时候看见下面提醒我说我的同事还没有项目，要不要分配给他，
+                                会不会有些奇怪」
+
+                                他是对的，我原来把对象搞错了：**建议是给派活的人看的，
+                                不是给干活的人看的**。活已经是他的了，还提示"要不要给别人"，
+                                既莫名其妙，又可能让已经认领的同事看了不舒服。
+
+                                查了同类工具，做法一致：Jira 的负责人建议**藏在下拉框里**
+                                （点开才看到）；PSA 类工具是「系统提候选 → 交付负责人确认」，
+                                推荐对象都是派活的那个人。
+
+                                所以改成两档：
+
+                                ① 日常建议 —— **默认收起，点一下才展开**（拉取式）
+                                   干活的人不会被打扰；派活的人想看随时点开。
+
+                                ② 抢客户提醒 —— **主动弹，而且措辞不同**
+                                   「这家客户的 XX 以前是 XX 做的，确认要换人吗？」
+                                   这是**提醒**不是建议：它只在真的可能抢客户时出现，
+                                   所以不会变成日常噪音，而该拦的那一次一定拦得住。
+                              */}
+                              {ownerSuggestion.outsourced ? (
+                                <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold leading-relaxed text-amber-800">
+                                  {ownerSuggestion.note}
+                                </p>
+                              ) : (
+                                <>
+                                  {/* ② 抢客户：主动弹，且只在"以前是别人做的"时出现 */}
+                                  {ownerSuggestion.previousOwner
+                                    && ownerSuggestion.previousOwner !== String(formData.manager || '').trim() && (
+                                    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                                      <p className="text-[11px] font-black leading-relaxed text-amber-900">
+                                        这家客户的「{ownerSuggestion.serviceGroup}」以前是
+                                        <span className="mx-1 underline">{ownerSuggestion.previousOwner}</span>
+                                        做的 —— 确认要换人吗？
+                                      </p>
+                                      <p className="mt-1 text-[11px] font-bold text-amber-700">
+                                        {/* 不写「他/她」—— 这里会填进真人姓名，猜错性别是实打实的冒犯 */}
+                                        续期、复审、加体系一般回原来那个人手上，对这家厂的情况熟。
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={() => setFormData({ ...formData, manager: ownerSuggestion.previousOwner as string })}
+                                        className="mt-1.5 rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-black text-white hover:bg-amber-700"
+                                      >
+                                        还是给 {ownerSuggestion.previousOwner}
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  {/* ① 日常建议：收起，点了才展开 */}
+                                  {ownerSuggestion.candidates.length > 0 && (
+                                    <details className="mt-2 rounded-xl border border-gray-200 bg-gray-50/60">
+                                      <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-bold text-gray-500">
+                                        拿不准派给谁？看看建议（{ownerSuggestion.candidates.length} 个人选）
+                                      </summary>
+                                      <div className="space-y-2 px-3 pb-2.5">
+                                        {ownerSuggestion.candidates.map((c, i) => (
+                                          <div key={c.name} className={i === 0 ? '' : 'border-t border-gray-200 pt-2'}>
+                                            <div className="flex items-center justify-between gap-2">
+                                              <p className="text-[11px] font-black text-gray-800">
+                                                {c.name}
+                                                <span className="ml-1.5 font-bold text-gray-400">手上 {c.activeProjects} 个在制</span>
+                                              </p>
+                                              <button
+                                                type="button"
+                                                onClick={() => setFormData({ ...formData, manager: c.name })}
+                                                className="shrink-0 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-black text-white hover:bg-indigo-700"
+                                              >
+                                                选他
+                                              </button>
+                                            </div>
+                                            {/* 理由必须写出来 —— 没有理由的建议不叫建议，叫猜 */}
+                                            <ul className="mt-1 space-y-0.5">
+                                              {c.reasons.map(r => (
+                                                <li key={r} className="text-[11px] font-bold leading-relaxed text-gray-500">· {r}</li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </details>
+                                  )}
+
+                                  {ownerSuggestion.candidates.length === 0 && ownerSuggestion.note && (
+                                    <p className="mt-2 text-[11px] font-bold leading-relaxed text-gray-400">
+                                      {ownerSuggestion.note}
+                                    </p>
+                                  )}
+                                </>
+                              )}
                           </div>
+                          <div>
+                              {/*
+                                谁来做：自己做 / 外包 / 合作。
+
+                                金恩来 2026-09-11：「第三方服务各类服务都有。」
+                                所以这**不是服务类型的属性**，是每一单自己的属性 ——
+                                体系认证也可能外包，同一类里这单外包下单自己做。
+
+                                用的是系统里早就有的 ProjectType（配套还有 vendorName、
+                                purchasingCost），不另造一套布尔值 ——
+                                同一件事两套模型是这个项目栽过最多次的地方。
+                                它此前一直硬编码成 Self-Operated，没有任何界面能选，
+                                所以形同虚设，我差点因此又造一套。
+                              */}
+                              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">谁来做</label>
+                              <select
+                                className="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                                value={formData.projectType || 'Self-Operated'}
+                                onChange={e => setFormData({ ...formData, projectType: e.target.value as any })}
+                              >
+                                {(Object.keys(PROJECT_TYPE_META) as (keyof typeof PROJECT_TYPE_META)[]).map(k => (
+                                  <option key={k} value={k}>{PROJECT_TYPE_META[k].label}</option>
+                                ))}
+                              </select>
+                              <p className="mt-1 text-[11px] font-bold text-gray-400">
+                                {PROJECT_TYPE_META[(formData.projectType || 'Self-Operated') as keyof typeof PROJECT_TYPE_META].hint}
+                              </p>
+                          </div>
+                      </div>
+
+                      {/*
+                        合作方只在外包/合作时才出现 —— 自己做的活问「合作方是谁」是噪音。
+                        但一旦选了外包，它就是**必填**：
+                        没有合作方，「这活谁做的」这条链就断在这里，
+                        而那正是这个系统最不能断的一条链。
+                      */}
+                      {formData.projectType !== 'Self-Operated' && (
+                        <div>
+                          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">
+                            合作方{formData.projectType === 'Outsourced' && <span className="ml-1 text-red-500">必填</span>}
+                          </label>
+                          <input
+                            className="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                            placeholder="哪家单位做的 —— 将来查「这活谁做的」全靠它"
+                            value={String((formData as any).vendorName || '')}
+                            onChange={e => setFormData({ ...formData, vendorName: e.target.value } as any)}
+                          />
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-4">
                           <div>
                               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">交付周期(天)</label>
                               <input type="number" className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none" value={formData.duration} onChange={e => setFormData({...formData, duration: Number(e.target.value)})} />
@@ -2885,7 +3160,7 @@ const Projects = () => {
                     {/* 按钮那一条不参与滚动 —— 内容再长也永远在屏幕上 */}
                     <div className="flex shrink-0 justify-end space-x-3 border-t border-gray-100 px-8 py-5">
                         <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 font-bold text-gray-400">取消</button>
-                        <button type="submit" className="px-10 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 shadow-xl shadow-indigo-500/20 transition-all active:scale-95">确认立项</button>
+                        <button disabled={creating} type="submit" className="px-10 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 shadow-xl shadow-indigo-500/20 transition-all active:scale-95">确认立项</button>
                     </div>
                   </form>
               </div>

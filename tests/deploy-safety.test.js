@@ -9,6 +9,34 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.resolve(root, p), 'utf8');
 
+test('发布检查必须在服务或鉴权失败时返回失败', () => {
+  const os = require('node:os');
+  const { spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xinyi-release-gate-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'systemctl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'curl'), `#!/bin/sh
+for url do :; done
+if [ "$url" = "$TEST_BAD_URL" ]; then printf 200; exit 0; fi
+case "$url" in
+  */api/state/sync) printf 401 ;;
+  */.env) printf 000; exit 52 ;;
+  */api/auth/health) printf '{"data":{"mode":"postgres","ready":true}}' ;;
+  *) printf 200 ;;
+esac
+`, { mode: 0o755 });
+    const run = (extra = {}) => spawnSync('bash', [path.join(root, 'deploy/verify-live.sh')], {
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, DEPLOY_VERIFY_BASE: 'http://release.test', ...extra }, encoding: 'utf8'
+    });
+    assert.equal(run().status, 0);
+    const badAuth = run({ TEST_BAD_URL: 'http://release.test/api/state/sync' });
+    assert.equal(badAuth.status, 1);
+    assert.match(badAuth.stdout, /预期 401/, badAuth.stderr);
+    fs.writeFileSync(path.join(dir, 'systemctl'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    assert.equal(run().status, 1);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('rsync --delete 必须排除只存在于服务器的目录', () => {
   /*
     2026-09-03 恢复演练第一分钟发现的：
@@ -91,4 +119,10 @@ test('演练要核对内容，不能只比行数', () => {
   // 一张全是空值的表行数也对得上
   const s = read('deploy/restore-drill.sh');
   assert.match(s, /抽查一条真实数据/, '只比了行数，没有抽查内容');
+});
+
+test('默认回滚使用最新的部署前快照，不跳过紧邻的旧版本', () => {
+  const s = read('deploy/rollback.sh');
+  assert.match(s, /ls -1t \$REL\/\*\.tar\.gz[^\n]+sed -n 1p/);
+  assert.doesNotMatch(s, /sed -n 2p/);
 });

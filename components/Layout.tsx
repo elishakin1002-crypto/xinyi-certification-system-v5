@@ -369,13 +369,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     low: { dot: 'bg-gray-300', text: 'text-gray-400', label: '一般' }
   };
 
+  /*
+    加一种就要在这里加一行，否则那类提醒**点了没反应**（下面 route 为空直接 return）——
+    这正是铃铛当初「点了没反应」的老毛病，只是换了个入口。
+  */
   const linkTypeRoute: Record<string, string> = {
     lead: '/leads',
     customer: '/customers',
     contract: '/contracts',
     project: '/projects',
     audit: '/audit',
-    intel: '/intel'
+    intel: '/intel',
+    employee: '/employees'   // 账号到期提醒：点进去直接改有效期
   };
 
   const handleOpenReminderGroup = (group: AggregatedReminder) => {
@@ -460,6 +465,144 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     </>
   );
 
+  /*
+    账号菜单（头像）。**桌面端和手机端共用这一份。**
+
+    2026-09-10：金恩来在平板宽度下发现「我的角色头像找不到了」——
+    查下来是手机端头部（flex md:hidden）压根没有这一块，
+    于是低于 768px 时，切换视角、我的登录设备、AI 用量，
+    **连「退出登录」都没有入口** —— 而退出登录是全系统最不该消失的按钮。
+
+    为什么抽成一个函数而不是在两个头部各写一遍：
+    这个文件里已经有过一次教训 —— 铃铛在两个头部各写了一份，
+    2026-09-02 改桌面端时差点漏掉手机端那份，
+    结果会是「电脑上点有反应、手机上没反应」。
+    并排放两份长得像的 JSX，迟早只改其中一份。
+
+    data-onboard 两份都留：新手引导的 pick() 只挑**当前可见**的那个
+    （见 OnboardingTour.tsx 里的 getBoundingClientRect 过滤），
+    所以两份都标反而让引导在手机上也能指到这一步。
+
+    ── 菜单里为什么装这些 ────────────────────────────────────────
+    头部原来并排放着「身份」「视角」两个切换 chip，但那是开发和演示用的，
+    日常干活的人不需要天天看见 —— 同事第一次上手会以为自己可以随便切身份。
+    收进头像里：演示时点开还在，平时不占位置。
+
+    退出登录也在这里。这是所有系统的通用位置，用户不用学；
+    而在 2026-08-24 之前，**全应用根本没有退出入口**。
+  */
+  const renderAccountMenu = (compact = false) => (
+         <div className={compact ? 'relative shrink-0' : 'relative pl-2 border-l border-gray-100'}>
+            <button
+              type="button"
+              data-onboard="view-switch"
+              onClick={() => { setIsAccountMenuOpen(!isAccountMenuOpen); setIsRoleMenuOpen(false); setIsUserMenuOpen(false); }}
+              className={`flex items-center rounded-xl transition-colors hover:bg-gray-50 ${compact ? 'space-x-0 p-0.5' : 'space-x-3 px-2 py-1'}`}
+              aria-haspopup="menu"
+              aria-expanded={isAccountMenuOpen}
+              aria-label={`账号菜单：${currentUserDisplayName}，当前视角 ${currentRoleDisplayName}`}
+            >
+              {/* 手机端头部只放得下一个头像，姓名和视角在菜单里第一行还会再说一遍 */}
+              {!compact && (
+                <div className="text-right hidden sm:block">
+                  <p className="text-sm font-bold text-gray-900 leading-none">{currentUserDisplayName}</p>
+                  <p className="text-[10px] text-gray-400 mt-1">{currentRoleDisplayName}</p>
+                </div>
+              )}
+              <div className={`bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 border border-indigo-200 ${compact ? 'w-8 h-8' : 'w-9 h-9'}`}>
+                <User className={compact ? 'w-4 h-4' : 'w-5 h-5'} />
+              </div>
+              {!compact && (
+                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isAccountMenuOpen ? 'rotate-180' : ''}`} />
+              )}
+            </button>
+
+            {isAccountMenuOpen && (
+              <>
+                {/* 点击空白处关闭。没有这层遮罩，菜单只能靠再点一次按钮关掉 */}
+                <div className="fixed inset-0 z-40" onClick={() => setIsAccountMenuOpen(false)} />
+                <div className="absolute top-full right-0 mt-2 w-60 bg-white rounded-xl shadow-2xl border border-gray-100 p-1 z-50" role="menu">
+                  <div className="px-3 py-2.5 border-b border-gray-50">
+                    <p className="text-sm font-bold text-gray-900">{currentUserDisplayName}</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">当前视角：{currentRoleDisplayName}</p>
+                  </div>
+
+                  {/* 视角切换：只给老板和系统管理员，理由见上面 canSwitchView 处的注释 */}
+                  {canSwitchView && viewOptions.length > 1 && (
+                    <div className="py-1 border-b border-gray-50">
+                      <div className="px-3 pt-1 pb-1.5 text-[10px] font-black text-gray-400 tracking-widest">
+                        切换视角
+                        <span className="block mt-0.5 font-normal tracking-normal text-gray-400">
+                          带「仅看板」的只换工作台，不改权限
+                        </span>
+                      </div>
+                      {viewOptions.map(option => (
+                        <button
+                          key={option.key}
+                          type="button"
+                          onClick={() => { handleSelectView(option); setIsAccountMenuOpen(false); }}
+                          className={`w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm transition-colors ${currentViewPersona === option.persona ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-600 hover:bg-gray-50'}`}
+                        >
+                          <Eye className="w-3.5 h-3.5 shrink-0" />
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/*
+                    自己的 AI 用量。组件内部在低于 70% 时返回 null，
+                    所以平时这里什么都不会出现 —— 只有快满了才冒出来。
+                    放在账号菜单里而不是常驻头部：常驻会让人觉得自己在被计量。
+                  */}
+                  <div className="px-1 py-1"><MyAiUsage /></div>
+
+                  {/*
+                    重看引导。第一次登录时人最想做的是「赶紧看看这东西长什么样」，
+                    引导反而是干扰；等他用了两天遇到问题，才是真正想看的时候 ——
+                    那时候找不到入口，这个功能就白做了。
+                  */}
+                  <button
+                    type="button"
+                    onClick={() => { openHelp(); setIsAccountMenuOpen(false); }}
+                    className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    <Compass className="w-4 h-4 shrink-0" />
+                    帮助与新手引导
+                  </button>
+
+                  {/*
+                    「我在哪几台设备登录着」。
+
+                    勾了「常用电脑」的会话有 14 天，风险不在时间长，
+                    在于**人不知道自己还在哪登着**。
+                    换了电脑、手机丢了、在客户那儿借电脑登过一次 ——
+                    看得见、踢得掉，这件事才算解决。
+                  */}
+                  <button
+                    type="button"
+                    onClick={() => { navigate('/my-devices'); setIsAccountMenuOpen(false); }}
+                    className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    <MonitorSmartphone className="w-4 h-4 shrink-0" />
+                    我的登录设备
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    disabled={isLoggingOut}
+                    className="w-full flex items-center gap-2 text-left px-3 py-2.5 mt-1 rounded-lg text-sm font-bold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                  >
+                    <LogOut className="w-4 h-4 shrink-0" />
+                    {isLoggingOut ? '正在退出…' : '退出登录'}
+                  </button>
+                </div>
+              </>
+            )}
+         </div>
+  );
+
   const handleSelectView = (option: ViewOption) => {
     if (option.mode === 'role' && option.roleId) {
       setActiveRole(option.roleId);
@@ -483,12 +626,40 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       </div>
 
       <div className="flex-1 flex flex-col overflow-hidden relative">
-        <header className="flex md:hidden h-14 bg-white border-b border-gray-200 items-center justify-between px-4 shrink-0 z-20 overflow-hidden">
+        {/*
+          ── 这里**不能有 overflow-hidden**（2026-09-11 血的教训）──────────
+
+          原来这个 header 上挂着 overflow-hidden，用途是防止长标题把布局撑破。
+          代价是：**它把所有从头部垂下来的下拉面板整个裁掉了**。
+
+          下拉面板是 `absolute top-full` —— 定位在头部**下边缘之外**。
+          头部高 56px、overflow:hidden，于是面板 100% 不可见。
+          受害的不止一个：
+            · 账号菜单（头像点了没反应 —— 金恩来 2026-09-11 报的就是这个）
+            · **铃铛面板**（这个更早，一直就是坏的，只是没人报）
+
+          ── 我的测试为什么没发现 ────────────────────────────────────────
+
+          我当时用 getBoundingClientRect 判「菜单在不在视口内」，
+          它回答 true，我就认为过了。
+
+          **但 getBoundingClientRect 报的是布局几何，和祖先有没有把它裁掉无关。**
+          被 overflow 裁掉的元素，rect 照样是原来那个位置。
+
+          这和坑 #10（offsetParent 对 fixed 元素恒为 null）是同一类错误：
+          **用了一个不表示我以为的含义的测量**，然后拿它当验证通过。
+
+          正确判据是 `el.contains(document.elementFromPoint(x, y))` ——
+          问「那个点上实际画着的是不是它」。已写进 scripts/ui-visibility-check.mjs。
+
+          长标题改用 truncate 处理：该省略号的省略号，而不是把整行裁掉。
+        */}
+        <header className="flex md:hidden h-14 bg-white border-b border-gray-200 items-center justify-between px-4 shrink-0 z-20">
           <div className="flex items-center space-x-2 min-w-0 shrink">
             <button data-onboard="mobile-menu" onClick={() => setIsSidebarOpen(true)} className="p-2 -ml-2 text-gray-600 hover:bg-gray-100 rounded-lg shrink-0">
               <Menu className="w-5 h-5" />
             </button>
-            <h2 className="text-sm font-bold text-gray-800 whitespace-nowrap">{getPageTitle()}</h2>
+            <h2 className="text-sm font-bold text-gray-800 truncate">{getPageTitle()}</h2>
           </div>
           <div className="flex items-center space-x-2 shrink-0">
             {/* 手机上更需要这个入口：屏幕小、说明文字都被折叠了 */}
@@ -520,19 +691,42 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               </button>
               {isBellOpen && renderBellPanel()}
             </div>
+
+            {/*
+              头像。和桌面端共用 renderAccountMenu ——
+              2026-09-10 之前这里**什么都没有**，于是低于 768px 时
+              切换视角、我的登录设备、AI 用量、连退出登录都没有入口。
+              退出登录尤其不能少：共用电脑上换个人用都做不到。
+            */}
+            {renderAccountMenu(true)}
           </div>
         </header>
 
         <header className="hidden md:flex h-16 bg-white border-b border-gray-200 items-center justify-between px-6 shrink-0 z-20">
-          <div className="flex items-center space-x-4">
-             <h2 className="text-lg font-bold text-gray-800">{getPageTitle()}</h2>
-             <div className="h-4 w-px bg-gray-200 mx-2"></div>
-             <div className="relative group">
+          {/*
+            min-w-0 是关键：flex 子项默认 min-width:auto，**不会缩到内容以下**。
+            没有它，下面那个搜索框会把整个左半边撑住不让步。
+          */}
+          <div className="flex items-center space-x-4 min-w-0 flex-1">
+             <h2 className="text-lg font-bold text-gray-800 whitespace-nowrap shrink-0">{getPageTitle()}</h2>
+             <div className="h-4 w-px bg-gray-200 mx-2 shrink-0"></div>
+             <div className="relative group min-w-0 flex-1 max-w-xs">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
                   type="text"
                   placeholder="搜索全局数据..."
-                  className="bg-gray-50 border-none rounded-lg py-1.5 pl-9 pr-20 text-sm w-72 focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                  /*
+                    2026-09-10：这里原来写死 w-72（288px）。
+
+                    md: 断点是 768px，而侧边栏占掉 256px —— 头部实际只剩 512px，
+                    却要塞下 标题 + 288px 搜索框 + 283px 右侧图标组 = 646px。
+                    溢出的部分被 justify-between 推到右边裁掉，
+                    **头像正好是最右边那个，于是它整个消失了**。
+                    金恩来 2026-09-10 在平板宽度下就是这么丢的头像。
+
+                    宽度不再写死：跟着可用空间缩，最宽还是原来的尺寸。
+                  */
+                  className="w-full bg-gray-50 border-none rounded-lg py-1.5 pl-9 pr-20 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
                   value={globalQuery}
                   onChange={(e) => setGlobalQuery(e.target.value)}
                   onFocus={() => {
@@ -590,7 +784,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
              </div>
           </div>
 
-          <div className="flex items-center space-x-5">
+          {/*
+            shrink-0：右侧这一组（反馈 / 帮助 / 铃铛 / 头像）**一个都不许被挤掉**。
+            要让位的是搜索框，不是账号入口 —— 退出登录就在这后面。
+          */}
+          <div className="flex items-center space-x-5 shrink-0">
              {/* 核心功能：身份切换器 */}
 
              {/*
@@ -655,118 +853,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                {isBellOpen && renderBellPanel()}
              </div>
 
-             {/*
-               账号菜单。头部原来并排放着「身份」「视角」两个切换 chip，
-               但它们是开发和演示用的工具，日常干活的人不需要天天看见——
-               同事第一次上手会以为自己可以随便切身份。收进头像里：
-               演示时点开还在，平时不占位置。
-
-               退出登录也放这里。这是所有系统的通用位置，用户不用学；
-               而在 2026-08-24 之前，**全应用根本没有退出入口**。
-             */}
-             <div className="relative pl-2 border-l border-gray-100">
-                <button
-                  type="button"
-                  data-onboard="view-switch"
-                  onClick={() => { setIsAccountMenuOpen(!isAccountMenuOpen); setIsRoleMenuOpen(false); setIsUserMenuOpen(false); }}
-                  className="flex items-center space-x-3 rounded-xl px-2 py-1 transition-colors hover:bg-gray-50"
-                  aria-haspopup="menu"
-                  aria-expanded={isAccountMenuOpen}
-                >
-                  <div className="text-right hidden sm:block">
-                    <p className="text-sm font-bold text-gray-900 leading-none">{currentUserDisplayName}</p>
-                    <p className="text-[10px] text-gray-400 mt-1">{currentRoleDisplayName}</p>
-                  </div>
-                  <div className="w-9 h-9 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 border border-indigo-200">
-                    <User className="w-5 h-5" />
-                  </div>
-                  <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isAccountMenuOpen ? 'rotate-180' : ''}`} />
-                </button>
-
-                {isAccountMenuOpen && (
-                  <>
-                    {/* 点击空白处关闭。没有这层遮罩，菜单只能靠再点一次按钮关掉 */}
-                    <div className="fixed inset-0 z-40" onClick={() => setIsAccountMenuOpen(false)} />
-                    <div className="absolute top-full right-0 mt-2 w-60 bg-white rounded-xl shadow-2xl border border-gray-100 p-1 z-50" role="menu">
-                      <div className="px-3 py-2.5 border-b border-gray-50">
-                        <p className="text-sm font-bold text-gray-900">{currentUserDisplayName}</p>
-                        <p className="text-[11px] text-gray-400 mt-0.5">当前视角：{currentRoleDisplayName}</p>
-                      </div>
-
-                      {/* 视角切换：只给老板和系统管理员，理由见上面 canSwitchView 处的注释 */}
-                      {canSwitchView && viewOptions.length > 1 && (
-                        <div className="py-1 border-b border-gray-50">
-                          <div className="px-3 pt-1 pb-1.5 text-[10px] font-black text-gray-400 tracking-widest">
-                            切换视角
-                            <span className="block mt-0.5 font-normal tracking-normal text-gray-400">
-                              带「仅看板」的只换工作台，不改权限
-                            </span>
-                          </div>
-                          {viewOptions.map(option => (
-                            <button
-                              key={option.key}
-                              type="button"
-                              onClick={() => { handleSelectView(option); setIsAccountMenuOpen(false); }}
-                              className={`w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm transition-colors ${currentViewPersona === option.persona ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-600 hover:bg-gray-50'}`}
-                            >
-                              <Eye className="w-3.5 h-3.5 shrink-0" />
-                              {option.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      {/*
-                        自己的 AI 用量。组件内部在低于 70% 时返回 null，
-                        所以平时这里什么都不会出现 —— 只有快满了才冒出来。
-                        放在账号菜单里而不是常驻头部：常驻会让人觉得自己在被计量。
-                      */}
-                      <div className="px-1 py-1"><MyAiUsage /></div>
-
-                      {/*
-                        重看引导。第一次登录时人最想做的是「赶紧看看这东西长什么样」，
-                        引导反而是干扰；等他用了两天遇到问题，才是真正想看的时候 ——
-                        那时候找不到入口，这个功能就白做了。
-                      */}
-                      <button
-                        type="button"
-                        onClick={() => { openHelp(); setIsAccountMenuOpen(false); }}
-                        className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-                      >
-                        <Compass className="w-4 h-4 shrink-0" />
-                        帮助与新手引导
-                      </button>
-
-                      {/*
-                        「我在哪几台设备登录着」。
-
-                        勾了「常用电脑」的会话有 14 天，风险不在时间长，
-                        在于**人不知道自己还在哪登着**。
-                        换了电脑、手机丢了、在客户那儿借电脑登过一次 ——
-                        看得见、踢得掉，这件事才算解决。
-                      */}
-                      <button
-                        type="button"
-                        onClick={() => { navigate('/my-devices'); setIsAccountMenuOpen(false); }}
-                        className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-                      >
-                        <MonitorSmartphone className="w-4 h-4 shrink-0" />
-                        我的登录设备
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleLogout}
-                        disabled={isLoggingOut}
-                        className="w-full flex items-center gap-2 text-left px-3 py-2.5 mt-1 rounded-lg text-sm font-bold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
-                      >
-                        <LogOut className="w-4 h-4 shrink-0" />
-                        {isLoggingOut ? '正在退出…' : '退出登录'}
-                      </button>
-                    </div>
-                  </>
-                )}
-             </div>
+             {renderAccountMenu()}
           </div>
         </header>
 

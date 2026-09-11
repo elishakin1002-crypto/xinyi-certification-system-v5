@@ -64,7 +64,21 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               <h1 className="text-4xl font-black leading-tight mt-6">登录后进入工作台、线索、合同、项目与财务闭环。</h1>
             </div>
           </div>
-          <div className="text-xs text-slate-500">app.xinyi-iso.com</div>
+          {/*
+            显示**当前真实的**访问地址，不写死域名。
+
+            2026-09-10：这里原来印着 `app.xinyi-iso.com` —— 那个域名
+            至今没有任何 DNS 记录，输进去打不开。金恩来自己就照着它试过。
+            13 个同事铺开时会照着屏幕上这行字去输，然后集体打不开，
+            而他们多半不会来问，只会觉得「这系统又坏了」。
+
+            登录页上的地址是**要被人抄下来、发到群里**的东西，
+            所以它必须是此刻真的能用的那个，而不是我们希望将来是的那个。
+            域名和 HTTPS 都办好之后，这里会自动跟着变，不用再改代码。
+          */}
+          <div className="text-xs text-slate-500">
+            {typeof window !== 'undefined' ? window.location.host : ''}
+          </div>
         </div>
 
         <div className="p-8 md:p-10">

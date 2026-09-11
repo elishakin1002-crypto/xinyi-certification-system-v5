@@ -1,3 +1,4 @@
+import { SampleList } from '../components/SampleRow';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, KeyRound, Loader2, Plus, RefreshCw, Save, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { ACTION_META, ACTION_GROUPS, ROLE_CAPABILITIES, SYSTEM_ROLES } from '../constants';
@@ -353,7 +354,7 @@ const Employees: React.FC = () => {
                   <EmptyState compact title="还没有员工账号" hint="点右上角「新建员工」开号。权限跟着岗位走，不用一项项勾。" />
                 </div>
               )}
-              {visibleUsers.map(user => (
+              <SampleList items={visibleUsers} sample={{id: 'sample-user', name: '示例顾问', username: 'sample-user', email: '', roles: ['CONSULTANT'], activeRole: 'CONSULTANT', positionTags: ['项目交付'], status: 'active', mustChangePassword: false} as (typeof visibleUsers)[number]} render={user => (
                 <button
                   key={user.id}
                   type="button"
@@ -376,7 +377,7 @@ const Employees: React.FC = () => {
                   </div>
                   <div className="mt-1 text-[11px] font-bold text-indigo-600">点这里编辑、停用或重置密码 →</div>
                 </button>
-              ))}
+              )} />
             </div>
 
             <div className="hidden md:block overflow-x-auto">
@@ -400,17 +401,9 @@ const Employees: React.FC = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {/* 空状态样例（2026-09-08 补，见 npm run checkup）*/}
-                  <SampleTr
-                    empty={visibleUsers.length === 0}
-                    colSpan={5}
-                    caption="真实的一行长这样：人走了点「停用」不要点删除 —— 删了他做过的记录就成了「不知道谁做的」。"
-                  >
-                    <td className="px-4 py-3 text-sm font-bold text-gray-900" colSpan={5}>
-                      张示例 · 咨询顾问 · 最近登录 2026-09-08
-                    </td>
-                  </SampleTr>
+
                   {/* 整行都能点开编辑 —— 小按钮不是每个人都会去找 */}
-                  {visibleUsers.map(user => (
+                  <SampleList items={visibleUsers} sample={{id: 'sample-user', name: '示例顾问', username: 'sample-user', email: '', roles: ['CONSULTANT'], activeRole: 'CONSULTANT', positionTags: ['项目交付'], status: 'active', mustChangePassword: false} as (typeof visibleUsers)[number]} render={user => (
                     <tr
                       key={user.id}
                       onClick={() => selectUser(user)}
@@ -493,7 +486,7 @@ const Employees: React.FC = () => {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  )} />
                 </tbody>
               </table>
             </div>

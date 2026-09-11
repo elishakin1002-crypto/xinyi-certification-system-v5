@@ -101,7 +101,7 @@ export const checkRoleActionPermission = (
   if (activeRole === 'FINANCE' && !FINANCE_ALLOWED.includes(action) && !(currentUser.extraActions || []).includes(action)) {
     return { allowed: false, reason: '财务角色无法执行非财务类操作。' };
   }
-  if (activeRole === 'SALES' && /^(PROJECT_(CREATE|EDIT_INFO|ASSIGN_MANAGER|PAUSE)|TASK_)/.test(action)) {
+  if (activeRole === 'SALES' && /^(PROJECT_(CREATE|EDIT_INFO|ASSIGN_MANAGER)|TASK_)/.test(action)) {
     return { allowed: false, reason: '销售可查看交付进度，但不能修改项目与任务。' };
   }
 

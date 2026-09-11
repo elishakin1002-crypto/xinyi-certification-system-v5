@@ -226,6 +226,46 @@ test('提醒就是提醒，不许顺手建项目', () => {
     '线索/客户的提醒没有直接存下来');
 });
 
+test('每 10 秒的系统扫描不许建项目、不许改线索状态', () => {
+  /*
+    2026-09-09：上一条只堵了 addReminder —— 那是**人点出来的**那条路。
+    自动扫描 runSystemScans 里还有同样的两处，而且更险，因为没有人参与：
+
+      · 线索：证书 ≤60 天 + 高意向 → createFollowUpProjectFromLead()，
+        而那个函数里带一句 updateLead(id, Status.Converted)。
+        也就是说线索会被系统自己标成「已转化」并永久锁死（函数里另有
+        「已生成过项目就禁止重复使用」的硬锁），全程无人点击。
+      · 客户：证书 ≤120 天 → createFollowUpProjectFromCustomer()，
+        去重键用的是 contractRef 里的 `CUSTCERT:` 前缀 ——
+        而 016_contractRef职责分离 早把这类前缀清空了，去重必然落空。
+
+    这个扫描每 10 秒跑一次。它至今没爆，纯粹是因为库里 455 条线索
+    一条都没填 targetCertExpiryDate、11 家客户一张证书到期日都没填。
+    换句话说：**上线前补数据这个动作本身就会引爆它。**
+
+    所以这条测试盯的是扫描函数体，而不是某个按钮。
+  */
+  const ctx = read('context/AppContext.tsx');
+  const scan = ctx.slice(ctx.indexOf('const runSystemScans = ()'), ctx.indexOf('// 3. Finance Scanning'));
+  assert.ok(scan.length > 500, '没截到 runSystemScans 的线索/客户扫描段，测试要跟着结构改');
+
+  // 剥掉注释再查 —— 上面那段注释本身就在讲这个坑（坑 #26 的教训）
+  const code = scan.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  assert.ok(!/createFollowUpProjectFrom/.test(code), '系统扫描又开始自动建跟进项目了');
+  assert.ok(!/projectCategory:\s*'FollowUp'/.test(code), '系统扫描在生成人工建不出来的旧类别');
+  assert.ok(!/setProjects|commitProjectTransaction/.test(code), '系统扫描不该动项目表');
+  assert.ok(!/updateLead\s*\(/.test(code), '系统扫描不该改线索状态 —— 转化是人的判断');
+
+  // 拆掉自动立项之后，提醒必须还在，否则等于把这个能力整个删了
+  assert.match(code, /AUTO-LEAD-WARN-/, '线索证书到期提醒没了');
+  assert.match(code, /AUTO-CUST-RENEW-/, '老客续期提醒没了');
+
+  // 那两个函数要连定义一起删干净：留着一个「一调就出事」的函数就是给下个人埋雷
+  assert.ok(!/const createFollowUpProjectFrom(Lead|Customer)\s*=/.test(ctx),
+    '调用点删了但函数还留着 —— 下一个人会以为它能用');
+});
+
 test('线索和客户上的「跟进」不再建项目，改成排提醒', () => {
   ['pages/Leads.tsx', 'pages/Customers.tsx'].forEach((f) => {
     const src = read(f);
@@ -255,4 +295,21 @@ test('情报转出来的是「其他事务」，而且转线索的路不能断',
   */
   assert.match(read('pages/Projects.tsx'), /const isIntelFollowUpProject = projectCaps\.isIntelOrigin;/,
     '「转为线索」还挂在类别上 —— 改类别会把这条链路弄断');
+});
+
+test('下一任务排除已完成和已跳过的任务', () => {
+  const ts = require('typescript');
+  const src = read('pages/Projects.tsx');
+  const openTask = src.match(/const isOpenTask = [^\n]+;/)[0];
+  const nextTask = src.match(/const getNextTask = [\s\S]*?\n  };/)[0];
+  const js = ts.transpileModule(`${openTask}\n${nextTask}`, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+  const pick = new Function(`${js}; return getNextTask;`)();
+  const tasks = [
+    { id: 'skip', status: 'Skipped', deadline: '2026-01-01' },
+    { id: 'done', status: 'Completed', deadline: '2026-01-01' },
+    { id: 'open', status: 'Pending', deadline: '2026-09-11' },
+  ];
+  assert.equal(pick({ tasks }).id, 'open');
+  assert.equal(pick({ tasks: tasks.slice(0, 2) }), null);
+  assert.equal(pick({ tasks: [] }), null);
 });

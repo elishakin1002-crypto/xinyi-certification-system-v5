@@ -1077,6 +1077,50 @@ const isAccountExpired = (expiresAt) => {
  */
 const trimOrigin = (v, max) => String(v || '').trim().slice(0, max);
 
+/**
+ * 登录失败时，说清楚是**哪一种**失败。
+ *
+ * ── 为什么单独做一个函数 ──────────────────────────────────────
+ *
+ * authenticateUser 对五种情况一律返回 null：
+ * 账号不存在、密码错、已停用、账号过期、被锁定。
+ * 接口层再把它们统一翻成一句英文 "Invalid account or password"。
+ *
+ * 后果 2026-09-09 亲眼见到了：金恩来密码变了不知道，连试五次被锁 15 分钟，
+ * 而界面从头到尾只说「账号或密码不对」—— 于是他继续试，
+ * **每试一次都在刷新锁定时间**，越急越进不去。
+ * 这种提示不是不够友好，是**在误导人往错的方向使劲**。
+ *
+ * ── 边界在哪 ──────────────────────────────────────────────────
+ *
+ * 「密码错」和「账号不存在」**必须继续合并**，分开等于告诉外人
+ * 哪些账号真实存在（账号枚举）。
+ * 但「已锁定 / 已停用 / 已过期」要如实说 —— 这三种情况下
+ * 再怎么试都没用，瞒着只会让人一直试，而且这三条的补救动作完全不同：
+ * 等一会儿 / 找管理员启用 / 找管理员续期。
+ *
+ * 只在**认证已经失败之后**才调它，正常登录不会多这一次查询。
+ */
+const describeLoginFailure = async (account) => {
+  await initAuthStore();
+  const row = backend.mode === 'postgres' && pool
+    ? await findUserByAccountPostgres(account)
+    : findUserByAccount(account);
+  if (!row) return { reason: 'bad_credentials' };
+
+  const status = row.status;
+  const expiresAt = row.account_expires_at ?? row.accountExpiresAt;
+  const lockedUntil = row.locked_until ?? row.lockedUntil;
+
+  if (status === 'disabled') return { reason: 'disabled' };
+  if (isAccountExpired(expiresAt)) return { reason: 'expired' };
+  if (isFutureIso(lockedUntil)) {
+    const ms = Date.parse(new Date(lockedUntil).toISOString()) - Date.now();
+    return { reason: 'locked', minutesLeft: Math.max(1, Math.ceil(ms / 60000)) };
+  }
+  return { reason: 'bad_credentials' };
+};
+
 const authenticateUser = async ({ account, password, ip = '', userAgent = '', remember = false }) => {
   await initAuthStore();
   if (backend.mode === 'postgres' && pool) {
@@ -1335,6 +1379,7 @@ module.exports = {
   authenticateUser,
   getSessionUser,
   revokeSession,
+  describeLoginFailure,
   listUsers,
   createUser,
   updateUser,

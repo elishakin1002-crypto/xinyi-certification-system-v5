@@ -41,8 +41,9 @@ for (const role of Object.keys(rolePerms)) {
 /* ---------- 1. 路由守卫覆盖 ---------- */
 const routes = [...app.matchAll(/<Route\s+path="([^"]+)"\s+element=\{([\s\S]*?)\}\s*\/>/g)]
   .map(([, p, el]) => ({ path: p, el }))
-  // /dashboard 是所有角色的落地页，按设计对全员开放，不需要守卫
-  .filter((r) => !['/', '/login', '/change-password', '/dashboard', '*'].includes(r.path));
+  // 工作台和自己的设备页均在 App 登录闸门内；设备接口另外按当前账号筛选，
+  // 不需要管理员权限。不能把它误判成公开查看他人设备的页面。
+  .filter((r) => !['/', '/login', '/change-password', '/dashboard', '/my-devices', '*'].includes(r.path));
 
 const unguarded = routes.filter((r) => !r.el.includes('ProtectedRoute'));
 if (unguarded.length) {

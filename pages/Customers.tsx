@@ -1,3 +1,5 @@
+import { SampleList } from '../components/SampleRow';
+import { SAMPLE_CUSTOMER } from '../src/modules/onboarding/sampleRecords';
 
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -15,7 +17,7 @@ import { SearchInput, EmptyState, FilterSelect, tableHeadClass, thClass, tdClass
 import { groupIndustry, INDUSTRY_GROUPS, INDUSTRY_GROUP_META, IndustryGroup } from '../src/modules/industry';
 
 const Customers = () => {
-  const { customers, updateCustomer, addCustomer, addCustomerFollowUp, checkActionPermission, contracts, projects, auditIssues, addReminder, runSystemScans, generateAuditPlan, updateCertificateAuditStatus, scheduleRenewalFollowUp, currentUser, knowledgeDocs, addKnowledgeDoc, visibleReminders } = useApp();
+  const { toggleReceivableStatus, customers, updateCustomer, addCustomer, addCustomerFollowUp, checkActionPermission, contracts, projects, auditIssues, addReminder, runSystemScans, generateAuditPlan, updateCertificateAuditStatus, scheduleRenewalFollowUp, currentUser, knowledgeDocs, addKnowledgeDoc, visibleReminders } = useApp();
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [editingData, setEditingData] = useState<Customer | null>(null);
@@ -856,7 +858,6 @@ const Customers = () => {
     alert(`✅ 已将【${getAuditNodeLabel(node.type)}】标记为完成。`);
   };
 
-  const toggleReceivableStatus = (cid: string, rid: string) => { useApp().toggleReceivableStatus(cid, rid); };
   const openRejectModal = (contractId: string, receivableId: string, amount: number, customer: string) => { setRejectData({ contractId, receivableId, amount, customer }); setIsRejectModalOpen(true); };
 
   // 顶部概览：客户总数、在执行合同、高风险、累计金额
@@ -964,12 +965,8 @@ const Customers = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                     {/* 空状态样例（2026-09-08 补，见 npm run checkup）*/}
-                    <SampleTr empty={filteredCustomers.length === 0} colSpan={6} caption="真实的一行长这样：**累计金额是已签合同的合计，不是已收到的钱** —— 收没收到看回款页。">
-                      <td className="px-4 py-3 text-sm font-bold text-gray-900" colSpan={6}>
-                        温州示范包装有限公司 · 已合作 2 次 · 累计 ¥48,000
-                      </td>
-                    </SampleTr>
-                    {filteredCustomers.map(cust => (
+
+                    <SampleList items={filteredCustomers} sample={SAMPLE_CUSTOMER} render={cust => (
                         <tr key={cust.id} className="hover:bg-gray-50/80 cursor-pointer transition-colors group" onClick={() => openDetail(cust)}>
                             <td className={tdClass}>
                                 <div className="font-black text-gray-900 text-base">{cust.name}</div>
@@ -1039,14 +1036,14 @@ const Customers = () => {
                             )}
                             <td className={`${tdClass} text-right`}> <button className="text-gray-400 hover:text-blue-600 p-2 hover:bg-blue-50 rounded-lg transition-colors"> <MoreHorizontal className="w-5 h-5" /> </button> </td>
                         </tr>
-                    ))}
+                    )} />
                 </tbody>
             </table>
         </div>
 
         {/* Mobile View */}
         <div className="md:hidden divide-y divide-gray-100">
-            {filteredCustomers.map(cust => (
+            <SampleList items={filteredCustomers} sample={SAMPLE_CUSTOMER} render={cust => (
                 <div key={cust.id} className="p-4 active:bg-gray-50 transition-colors" onClick={() => openDetail(cust)}>
                     <div className="flex justify-between items-start mb-2">
                         <div className="font-black text-gray-900 line-clamp-1 mr-2 text-base">{cust.name}</div>
@@ -1096,7 +1093,7 @@ const Customers = () => {
                         }
                     </div>
                 </div>
-            ))}
+            )} />
         </div>
       </div>
 

@@ -65,6 +65,7 @@ export interface AppContextType {
   /** 新手引导正在进行 —— 各列表这时会显示一条「样例」行 */
   isTourActive: boolean;
   setIsTourActive: (v: boolean) => void;
+  setIsModuleGuideActive: (v: boolean) => void;
   /** 最近一次保存失败 —— 由 Layout 弹出来告诉人，不能只打日志 */
   writeFailure: { what: string; reason: string } | null;
   dismissWriteFailure: () => void;
@@ -88,10 +89,11 @@ export interface AppContextType {
   cloneTaskTemplate: (templateId: string, name?: string) => { ok: boolean; reason?: string; newTemplateId?: string };
   
   // 核心操作
-  addProject: (p: AddProjectInput) => void;
+  /** 返回建好的项目（调用方要它的 id 去打点）；失败返回 null */
+  addProject: (p: AddProjectInput) => Promise<Project | null>;
   assignProjectManager: (projectId: string, manager: string, ownerUserId?: string) => { ok: boolean; reason?: string };
-  createFollowUpProjectFromLead: (leadId: string, opts?: { owner?: string; expiryDate?: string }) => string | null;
-  createFollowUpProjectFromCustomer: (customerId: string, opts?: { owner?: string; expiryDate?: string; certificateId?: string }) => string | null;
+  // createFollowUpProjectFromLead / FromCustomer 已于 2026-09-09 删除，
+  // 原因见 AppContext 里那段注释：它们被 10 秒扫描自动调用，会凭空建项目并锁死线索。
   updateProjectTask: (projectId: string, taskId: string, updates: Partial<ProjectTask>) => void;
   deleteProjectTask: (projectId: string, taskId: string) => void;
   addProjectTask: (projectId: string, task: Omit<ProjectTask, 'id'>) => void;
@@ -341,6 +343,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
   void demoSeedVersion;
 
   const [userProfiles, setUserProfiles] = useState<UserProfile[]>(() => {
+    if (authRequired) return authenticatedUser ? [authenticatedUser] : [];
     const stored = dataService.get<UserProfile[] | null>('user_profiles_v1', null);
     if (Array.isArray(stored) && stored.length > 0) return stored;
     return DEFAULT_USER_PROFILES;
@@ -464,6 +467,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
   }, []);
 
   const [isTourActive, setIsTourActive] = useState(false);
+  const [isModuleGuideActive, setIsModuleGuideActive] = useState(false);
 
   const [previewPersona, setPreviewPersona] = useState<DashboardPersona | null>(() => {
     try {
@@ -527,6 +531,11 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
   };
 
   useEffect(() => {
+    stateSyncService.reset();
+    hydratedDatasetsRef.current.clear();
+  }, [effectiveUserId]);
+
+  useEffect(() => {
     let cancelled = false;
     const shouldUseBackendRead = stateSyncService.shouldUseBackendRead(effectiveUserId);
 
@@ -568,21 +577,22 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         if (projectsData) setProjects(projectsData);
         if (settlementsData) setSettlements(settlementsData);
         if (remindersData) setReminders(remindersData);
-        if (auditIssuesData) setAuditIssues(auditIssuesData);
+        if (auditIssuesData && !auditIssueService.isReadEnabled()) { stateSyncService.rememberBaseline('audit_issues_v1', auditIssuesData); setAuditIssues(auditIssuesData); }
         if (knowledgeDocsData) {
           setKnowledgeDocs(knowledgeDocsData);
           setKnowledgeAccessNormalized(false);
         }
         if (marketSignalsData) setMarketSignals(marketSignalsData);
-        if (projectWorkLogsData) setProjectWorkLogs(projectWorkLogsData);
+        if (projectWorkLogsData && !workLogService.isReadEnabled()) { stateSyncService.rememberBaseline('project_work_logs_v1', projectWorkLogsData); setProjectWorkLogs(projectWorkLogsData); }
         if (strategicInsightData !== null) setStrategicInsight(strategicInsightData);
         if (strategicTasksData) setStrategicTasks(strategicTasksData);
         if (aiDecisionLogsData) setAiDecisionLogs(aiDecisionLogsData);
-        if (taskTemplatesData) {
+        if (taskTemplatesData && !taskTemplateService.isReadEnabled()) {
+          stateSyncService.rememberBaseline('task_templates_v1', taskTemplatesData);
           setTaskTemplates(taskTemplatesData);
           setTemplatesNormalized(false);
         }
-        if (userProfilesData && userProfilesData.length > 0) {
+        if (!authRequired && userProfilesData && userProfilesData.length > 0) {
           const nextUserProfiles = authRequired && authenticatedUser?.id
             ? (
               userProfilesData.some(u => u.id === authenticatedUser.id)
@@ -780,6 +790,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
       try {
         const rows = await workLogService.list();
         if (cancelled) return;
+        stateSyncService.rememberBaseline('project_work_logs_v1', rows);
         setProjectWorkLogs(rows);
         markHydrated('project_work_logs_v1');
       } catch (error) {
@@ -797,6 +808,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
       try {
         const rows = await taskTemplateService.list();
         if (cancelled) return;
+        stateSyncService.rememberBaseline('task_templates_v1', rows);
         setTaskTemplates(rows);
         setTemplatesNormalized(false);
         markHydrated('task_templates_v1');
@@ -815,6 +827,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
       try {
         const rows = await auditIssueService.list();
         if (cancelled) return;
+        stateSyncService.rememberBaseline('audit_issues_v1', rows);
         setAuditIssues(rows);
         markHydrated('audit_issues_v1');
       } catch (error) {
@@ -830,7 +843,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     let cancelled = false;
     const hydrateProfilesFromAuth = async () => {
       try {
-        const accounts = await authService.listUsers();
+        const accounts = await authService.listAssignableUsers();
         if (cancelled || !Array.isArray(accounts) || accounts.length === 0) return;
         setUserProfiles(accounts.map((a: any) => ({
           id: a.id,
@@ -839,6 +852,19 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
           activeRole: a.activeRole || (Array.isArray(a.roles) && a.roles[0]) || 'CONSULTANT',
           positionTags: Array.isArray(a.positionTags) ? a.positionTags : [],
           reportsToUserId: a.reportsToUserId || undefined,
+          /*
+            这两个字段 2026-09-10 补上 —— 之前这里**只挑了 6 个字段**，
+            服务端明明返回了 accountExpiresAt 和 status，在这一步被静默丢掉。
+
+            后果不是「少显示一个字段」，是**依赖它的功能永远不触发**：
+            我刚写的「账号到期前 7 天提醒」照着 accountExpiresAt 判断，
+            而它在这里恒为 undefined，于是提醒一条也发不出来，
+            还不报任何错 —— 典型的「不报错但一直是错的」。
+
+            往这个映射里加字段时想一下：**它是这份数据进入前端的唯一入口。**
+          */
+          accountExpiresAt: a.accountExpiresAt || undefined,
+          status: a.status || undefined,
         })) as UserProfile[]);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -1783,47 +1809,52 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     const nowMs = now.getTime();
     const today = new Date().toISOString().split('T')[0];
 
-    // 1. Leads Scanning (Rules 1 & 2)
+    /*
+      1. 线索：证书快到期了就提醒人去接触。**只提醒，不建项目。**
+
+      ── 这里原来干了什么（2026-09-09 拆掉）────────────────────────
+      原逻辑是「≤60 天 + 高意向 → 自动立项」，而且顺手做了两件更重的事：
+        · 建一个 projectCategory:'FollowUp' 的项目 —— 这个类别 2026-09-08
+          已经退出项目管理（见 src/modules/projectCategory.ts），
+          由系统自动生成一个人工建不出来的类别，本身就说不通；
+        · 调 updateLead(..., Status.Converted) 把线索**锁成「已转化」** ——
+          而 createFollowUpProjectFromLead 里还有一条「已生成过项目就禁止重复使用」的硬锁。
+
+      这个扫描 **每 10 秒跑一次**（见下面的 setInterval）。也就是说：
+      情报雷达转出来的线索只要 urgency=high（→intent High）且带 deadline，
+      开着页面几秒钟，这条线索就会被系统自己标成「已转化」并永久锁死，
+      全程没有任何人点过任何按钮。它现在没爆，只是因为库里
+      455 条线索恰好一条都没填 targetCertExpiryDate。
+
+      规矩本来就写着：「提醒就是提醒，不许顺手建项目」——
+      addReminder 那条路 2026-09-08 已经堵了，这条是同一个坑的另一个入口，
+      当时只堵了看得见的那个。
+
+      要不要立项是人的判断，系统只负责别让人错过时间。
+    */
     leads.forEach(l => {
       if (l.status === Status.Converted || l.status === Status.Lost || !l.targetCertExpiryDate) return;
-      
+
       const expiry = new Date(l.targetCertExpiryDate);
       if (Number.isNaN(expiry.getTime())) return;
       const diffDays = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 3600 * 24));
+      if (diffDays <= 0 || diffDays > 90) return;
 
-      // Rule 2: < 60 days + High Intent -> Create FollowUp Project
-      if (diffDays <= 60 && diffDays > 0 && l.intent === 'High') {
-         const exists = projects.some(p => p.contractRef === `LEAD:${l.id}` && p.status === Status.Active);
-              if (!exists) {
-                 createFollowUpProjectFromLead(l.id, { expiryDate: l.targetCertExpiryDate });
-                 upsertSystemReminder(`AUTO-LEAD-ACT-${l.id}`, {
-                     title: `🚀 高意向线索自动立项`,
-                     content: `线索【${l.company}】证书即将于 ${diffDays} 天后到期且意向度高，系统已自动创建跟进项目。`,
-                     date: today,
-                     type: 'task',
-                     linkId: l.id,
-                     linkType: 'lead',
-                     forRole: ['MANAGER', 'CONSULTANT']
-                 });
-         }
-         return;
-      }
-
-      // Rule 1: < 90 days -> Reminder
-      if (diffDays <= 90 && diffDays > 0) {
-         const remId = `AUTO-LEAD-WARN-${l.id}`;
-         if (!reminders.some(r => r.id === remId)) {
-             upsertSystemReminder(remId, {
-                 title: `💡 线索证书即将到期`,
-                 content: `线索【${l.company}】证书将于 ${diffDays} 天后到期，建议进行接触。`,
-                 date: today,
-                 type: 'opportunity',
-                 linkId: l.id,
-                 linkType: 'lead',
-                 forRole: ['CONSULTANT']
-             });
-         }
-      }
+      // 60 天内 + 高意向是该插队的信号，但它改变的是**提醒的分量**，不是系统的权限
+      const urgent = diffDays <= 60 && l.intent === 'High';
+      const remId = `AUTO-LEAD-WARN-${l.id}`;
+      if (reminders.some(r => r.id === remId)) return;
+      upsertSystemReminder(remId, {
+        title: urgent ? `🚀 高意向线索，证书 ${diffDays} 天后到期` : `💡 线索证书即将到期`,
+        content: urgent
+          ? `线索【${l.company}】证书 ${diffDays} 天后到期，意向度高 —— 建议尽快接触；谈下来后再在项目管理里立项。`
+          : `线索【${l.company}】证书将于 ${diffDays} 天后到期，建议进行接触。`,
+        date: today,
+        type: urgent ? 'task' : 'opportunity',
+        linkId: l.id,
+        linkType: 'lead',
+        forRole: urgent ? ['MANAGER', 'CONSULTANT'] : ['CONSULTANT']
+      });
     });
 
     // 2. Customers Scanning (Rule 3)
@@ -1837,23 +1868,31 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
             .filter(item => item.diff > 0 && item.diff <= 120)
             .sort((a, b) => a.diff - b.diff);
 
+         /*
+           同样只提醒，不建项目（2026-09-09 拆掉自动立项）。
+
+           这一条比线索那条更险：原来的去重是
+             projects.some(p => p.contractRef === `CUSTCERT:${c.id}:${target.id}`)
+           而 016_contractRef职责分离 已经把 contract_ref 里的
+           CUSTCERT: / LEAD: 这类来源前缀**全部清空**了 ——
+           库里现存 12 个 FollowUp 项目的 contract_ref 就都是空的，
+           其中「瑞安市华昇汽车部件有限公司」还重了两条。
+           去重键被迁移清掉、生成逻辑却没跟着改，这是典型的「不报错但一直是错的」。
+
+           续期本身是真需求（老客续期是最稳的复购来源），所以提醒留着，
+           立项交给人 —— 客户列表里点进去就能建。
+         */
          if (sortedCerts.length > 0) {
              const target = sortedCerts[0];
-             const ref = `CUSTCERT:${c.id}:${target.id}`;
-             const exists = projects.some(p => p.contractRef === ref && p.status === Status.Active);
-             
-             if (!exists) {
-                 createFollowUpProjectFromCustomer(c.id, { certificateId: target.id, expiryDate: target.expiryDate });
-                 upsertSystemReminder(`AUTO-CUST-RENEW-${c.id}-${target.id}`, {
-                     title: `🔄 老客证书续期预警`,
-                     content: `客户【${c.name}】的证书将于 ${target.diff} 天后到期，系统已自动创建续期跟进项目。`,
-                     date: today,
-                     type: 'opportunity',
-                     linkId: c.id,
-                     linkType: 'customer',
-                     forRole: ['MANAGER', 'CONSULTANT']
-                 });
-             }
+             upsertSystemReminder(`AUTO-CUST-RENEW-${c.id}-${target.id}`, {
+                 title: `🔄 老客证书续期预警`,
+                 content: `客户【${c.name}】的证书将于 ${target.diff} 天后到期，建议安排续期跟进。`,
+                 date: today,
+                 type: 'opportunity',
+                 linkId: c.id,
+                 linkType: 'customer',
+                 forRole: ['MANAGER', 'CONSULTANT']
+             });
          }
     });
 
@@ -2129,6 +2168,49 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
           }
         });
     });
+
+    /*
+      5. 账号到期前 7 天提醒（P0-4 的后半截，2026-09-10 补）
+
+      「账号有效期」这个功能一直只做了一半：日期填得进去、到期也真的登不进来，
+      **但没有任何人会被提前告知**。于是它的实际形态是：
+      兼职或临时合作方某天早上突然登不进系统，打电话过来问，
+      这时候才有人想起来「哦有效期到了」—— 而那正是最忙的时候。
+
+      到期后的提示语昨天已经补好了（「这个账号已到期，找系统管理员延长有效期」），
+      但**事后说得再清楚也不如事前提醒一句**。
+
+      发给谁：ADMIN 和 SYS_ADMIN —— 只有他们能改有效期。
+      发给本人没用，他既改不了也帮不上忙，徒增焦虑。
+    */
+    (userProfiles || []).forEach(u => {
+      const raw = String((u as any).accountExpiresAt || '').trim();
+      if (!raw) return;                        // 留空 = 永久有效
+      if (u.status === 'disabled') return;     // 已经停用的不用再提醒
+
+      /*
+        用「日期」比，不用时间戳。
+        账号有效期是「哪一天」这个粒度，掺进时分秒会让「今天到期」
+        在下午变成负数、被当成已过期漏掉 —— 和之前 dayOffset 用 UTC
+        踩的是同一类坑（见 tests/account-delegation.test.js）。
+      */
+      const expiry = new Date(`${raw.slice(0, 10)}T00:00:00`);
+      if (Number.isNaN(expiry.getTime())) return;
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const daysLeft = Math.round((expiry.getTime() - startOfToday) / (24 * 3600 * 1000));
+      if (daysLeft < 0 || daysLeft > 7) return;
+
+      upsertSystemReminder(`AUTO-ACCT-EXPIRE-${u.id}-${raw.slice(0, 10)}`, {
+        title: daysLeft === 0 ? `🔑 账号今天到期` : `🔑 账号 ${daysLeft} 天后到期`,
+        content: `【${u.name}】的账号有效期到 ${raw.slice(0, 10)}。到期后他会直接登不进来 —— `
+          + `还要继续用就去「员工账号」里改有效期；确实不用了就不用管，到期自动失效。`,
+        date: today,
+        type: 'expire',
+        linkId: u.id,
+        linkType: 'employee',
+        forRole: ['ADMIN', 'SYS_ADMIN']
+      });
+    });
   };
 
   useEffect(() => {
@@ -2290,34 +2372,51 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
       deadline: p.deadline || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().split('T')[0],
       duration: p.duration || 30,
       projectType: p.projectType || 'Self-Operated',
+      /*
+        合作方要跟着落库 —— 2026-09-11 补。
+
+        这一层是**白名单式映射**：没在这里列出来的字段，
+        表单填了也进不了库，而且**不报任何错**。
+        同一个坑几天内踩过两次：
+        第一次是 userProfiles 漏了 accountExpiresAt，导致账号到期提醒永远不触发。
+
+        外包项目的合作方一旦丢了，「这活谁做的」这条链就断在这里 ——
+        而表单上明明是必填、人也确实填了。
+      */
+      vendorName: (p as any).vendorName || undefined,
+      vendorId: (p as any).vendorId || undefined,
       tasks: initialTasks, // 注入初始任务
       serviceItems: initialServiceItems,
       settlementConfig: p.settlementConfig || { rule: 'Ratio', value: 10, base: 'Revenue' }
     };
   };
 
-  const addProject = (p: AddProjectInput) => {
-    const newProject = buildProjectFromInput(p);
-    if (!newProject) return;
-    const previousProjects = projects;
-    const nextProjects = [...projects, newProject];
-    setProjects(nextProjects);
+  /*
+    返回建好的项目本身，不只是 true/false（2026-09-11 改）。
 
-    if (projectService.isWriteEnabled()) {
-      projectService.createProject(newProject)
-        .then(async () => {
-          if (!projectService.shouldVerifyWrites()) return;
+    调用方全都只做真假判断，所以换成 Project|null 是兼容的；
+    但少了这一步，调用方拿不到新项目的 id ——
+    「派活建议被采纳了没有」这条打点当时就只能记个空 id，
+    而空 id 的记录攒再多也分析不出任何东西。
+  */
+  const addProject = async (p: AddProjectInput): Promise<Project | null> => {
+    const newProject = buildProjectFromInput(p);
+    if (!newProject) return null;
+    // 成功保存后再加入列表，失败时保留表单，避免出现互相矛盾的成功提示。
+    try {
+      if (projectService.isWriteEnabled()) {
+        await projectService.createProject(newProject);
+        if (projectService.shouldVerifyWrites()) {
           const persisted = await projectService.getProject(newProject.id);
-          if (!persisted || persisted.name !== newProject.name) {
-            throw new Error('project create readback mismatch');
-          }
-        })
-        .catch(error => {
-          reportWriteFailure('新建', error);
-          {
-            setProjects(previousProjects);
-          }
-        });
+          if (!persisted || persisted.name !== newProject.name) throw new Error('project create readback mismatch');
+        }
+      }
+      setProjects(previous => [...previous, newProject]);
+      setWriteFailure(null);
+      return newProject;
+    } catch (error) {
+      reportWriteFailure('新建', error);
+      return null;
     }
   };
 
@@ -2370,153 +2469,20 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     return { ok: true };
   };
 
-  const createFollowUpTasks = (expiryDate: string | undefined, owner: string): ProjectTask[] => {
-    const now = new Date();
-    const base = expiryDate ? new Date(expiryDate) : new Date(now.getTime() + 30 * 24 * 3600 * 1000);
-    const fmt = (d: Date) => d.toISOString().split('T')[0];
-    const mk = (offsetDays: number, idx: number): ProjectTask => {
-      const due = new Date(base.getTime() - offsetDays * 24 * 3600 * 1000);
-      return {
-        id: `T-FU-${Date.now()}-${idx}`,
-        title: `认证到期前跟进（${offsetDays}天）`,
-        deadline: fmt(due),
-        status: 'Pending',
-        priority: offsetDays <= 7 ? 'High' : 'Medium',
-        category: 'Core',
-        owner
-      };
-    };
-    return [mk(30, 1), mk(15, 2), mk(7, 3)];
-  };
+  /*
+    createFollowUpTasks / createFollowUpProjectFromLead / createFollowUpProjectFromCustomer
+    三个函数 2026-09-09 一起删掉了。
 
-  const createFollowUpProjectFromLead = (leadId: string, opts?: { owner?: string; expiryDate?: string }): string | null => {
-    const lead = leads.find(l => l.id === leadId);
-    if (!lead) return null;
+    它们的作用是「证书快到期 → 自动建一个跟进项目」。删的理由不是没人用，
+    恰恰相反 —— 是每 10 秒的系统扫描在自动调它们，而它们会：
+      · 建出 projectCategory:'FollowUp' 的项目 —— 这个类别 2026-09-08 已退出项目管理，
+        人在界面上建不出来，却由系统凭空生成；
+      · 把线索 updateLead(..., Status.Converted) 锁成「已转化」并永久禁止再转，
+        全程没有人点过任何按钮。
 
-    // --- Hard Lock: Lifecycle Enforcement ---
-    // Rule 1: Status Lock
-    if (lead.status === Status.Converted) {
-      alert("❌ 该线索已转化，请前往【客户库】创建新项目");
-      return null;
-    }
-
-    // Rule 2: Association Lock (One-shot)
-    const existingProjects = projects.filter(p => p.contractRef === `LEAD:${leadId}`);
-    if (existingProjects.length > 0) {
-      alert("❌ 该线索已生成过项目（无论状态），禁止重复使用。请前往【客户库】发起新合作。");
-      return null;
-    }
-    // ----------------------------------------
-
-    const owner = opts?.owner || normalizedCurrentUser.name || lead.name || '待定';
-    const expiryDate = opts?.expiryDate;
-    const projectId = `P-FU-${Date.now()}`;
-    const tasks = createFollowUpTasks(expiryDate, owner);
-    const newProject: Project = {
-      id: projectId,
-      name: `${lead.company} 认证到期挖角跟进`,
-      contractRef: `LEAD:${leadId}`,
-      sourceType: 'lead',
-      sourceRef: leadId,
-      projectMode: 'followup',
-      projectCategory: 'FollowUp',
-      manager: owner,
-      progress: calculateProjectProgress(tasks),
-      status: Status.Active,
-      paymentStatus: 'unpaid',
-      deadline: tasks.map(t => t.deadline).sort().slice(-1)[0] || new Date().toISOString().split('T')[0],
-      duration: 30,
-      projectType: 'Self-Operated',
-      
-      // T-001 Init
-      costStatus: '待补全',
-      projectAmount: 0,
-      
-      // 每个项目至少有一个服务项，避免系统里出现「有服务项 / 没服务项」两种结构
-      tasks: attachTasksToDefaultService(tasks, `SVC-DEFAULT-${projectId}`),
-      serviceItems: [buildDefaultServiceItem({
-        projectId, projectName: `${lead.company} 认证到期挖角跟进`, owner
-      })],
-      settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' }
-    };
-    // 必须落库：线索会被锁成「已转化」并写入后端，项目若只进内存，
-    // 刷新后就成了「线索已转化但项目不存在」，且线索无法再转，属于不可恢复的不一致。
-    const previousProjectsForLead = projects;
-    const nextProjectsForLead = [...projects, newProject];
-    setProjects(nextProjectsForLead);
-    commitProjectTransaction({
-      projectId,
-      nextProjects: nextProjectsForLead,
-      previousProjects: previousProjectsForLead
-    });
-    updateLead(leadId, { status: Status.Converted }); // Hard Lock
-    
-    // addLeadFollowUp is no longer needed for Converted leads in active list, but good for history
-    addLeadFollowUp(leadId, {
-      date: new Date().toISOString().split('T')[0],
-      type: 'system',
-      content: `已立项：${newProject.name}（跟进项目）`,
-      operator: normalizedCurrentUser.name
-    });
-    return projectId;
-  };
-
-  const createFollowUpProjectFromCustomer = (customerId: string, opts?: { owner?: string; expiryDate?: string; certificateId?: string }): string | null => {
-    const customer = customers.find(c => c.id === customerId);
-    if (!customer) return null;
-    const certificateId = opts?.certificateId;
-    const fallbackExpiry = (() => {
-      const certs = customer.certificates || [];
-      const withDate = certs.filter(c => c.expiryDate).map(c => ({ id: c.id, expiryDate: c.expiryDate }));
-      withDate.sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
-      return withDate[0]?.expiryDate;
-    })();
-    const expiryDate = opts?.expiryDate || fallbackExpiry;
-    const ref = certificateId ? `CUSTCERT:${customerId}:${certificateId}` : `CUST:${customerId}`;
-    const existing = projects.find(p => p.projectCategory === 'FollowUp' && p.contractRef === ref && p.status === Status.Active);
-    if (existing) return existing.id;
-    const owner = opts?.owner || normalizedCurrentUser.name || customer.contactPerson || '待定';
-    const projectId = `P-FU-${Date.now()}`;
-    const tasks = createFollowUpTasks(expiryDate, owner);
-    const newProject: Project = {
-      id: projectId,
-      name: `${customer.name} 认证到期跟进`,
-      contractRef: ref,
-      sourceType: 'customer',
-      sourceRef: certificateId ? `${customerId}:${certificateId}` : customerId,
-      projectMode: 'followup',
-      projectCategory: 'FollowUp',
-      manager: owner,
-      progress: calculateProjectProgress(tasks),
-      status: Status.Active,
-      paymentStatus: 'unpaid',
-      deadline: tasks.map(t => t.deadline).sort().slice(-1)[0] || new Date().toISOString().split('T')[0],
-      duration: 30,
-      projectType: 'Self-Operated',
-      // 同上：默认服务项保证任务不会悬空
-      tasks: attachTasksToDefaultService(tasks, `SVC-DEFAULT-${projectId}`),
-      serviceItems: [buildDefaultServiceItem({
-        projectId, projectName: `${customer.name} 认证到期跟进`, owner
-      })],
-      settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' }
-    };
-    // 同样必须落库：客户跟进记录会写后端，项目不能只留内存
-    const previousProjectsForCustomer = projects;
-    const nextProjectsForCustomer = [...projects, newProject];
-    setProjects(nextProjectsForCustomer);
-    commitProjectTransaction({
-      projectId,
-      nextProjects: nextProjectsForCustomer,
-      previousProjects: previousProjectsForCustomer
-    });
-    addCustomerFollowUp(customerId, {
-      date: new Date().toISOString().split('T')[0],
-      type: 'system',
-      content: `已立项：${newProject.name}（跟进项目）`,
-      operator: normalizedCurrentUser.name
-    });
-    return projectId;
-  };
+    留着一个「一调就出事」的函数，等于给下一个人埋雷 —— 所以连函数一起删，
+    而不只是删调用点。续期提醒还在（见 runSystemScans），立项由人在项目管理里做。
+  */
 
   const addProjectWorkLog: AppContextType['addProjectWorkLog'] = (payload) => {
     const projectId = String(payload?.projectId || '').trim();
@@ -2702,70 +2668,15 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     const previousProjectWorkLogs = projectWorkLogs;
     const oldTask = (project.tasks || []).find(t => t.id === taskId);
     const newTasks = (project.tasks || []).map(t => t.id === taskId ? { ...t, ...updates } : t);
-    const statusChangedToCompleted = Boolean(oldTask && updates.status === 'Completed' && oldTask.status !== 'Completed');
-    const allCompleted = newTasks.length > 0 && newTasks.every(t => t.status === 'Completed');
-    const inferredServiceItemId = String((updates.serviceItemId || oldTask?.serviceItemId || '')).trim();
-    const canAppendTaskLog = statusChangedToCompleted && (
-      !inferredServiceItemId || (project.serviceItems || []).some(si => si.id === inferredServiceItemId)
-    );
-
-    if (statusChangedToCompleted && allCompleted && project.status !== Status.Completed) {
-      const nowIso = new Date().toISOString();
-      const createdLog: ProjectWorkLog | null = canAppendTaskLog ? {
-        id: `WLOG-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-        projectId,
-        serviceItemId: inferredServiceItemId || undefined,
-        taskId,
-        logDate: todayStr(),
-        workContent: `完成任务：${String(updates.title || oldTask?.title || '未命名任务')}`,
-        actualHours: 0.5,
-        issueNote: undefined,
-        nextPlan: undefined,
-        source: WORK_LOG_SOURCE.TASK_TRANSITION,
-        operatorUserId: effectiveUserId,
-        operatorName: normalizedCurrentUser.name,
-        createdAt: nowIso,
-        updatedAt: nowIso
-      } : null;
-      const nextProjectWorkLogs = createdLog ? [createdLog, ...projectWorkLogs] : projectWorkLogs;
-      if (createdLog) setProjectWorkLogs(nextProjectWorkLogs);
-      void completeProject(projectId, {
-        source: 'auto',
-        tasksOverride: newTasks,
-        projectWorkLogsOverride: createdLog ? {
-          next: nextProjectWorkLogs,
-          previous: projectWorkLogs,
-          expectedLogId: createdLog.id
-        } : undefined
-      });
-      return;
-    }
-
+    // Finishing a task does not certify project completion or actual hours.
+    // Project acceptance/fees and manually recorded work remain separate.
     const nextProjects = projects.map(p => {
       if (p.id !== projectId) return p;
       return { ...p, tasks: newTasks, progress: calculateProjectProgress(newTasks) };
     });
 
-    const nowIso = new Date().toISOString();
-    const createdLog: ProjectWorkLog | null = canAppendTaskLog ? {
-      id: `WLOG-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-      projectId,
-      serviceItemId: inferredServiceItemId || undefined,
-      taskId,
-      logDate: todayStr(),
-      workContent: `完成任务：${String(updates.title || oldTask?.title || '未命名任务')}`,
-      actualHours: 0.5,
-      issueNote: undefined,
-      nextPlan: undefined,
-      source: WORK_LOG_SOURCE.TASK_TRANSITION,
-      operatorUserId: effectiveUserId,
-      operatorName: normalizedCurrentUser.name,
-      createdAt: nowIso,
-      updatedAt: nowIso
-    } : null;
-    const nextProjectWorkLogs = createdLog ? [createdLog, ...projectWorkLogs] : projectWorkLogs;
-
-    if (createdLog) setProjectWorkLogs(nextProjectWorkLogs);
+    const createdLog: ProjectWorkLog | null = null;
+    const nextProjectWorkLogs = projectWorkLogs;
     setProjects(nextProjects);
 
     if (typeof updates.status === 'string') {
@@ -4061,7 +3972,10 @@ ${receivableLines}
     const targetProject = resolveAuditLinkedProject(issue);
     const previousProjectId = previousIssue?.projectId || resolveAuditLinkedProject(previousIssue || {})?.id;
     const previousTaskId = previousIssue?.rectificationTaskId;
-    let nextTaskId = issue.rectificationTaskId || previousTaskId;
+    // React may defer/replay the updater. Allocate the linked ID before it runs.
+    const nextTaskId = targetProject
+      ? issue.rectificationTaskId || previousTaskId || `T-AUD-${Date.now()}-${Math.floor(Math.random() * 10000)}`
+      : undefined;
     const shouldCompleteTask = issue.status === 'Closed';
     const nextDeadline = String(issue.deadline || '').trim() || new Date().toISOString().split('T')[0];
     const nextOwner = String(issue.auditor || targetProject?.manager || normalizedCurrentUser.name || '待指派').trim() || '待指派';
@@ -4094,8 +4008,7 @@ ${receivableLines}
           tasks[existingTaskIndex] = { ...tasks[existingTaskIndex], ...taskPayload };
           changed = true;
         } else {
-          nextTaskId = `T-AUD-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-          tasks.push({ id: nextTaskId, ...taskPayload });
+          tasks.push({ id: nextTaskId!, ...taskPayload });
           changed = true;
         }
       }
@@ -4851,10 +4764,8 @@ ${receivableLines}
       leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, vendors, marketSignals, projectWorkLogs,
       currentUser: normalizedCurrentUser, userProfiles, isAuthRequired: authRequired, switchUser, updateUserProfile, addUserProfile, deleteUserProfile,
       activeRole, setActiveRole, activePersona, availablePersonas, resolveDashboardPersona,
-      previewPersona, setPreviewPersona, isTourActive, setIsTourActive, writeFailure, dismissWriteFailure, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
+      previewPersona, setPreviewPersona, isTourActive: isTourActive || isModuleGuideActive, setIsTourActive, setIsModuleGuideActive, writeFailure, dismissWriteFailure, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
       addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, updateProjectWorkLog, deleteProjectWorkLog,
-      createFollowUpProjectFromLead,
-      createFollowUpProjectFromCustomer,
       addLead, updateLead, addLeadFollowUp,
       addCustomer, addCustomerFollowUp,
       addContract, bindContractToCustomer, deleteContract, archiveContract, addContractAttachment, removeContractAttachment,

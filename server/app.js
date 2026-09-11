@@ -13,6 +13,7 @@ const {
   initAuthStore,
   getAuthHealth,
   authenticateUser,
+  describeLoginFailure,
   getSessionUser,
   revokeSession,
   listUsers,
@@ -694,7 +695,21 @@ app.post('/api/auth/login', async (req, res) => {
       remember: parseBoolean(req.body?.remember, false)
     });
     if (!result) {
-      return sendFail(res, ERROR_CODES.NO_PERMISSION, 'Invalid account or password', {}, 403);
+      /*
+        说清是哪一种失败 —— 「锁定 / 停用 / 过期」这三种再试也没用，
+        只说「账号或密码不对」会让人一直试，而每试一次锁定时间还会往后推。
+        「密码错」和「账号不存在」仍然合并，不给账号枚举留口子。
+        中文：这套系统的使用者是 13 个同事，不是开发者。
+      */
+      const detail = await describeLoginFailure(account);
+      const message = detail.reason === 'locked'
+        ? `密码连续输错多次，账号已暂时锁定，请 ${detail.minutesLeft} 分钟后再试。记不清密码就找系统管理员重置，别继续试 —— 每试一次锁定都会重新计时。`
+        : detail.reason === 'disabled'
+          ? '这个账号已被停用。找系统管理员启用后再登录。'
+          : detail.reason === 'expired'
+            ? '这个账号已到期。找系统管理员延长有效期后再登录。'
+            : '账号或密码不对。注意账号可能是用户名（如 zhangsan）也可能是邮箱，两个都试试。';
+      return sendFail(res, ERROR_CODES.NO_PERMISSION, message, {}, 403);
     }
     res.setHeader('Set-Cookie', buildSessionCookie(result.sessionId, result.expiresAt));
     return sendSuccess(res, { user: result.user, expiresAt: result.expiresAt }, 'success');
@@ -803,6 +818,19 @@ app.get('/api/auth/health', async (req, res) => {
     return sendSuccess(res, { mode, ready, reason, users }, 'success');
   } catch (error) {
     return sendFail(res, ERROR_CODES.SERVER_ERROR, error?.message || 'auth health failed', {}, 500);
+  }
+});
+
+// Assignment pickers need identities, not employee-management privileges or secrets.
+app.get('/api/auth/directory', requireAuthSession, async (req, res) => {
+  try {
+    const users = (await listUsers()).filter(user => user.status === 'active').map(user => ({
+      id: user.id, name: user.name, roles: user.roles, activeRole: user.activeRole,
+      positionTags: user.positionTags, reportsToUserId: user.reportsToUserId, status: user.status,
+    }));
+    return sendSuccess(res, { users }, 'success');
+  } catch (error) {
+    return sendFail(res, ERROR_CODES.SERVER_ERROR, '读取员工目录失败', {}, 500);
   }
 });
 
@@ -5201,9 +5229,15 @@ app.post('/api/state/sync', async (req, res) => {
       return sendFail(res, ERROR_CODES.PARAM_ERROR, 'datasets 不能为空且必须是对象', {}, 400);
     }
 
+    const { protectedKeys, conflict } = require('./services/stateMerge');
+    for (const key of Object.keys(datasets)) {
+      if (protectedKeys.has(key) && !Array.isArray(req.body?.baseDatasets?.[key])) throw conflict(key);
+    }
     const meta = {
+      baseDatasets: req.body?.baseDatasets,
+      requireProtectedBase: true,
       source: String(req.body?.source || 'frontend'),
-      actorUserId: String(req.body?.actorUserId || ''),
+      actorUserId: req.authUser?.id || '',
       clientId: String(req.body?.clientId || ''),
       appVersion: String(req.body?.appVersion || '')
     };
@@ -5216,6 +5250,7 @@ app.post('/api/state/sync', async (req, res) => {
       'success'
     );
   } catch (error) {
+    if (error?.code === 'STATE_CONFLICT') return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error.message, { conflict: true, datasetKey: error.datasetKey }, 409);
     return sendFail(res, ERROR_CODES.STATE_SYNC_ERROR, error?.message || 'state sync failed', {}, 500);
   }
 });

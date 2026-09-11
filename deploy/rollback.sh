@@ -44,10 +44,10 @@ TARGET="${1:-}"
 
 echo ">>> [1/4] 选择要回滚到的版本"
 if [ -z "$TARGET" ]; then
-  # 不带参数 = 回到上一个。索引 1 而不是 0：0 是当前跑着的这个
-  TARGET=$($SSH "ls -1t $REL/*.tar.gz 2>/dev/null | sed -n 2p | xargs -r basename")
+  # 部署前保存的是旧版本，因此最新快照就是此次部署的回滚目标。
+  TARGET=$($SSH "ls -1t $REL/*.tar.gz 2>/dev/null | sed -n 1p | xargs -r basename")
   if [ -z "$TARGET" ]; then
-    echo "!!! 没有上一个版本可回退（快照少于 2 个）。"
+    echo "!!! 没有上一个版本可回退（尚无部署快照）。"
     echo "!!! 快照是 deploy.sh 每次部署前自动打的，第一次部署时还没有历史。"
     exit 1
   fi

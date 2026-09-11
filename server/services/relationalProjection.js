@@ -1,4 +1,6 @@
 // 把 state store 里的几个数据集投影成 PG 关系表的行。
+// 2026-09-10：带 baseDatasets 的同步由 stateStore 在同一事务内合并和投影；
+// 以下独立投影路径保留给旧服务/维护脚本，不代表它们也具备并发保护。
 //
 // ── 解决什么问题（待办 P0-19b）────────────────────────────────
 // 不符合项、工作日志、任务模板只存在 state store 的一个 jsonb 大数组里，
@@ -58,7 +60,7 @@ const projectDataset = async (client, key, rows, allowClear = false) => {
 
   for (const rec of rows) {
     if (!rec || !rec.id) continue;   // 没有 id 的记录无法幂等 upsert，跳过
-    await conf.repo.upsertWith(run, rec);
+    await (allowClear ? conf.repo.replaceWith : conf.repo.upsertWith)(run, rec);
     ids.push(String(rec.id));
     upserted++;
   }
@@ -111,7 +113,7 @@ const projectDataset = async (client, key, rows, allowClear = false) => {
     **多几行远好过少几行**，而且幽灵行事后能对账清理，删掉的找不回来。
 
     清理脚本、批量退档这类**明确知道自己在干什么**的调用，
-    传 allowClear:true 依然能删。前端同步永远传不到这个标志。
+    传 allowClear:true 依然能删。前端不能自行指定这个标志；通过三方合并的同步由服务端在事务内授权删除。
   */
   if (ids.length > 0 && allowClear) {
     const r = await client.query(
@@ -146,4 +148,4 @@ const projectToRelational = async (datasets = {}, meta = {}) => {
   return { projected: result };
 };
 
-module.exports = { projectToRelational, projectedKeys, PROJECTED };
+module.exports = { projectToRelational, projectDataset, projectedKeys, PROJECTED };

@@ -125,7 +125,7 @@ const MyTasks: React.FC = () => {
 
   const doingCount = rows.filter(r => r.task.status === 'InProgress').length;
 
-  const renderRow = ({ task, project }: Row) => {
+  const renderRow = ({ task, project }: Row, sample = false) => {
     const blockers = blockingPrerequisites(task, project.tasks || []);
     const overdue = isOverdue(task);
     return (
@@ -138,8 +138,8 @@ const MyTasks: React.FC = () => {
             task={task}
             allTasks={project.tasks || []}
             compact
-            disabled={!checkActionPermission('TASK_COMPLETE', project).allowed}
-            onChange={(u) => updateProjectTask(project.id, task.id, u)}
+            disabled={sample || !checkActionPermission('TASK_COMPLETE', project).allowed}
+            onChange={(u) => { if (!sample) updateProjectTask(project.id, task.id, u); }}
           />
         </div>
         <div className="min-w-0 flex-1">
@@ -150,7 +150,7 @@ const MyTasks: React.FC = () => {
             {/* 项目名要能点 —— 看到任务时最常想的下一件事就是「这是哪个项目」 */}
             <button
               type="button"
-              onClick={() => navigate('/projects', { state: { openDetailId: project.id } })}
+              onClick={() => { if (!sample) navigate('/projects', { state: { openDetailId: project.id } }); }}
               className="inline-flex items-center gap-1 text-indigo-600 hover:underline"
             >
               {project.name}
@@ -189,7 +189,7 @@ const MyTasks: React.FC = () => {
           <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-black">{list.length}</span>
           <span className="ml-auto text-[11px] font-bold opacity-70">{hint}</span>
         </div>
-        <div>{list.map(renderRow)}</div>
+        <div>{list.map(row => renderRow(row))}</div>
       </div>
     );
   };
@@ -255,6 +255,9 @@ const MyTasks: React.FC = () => {
         <SearchInput value={search} onChange={setSearch} placeholder="搜任务或项目…" className="w-full md:w-64" />
       </div>
 
+      <SampleRow empty={rows.length === 0} className="mb-5" contentClassName="pt-3" caption="样例只供讲解，不会保存或计入任务数量。任务左侧显示状态，中间是任务名称，下方是所属项目与截止日期。">
+        {renderRow({task: {id: 'sample-task', title: '核对客户提供的资料', status: 'Pending', deadline: '示例日期', owner: '示例顾问'}, project: {id: 'sample-project', name: '示例企业 ISO9001 服务', tasks: []}} as Row, true)}
+      </SampleRow>
       {rows.length === 0 ? (
         <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
           <EmptyState
@@ -267,17 +270,7 @@ const MyTasks: React.FC = () => {
                 ? '要么都做完了，要么这些项目的任务都在你自己名下 —— 那也说明没人替你分担。'
                 : '换个筛选条件试试。'}
           />
-          <SampleRow empty caption="真实的一行长这样：左边勾完成、点「开始做」标记你正在做它；中间是任务名，下面能点进对应项目；红色是已经超期的。">
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 block h-4 w-4 rounded-full border-2 border-gray-200" />
-              <div>
-                <p className="text-sm font-bold text-gray-900">整理管理手册</p>
-                <p className="mt-1 text-[11px] font-bold text-gray-500">
-                  温州示范包装有限公司 ISO9001 换证 · 2026-09-11
-                </p>
-              </div>
-            </div>
-          </SampleRow>
+
         </div>
       ) : (
         <>

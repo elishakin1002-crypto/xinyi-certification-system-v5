@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "xinyi-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start:guard"],
+      "port": 3001
+    },
+    {
       "name": "xinyi-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:ui"],

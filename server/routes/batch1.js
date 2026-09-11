@@ -142,7 +142,22 @@ router.get('/api/leads/:id', wrap(async (req, res) => {
 router.post('/api/leads',
   requireAction('LEAD_CREATE', { resource: (req) => ({ type: 'lead', id: req.params?.id || '' }) }),
   wrap(async (req, res) => {
-  const lead = await leadRepo.create(normLeadCreate(getLeadPayload(req.body)));
+  /*
+    必填校验 —— 2026-09-11 补。
+
+    实跑鉴权矩阵时发现：**空请求体会返回 500**。
+    500 和 400 是两件事：400 是「你传的不对」，500 是「服务端自己崩了」——
+    后者意味着有未捕获异常，可能已经写了半截数据，而且前端只能告诉人
+    「服务器没有接受这次保存」，说不出到底哪里不对。
+
+    线索至少要有公司名：没有公司名的线索在列表里是一行空白，
+    谁也不知道它是谁，只能删掉重来。
+  */
+  const payload = getLeadPayload(req.body);
+  if (!String(payload?.company || '').trim() && !String(payload?.name || '').trim()) {
+    return sendFail(res, ERROR_CODES.PARAM_ERROR, '至少要填公司名或联系人姓名 —— 两个都空的线索，列表里是一行空白，谁也认不出是谁。', {}, 400);
+  }
+  const lead = await leadRepo.create(normLeadCreate(payload));
   sendSuccess(res, { lead }, 'success', ERROR_CODES.SUCCESS, 201);
 }));
 
@@ -222,6 +237,10 @@ router.post('/api/customers',
   requireAction('CUSTOMER_CREATE', { resource: (req) => ({ type: 'customer', id: req.params?.id || '' }) }),
   wrap(async (req, res) => {
   const raw = getCustomerPayload(req.body);
+  // 同上：空请求体原来会 500。客户没有名字，后面所有引用它的地方都显示空白
+  if (!String(raw?.name || '').trim()) {
+    return sendFail(res, ERROR_CODES.PARAM_ERROR, '客户名称不能为空 —— 合同、项目、提醒都会引用它，空名字会让这些地方全变成空白。', {}, 400);
+  }
   const customer = await customerRepo.create({
     riskStatus: 'low', status: 'Active', activeContracts: 0,
     cooperationCount: 0, serviceCount: 0, contacts: [], followUpRecords: [],

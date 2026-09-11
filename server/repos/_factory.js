@@ -36,7 +36,24 @@ const makeRepo = ({ table, spec, idPrefix = 'X', filters = {}, orderBy = 'create
     const r = await runner(text, values);
     return fromRow(r.rows[0]);
   };
+  // Full state snapshots use replacement semantics: omitted fields must clear,
+  // while ordinary PATCH/upsert callers keep their existing partial semantics.
+  const replaceWith = async (runner, obj) => {
+    const cols = toColumns(obj);
+    const keys = [...new Set([...spec.map(s => s.col), ...Object.keys(cols)])];
+    const values = [];
+    const placeholders = keys.map(k => {
+      if (!(k in cols)) return 'DEFAULT';
+      values.push(cols[k]);
+      return `$${values.length}`;
+    });
+    const sets = keys.filter(k => k !== 'id').map(k => `${k} = EXCLUDED.${k}`);
+    sets.push('updated_at = NOW()');
+    const r = await runner(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders.join(', ')}) ON CONFLICT (id) DO UPDATE SET ${sets.join(', ')} RETURNING *`, values);
+    return fromRow(r.rows[0]);
+  };
   return {
+    replaceWith,
     list, getById, createWith, updateWith, upsertWith,
     create: (obj) => createWith(query, obj),
     update: (id, u) => updateWith(query, id, u),

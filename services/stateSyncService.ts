@@ -2,6 +2,7 @@
 
 type SyncPayload = {
   datasets: Record<string, unknown>;
+  baseDatasets?: Record<string, unknown>;
   source?: string;
   actorUserId?: string;
   clientId?: string;
@@ -19,6 +20,18 @@ const parseEnvelope = (raw: any) => {
 
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let latestPayload: SyncPayload | null = null;
+let failedPayload: SyncPayload | null = null;
+let inFlight = false;
+let generation = 0;
+const protectedKeys = new Set(['audit_issues_v1', 'project_work_logs_v1', 'task_templates_v1']);
+const baselines = new Map<string, unknown>();
+const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+let syncError = '';
+const listeners = new Set<() => void>();
+const report = (message: string) => { syncError = message; listeners.forEach(fn => fn()); };
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', event => {
+  if (inFlight || latestPayload || failedPayload) { event.preventDefault(); event.returnValue = ''; }
+});
 
 const parseBoolean = (raw: unknown, fallback: boolean) => {
   const text = String(raw ?? '').trim().toLowerCase();
@@ -43,14 +56,49 @@ const isCanaryUser = (userId?: string) => {
 };
 
 const doSync = async (payload: SyncPayload) => {
+  const epoch = generation;
+  const datasets: Record<string, unknown> = {};
+  const baseDatasets: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload.datasets)) {
+    if (protectedKeys.has(key)) {
+      if (!baselines.has(key)) throw new Error('数据尚未加载完成，本次未保存。请先导出未保存内容，再重新登录。');
+      const base = baselines.get(key);
+      if (JSON.stringify(base) === JSON.stringify(value)) continue;
+      baseDatasets[key] = clone(base);
+    }
+    datasets[key] = value;
+  }
+  if (!Object.keys(datasets).length) return;
   const res = await fetch('/api/state/sync', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ ...payload, datasets, baseDatasets })
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `state sync failed: HTTP ${res.status}`);
+  const body = await res.json();
+  const parsed = parseEnvelope(body);
+  if (!res.ok || !parsed.ok) throw new Error(parsed.message || `保存失败（${res.status}）`);
+  // Keep the browser's own acknowledged view, not unseen remote rows.
+  // Otherwise a later save would interpret unseen rows as local deletions.
+  if (epoch === generation) for (const key of Object.keys(baseDatasets)) baselines.set(key, clone(datasets[key]));
+};
+
+const flush = async () => {
+  if (inFlight || !latestPayload || failedPayload) return;
+  const current = latestPayload;
+  latestPayload = null;
+  const epoch = generation;
+  inFlight = true;
+  try {
+    await doSync(current);
+    if (epoch === generation) report('');
+  } catch (error) {
+    if (epoch === generation) {
+      failedPayload = current;
+      report(error instanceof Error ? error.message : '保存失败，请检查网络后重试。');
+    }
+  } finally {
+    inFlight = false;
+    if (latestPayload && !failedPayload) void flush();
   }
 };
 
@@ -59,22 +107,25 @@ export const stateSyncService = {
   isReadEnabled: () => readEnabled,
   getCanaryUsers: () => [...canaryUsers],
   shouldUseBackendRead: (userId?: string) => readEnabled && isCanaryUser(userId),
-  scheduleSync: (payload: SyncPayload) => {
-    if (!enabled) return;
-    if (!isCanaryUser(payload.actorUserId)) return;
-    latestPayload = payload;
+  rememberBaseline: (key: string, value: unknown) => { baselines.set(key, clone(value)); },
+  reset: () => {
+    generation++;
     if (syncTimer) clearTimeout(syncTimer);
-    syncTimer = setTimeout(async () => {
-      if (!latestPayload) return;
-      const current = latestPayload;
-      latestPayload = null;
-      try {
-        await doSync(current);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.warn('[StateSync] sync failed', msg);
-      }
-    }, Math.max(200, debounceMs));
+    latestPayload = null; failedPayload = null; baselines.clear(); report('');
+  },
+  subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  getSyncError: () => syncError,
+  exportPending: () => clone(latestPayload || failedPayload || { datasets: {} }),
+  retry: () => {
+    latestPayload = latestPayload || failedPayload;
+    failedPayload = null;
+    void flush();
+  },
+  scheduleSync: (payload: SyncPayload) => {
+    if (!enabled || !isCanaryUser(payload.actorUserId)) return;
+    latestPayload = clone(payload);
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => { void flush(); }, Math.max(200, debounceMs));
   },
   fetchState: async (keys: string[]) => {
     const q = keys.length > 0 ? `?keys=${encodeURIComponent(keys.join(','))}` : '';

@@ -82,6 +82,8 @@ export interface UserProfile {
   deniedActions?: ActionCode[];
   /** 账号有效期（YYYY-MM-DD）。留空表示永久有效，用于长期兼职/亲属 */
   accountExpiresAt?: string;
+  /** 账号状态。停用的账号不该再收到「即将到期」这类提醒 */
+  status?: 'active' | 'disabled';
 }
 
 export type NotificationChannel = 'system' | 'wechat' | 'email' | 'sms';
@@ -397,7 +399,7 @@ export interface Reminder {
   type: 'task' | 'payment' | 'expire' | 'risk' | 'opportunity';
   isRead: boolean;
   linkId?: string;
-  linkType?: 'lead' | 'customer' | 'project' | 'contract' | 'intel' | 'audit';
+  linkType?: 'lead' | 'customer' | 'project' | 'contract' | 'intel' | 'audit' | 'employee';
   forRole?: RoleID[]; // 提醒针对的角色
   forUserIds?: string[]; // 优先级高于 forRole
   channels?: NotificationChannel[];
@@ -408,7 +410,7 @@ export type ReminderSeverity = 'high' | 'medium' | 'low';
 
 export interface AggregatedReminder {
   id: string;
-  linkType: 'lead' | 'customer' | 'project' | 'contract' | 'intel' | 'audit';
+  linkType: 'lead' | 'customer' | 'project' | 'contract' | 'intel' | 'audit' | 'employee';
   linkId: string;
   projectId?: string;
   projectName?: string;
@@ -430,7 +432,39 @@ export interface Vendor {
   rating: number;
 }
 
+/**
+ * 这活是自己做、外包给第三方、还是合作做。
+ *
+ * ── 2026-09-11：这个字段一直是死的 ────────────────────────────
+ *
+ * 金恩来 2026-09-11：「第三方服务各类服务都有。」
+ *
+ * 我当时准备在 Project 上另加一对 `outsourced` + `vendorPartner`，
+ * 动手前才发现**系统里早就有这套**：ProjectType 三个值，
+ * 外加 `vendorName`（合作方）和 `purchasingCost`（外包成本）。
+ *
+ * 但全代码库 **6 处都硬编码成 'Self-Operated'，没有任何界面能选**，
+ * 所以它形同虚设 —— 而正因为看不见，我才差点又造一套。
+ *
+ * **同一件事两套模型**正是这个项目反复栽跟头的地方：
+ * contractRef 被当多态字段用、权限三份定义、铃铛两份实现、级联两套代码。
+ * 每一次的代价都是「改了一处、漏了另一处」，而且不报错。
+ *
+ * 所以：**先找有没有现成的，再考虑加字段。** 加字段是最后手段，不是第一反应。
+ *
+ * 三个值的含义（2026-09-11 和业务方确认）：
+ *   Self-Operated  信义自己做
+ *   Outsourced     整单交给第三方，信义只对接 —— 这时不派内部负责人
+ *   Joint          和第三方一起做，信义这边仍要有负责人
+ */
 export type ProjectType = 'Self-Operated' | 'Outsourced' | 'Joint';
+
+/** 项目类型的中文标签与说明，界面上一律用这份，不要各页面自己写 */
+export const PROJECT_TYPE_META: Record<ProjectType, { label: string; hint: string }> = {
+  'Self-Operated': { label: '自己做', hint: '信义内部交付，要指派负责人' },
+  Outsourced: { label: '外包给第三方', hint: '整单交给合作方，信义只对接 —— 不派内部负责人，但要写清合作方' },
+  Joint: { label: '和第三方合作', hint: '一起做，信义这边仍要有负责人' },
+};
 /*
   项目分三类，**分类决定「要不要有客户」**。
 
@@ -827,7 +861,6 @@ export type ActionCode =
   | 'PROJECT_CREATE'
   | 'PROJECT_EDIT_INFO'
   | 'PROJECT_ASSIGN_MANAGER'
-  | 'PROJECT_PAUSE'
   | 'TASK_CREATE'
   | 'TASK_COMPLETE'
   | 'TASK_DELETE'

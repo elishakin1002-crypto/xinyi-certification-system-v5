@@ -1,3 +1,5 @@
+import { SampleList } from '../components/SampleRow';
+import { SAMPLE_CONTRACT } from '../src/modules/onboarding/sampleRecords';
 
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
@@ -325,7 +327,7 @@ const Contracts = () => {
     });
   };
 
-  const confirmCreateProject = () => {
+  const confirmCreateProject = async () => {
     if (!projectDraft) return;
     const { contract, ownerUserId, manager, deadline } = projectDraft;
     if (!manager.trim()) { alert('请选择项目负责人'); return; }
@@ -343,7 +345,7 @@ const Contracts = () => {
           autoGenerateTasks: true
         }))
       : [];
-    addProject({
+    const saved = await addProject({
       id: `P-${Date.now()}`,
       name: `${contract.customerName} - ${contract.serviceLine}项目`,
       contractRef: contract.id,
@@ -359,6 +361,7 @@ const Contracts = () => {
       initialServiceItems,
       disableDefaultTemplateTasks: initialServiceItems.length > 0
     });
+    if (!saved) return;
     setProjectDraft(null);
     alert('项目已创建，可在「项目管理」中继续推进。');
   };
@@ -1147,12 +1150,8 @@ const Contracts = () => {
             </thead>
             <tbody className="divide-y divide-gray-100">
                     {/* 空状态样例（2026-09-08 补，见 npm run checkup）*/}
-                    <SampleTr empty={filteredContracts.length === 0} colSpan={7} caption="真实的一行长这样：**合同金额 ≠ 营收 ≠ 已收款**，三个数不一样是正常的。">
-                      <td className="px-4 py-3 text-sm font-bold text-gray-900" colSpan={7}>
-                        XY-2026-0001 · 温州示范包装有限公司 · 咨询服务合同书 ¥30,000
-                      </td>
-                    </SampleTr>
-                {filteredContracts.map(contract => {
+
+                <SampleList items={filteredContracts} sample={SAMPLE_CONTRACT} render={contract => {
                     const linkedProject = getLinkedProject(contract);
                     const progress = calculateProgress(contract);
                     return ( <React.Fragment key={contract.id}> 
@@ -1316,13 +1315,13 @@ const Contracts = () => {
                                 </div> 
                             </div> 
                         </td> </tr> )} 
-                    </React.Fragment> );})}
+                    </React.Fragment> );}} />
             </tbody>
         </table>
       </div>
 
       <div className="md:hidden divide-y divide-gray-100">
-          {filteredContracts.map(contract => {
+          <SampleList items={filteredContracts} sample={SAMPLE_CONTRACT} render={contract => {
               const linkedProject = getLinkedProject(contract);
               const progress = calculateProgress(contract);
               return (
@@ -1373,7 +1372,7 @@ const Contracts = () => {
                       )}
                   </div>
               )
-          })}
+          }} />
       </div>
       
       {projectDraft && (

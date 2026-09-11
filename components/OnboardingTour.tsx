@@ -121,7 +121,7 @@ export const OnboardingTour: React.FC<{
   const measure = useCallback(() => {
     if (!targetSel || typeof document === 'undefined') { setRect(null); setViaMenu(false); return; }
     const pick = (sel: string) => Array.from(document.querySelectorAll<HTMLElement>(`[data-onboard="${sel}"]`)).find(node => { const r = node.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight; }) || null;
-    let el = pick(targetSel);
+    let el = targetSel === 'workspace-content' ? Array.from(document.querySelectorAll<HTMLElement>('[data-sample="1"]')).find(node => node.getBoundingClientRect().width > 0) || pick(targetSel) : pick(targetSel);
     let byMenu = false;
 
     /*
@@ -162,7 +162,7 @@ export const OnboardingTour: React.FC<{
     */
     measure();
     const t = window.setTimeout(() => {
-      const el = targetSel && document.querySelector<HTMLElement>(`[data-onboard="${targetSel}"]`);
+      const el = (targetSel === 'workspace-content' && Array.from(document.querySelectorAll<HTMLElement>('[data-sample="1"]')).find(node => node.getBoundingClientRect().width > 0)) || (targetSel && document.querySelector<HTMLElement>(`[data-onboard="${targetSel}"]`));
       /*
         手机上说明是**底部抽屉**，占掉屏幕下半部分。
         还按 center 滚的话，被指的那块正好落在抽屉底下 ——
@@ -384,6 +384,7 @@ export const OnboardingTour: React.FC<{
                 手机上这一项收在左上角这个菜单里，点开就能看到。
               </p>
             )}
+            {i < total && targetSel === 'workspace-content' && document.querySelector('[data-sample="1"]') && <p className="mb-3 text-xs text-amber-700">正在对照样例认识页面 · 不计入真实业务</p>}
             <div className="text-sm text-gray-700 leading-relaxed">
               {i === total ? <>
                 <ol className="space-y-2">{tour.firstTask.steps.map((line, index) => <li key={line} className="flex gap-2"><span className="shrink-0 font-semibold text-blue-600">{index + 1}.</span><span>{line}</span></li>)}</ol>

@@ -211,7 +211,8 @@ export const StatCard: React.FC<{
   emphasis?: 'none' | 'primary' | 'danger' | 'warning';
   onClick?: () => void;
   title?: string;
-}> = ({ icon, value, label, tone = 'blue', emphasis = 'none', onClick, title }) => {
+  selected?: boolean;
+}> = ({ icon, value, label, tone = 'blue', emphasis = 'none', onClick, title, selected = false }) => {
   const Tag = onClick ? 'button' : 'div';
   if (emphasis !== 'none') {
     const gradient = emphasis === 'danger'
@@ -223,10 +224,12 @@ export const StatCard: React.FC<{
       <Tag
         {...(onClick ? { type: 'button' as const, onClick } : {})}
         title={title}
-        className={`text-left p-5 rounded-2xl shadow-lg flex items-center text-white bg-gradient-to-br ${gradient} ${onClick ? 'transition-transform active:scale-[0.98]' : ''}`}
+        aria-pressed={onClick ? selected : undefined}
+        className={`text-left relative ${selected ? 'ring-2 ring-blue-600 ring-offset-2' : ''} p-5 rounded-2xl shadow-lg flex items-center text-white bg-gradient-to-br ${gradient} ${onClick ? 'transition-transform active:scale-[0.98]' : ''}`}
       >
         <div className="p-3 bg-white/20 rounded-xl mr-4 shrink-0">{icon}</div>
         <div className="min-w-0">
+          {selected && <span className="absolute right-3 top-2 rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-bold text-white">已选中</span>}
           <div className="text-2xl font-black truncate">{value}</div>
           <div className="text-xs opacity-80 font-bold uppercase tracking-tight">{label}</div>
         </div>
@@ -237,10 +240,12 @@ export const StatCard: React.FC<{
     <Tag
       {...(onClick ? { type: 'button' as const, onClick } : {})}
       title={title}
-      className={`text-left bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group transition-colors ${toneHover[tone]}`}
+        aria-pressed={onClick ? selected : undefined}
+      className={`text-left relative ${selected ? 'ring-2 ring-blue-600 ring-offset-2' : ''} bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group transition-colors ${toneHover[tone]}`}
     >
       <div className={`p-3 rounded-xl mr-4 shrink-0 group-hover:scale-110 transition-transform ${toneIcon[tone]}`}>{icon}</div>
       <div className="min-w-0">
+          {selected && <span className="absolute right-3 top-2 rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-bold text-white">已选中</span>}
         <div className="text-2xl font-black text-gray-900 truncate">{value}</div>
         <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">{label}</div>
       </div>

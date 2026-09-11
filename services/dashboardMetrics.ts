@@ -1,6 +1,7 @@
 import { Contract, Customer, Lead, Project, ProjectTask, ProjectWorkLog, RoleID, Settlement, Status, UserProfile } from '../types';
 import { APP_ROUTES } from '../src/routes';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
+import { isOpenTask } from '../src/modules/taskFlow';
 
 export type DashboardRoleView = 'boss' | 'manager' | 'sales' | 'consultant' | 'finance';
 
@@ -186,9 +187,56 @@ const resolveDashboardRoleView = (currentUser: UserProfile, activeRole: RoleID):
   return 'boss';
 };
 
+/**
+ * 在制项目 —— **排除已停用的「售前跟进」旧类别**。
+ *
+ * ── 为什么（2026-09-11）────────────────────────────────────────
+ *
+ * 金恩来 2026-09-08 说「还在争取的客户不该放进项目」，
+ * FollowUp 于是退出项目管理、标成 legacy、新建不出来了。
+ * 但**指标这一侧一直没跟着改** —— 库里还躺着 8 个 Active 的
+ * 「XX 认证到期挖角跟进」，它们照旧被算进：
+ *
+ *   · 在制项目总数      虚高
+ *   · 人均在制项目数    分子虚高
+ *   · 本周日志覆盖率    分母虚高 → 覆盖率被拉低
+ *   · 项目延误率        分母虚高，而它们永远不会被人去做
+ *
+ * 这就是坑 #23 说的「改分类字段时最容易漏的是连带」：
+ * 类别改掉了、界面改掉了、**统计口径忘了改**，
+ * 于是每个数字都偏一点，而没人看得出偏在哪。
+ *
+ * 为什么改代码而不是把那 8 个项目归档：
+ * 系统里根本没有「已归档」这个状态，硬塞只能改成「已完成」——
+ * 而它们**没有完成**，那是在账本上写假话。
+ * 排除一个已经停用的类别，是说实话且对未来同类数据一并生效。
+ */
+const isLiveProject = (p: Project) => p.status === Status.Active && p.projectCategory !== 'FollowUp';
+
+/**
+ * 未完成任务 —— **只数在制项目里的**，而且用统一的 isOpenTask。
+ *
+ * ── 2026-09-11 发现的两处口径错 ────────────────────────────────
+ *
+ * 原来是 `inputs.projects.flatMap(p => p.tasks).filter(t => t.status !== 'Completed')`，
+ * 有两个问题：
+ *
+ * ① **从全部项目里数**，包括已完成的项目。
+ *    一个项目结项了，它里面没勾完的任务不该再算成「未完成任务」——
+ *    那是历史，不是欠账。改完在制项目口径后这条立刻显形：
+ *    工作台上出现「在制项目 0 个，未完成任务 70 条」，人完全看不懂那 70 条在哪。
+ *
+ * ② **没排除 Skipped**。跳过是主动的决定（客户自行处理、标准变更），
+ *    不是欠账。把它算进「未完成」，等于让人对着一个永远清不掉的数字发愁，
+ *    而且延误率的分母也跟着虚高。
+ *    统一用 src/modules/taskFlow.ts 的 isOpenTask，不在这里另写一套判断。
+ */
+const openTasksOf = (projects: Project[]) =>
+  projects.filter(isLiveProject).flatMap(p => p.tasks || []).filter(isOpenTask);
+
 const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetrics => {
   const now = nowDate();
-  const activeProjects = inputs.projects.filter(p => p.status === Status.Active);
+  const activeProjects = inputs.projects.filter(isLiveProject);
   const monthContracts = inputs.contracts.filter(c => inMonth(c.signDate, monthKey));
   const monthContractAmount = monthContracts.reduce((acc, c) => acc + Number(c.amount || 0), 0);
   const monthPaid = inputs.contracts.reduce((acc, c) => {
@@ -219,7 +267,7 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
 
   const owners = Array.from(new Set(activeProjects.map(p => String(p.manager || '').trim()).filter(Boolean)));
   const avgInProgress = owners.length > 0 ? activeProjects.length / owners.length : 0;
-  const openTasks = inputs.projects.flatMap(p => p.tasks || []).filter(t => t.status !== 'Completed');
+  const openTasks = openTasksOf(inputs.projects);
   const delayedTasks = openTasks.filter(t => diffDays(t.deadline, now) < 0);
   const weekStart = new Date(now);
   weekStart.setDate(now.getDate() - 6);
@@ -311,12 +359,13 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
 */
 const buildManagerMetrics = (inputs: Inputs): RoleDashboardMetrics => {
   const now = nowDate();
-  const activeProjects = inputs.projects.filter(p => p.status === Status.Active);
+  // 和老板那套用同一个口径 —— 两边数字对不上是这个项目最高频的 bug 形态
+  const activeProjects = inputs.projects.filter(isLiveProject);
 
   // 没写负责人的项目 —— 这是她最该先处理的一类：没人认领就没人推进
   const unassigned = activeProjects.filter(p => !String(p.manager || '').trim());
 
-  const openTasks = inputs.projects.flatMap(p => p.tasks || []).filter(t => t.status !== 'Completed');
+  const openTasks = openTasksOf(inputs.projects);
   const overdueTasks = openTasks.filter(t => diffDays(t.deadline, now) < 0);
   const dueSoonTasks = openTasks.filter(t => {
     const d = diffDays(t.deadline, now);
@@ -502,10 +551,17 @@ const buildConsultantMetrics = (inputs: Inputs): RoleDashboardMetrics => {
   const now = nowDate();
   const me = String(inputs.currentUser.name || '');
   const myProjects = inputs.projects.filter(p => projectIsMine(p, me, inputs.currentUser));
-  const myActiveProjects = myProjects.filter(p => p.status === Status.Active);
+  const myActiveProjects = myProjects.filter(isLiveProject);   // 同上：口径必须一致
   const myTaskPairs = myProjects.flatMap(project => (project.tasks || []).map(task => ({ project, task })))
     .filter(({ task }) => taskOwner(task, me));
-  const myOpenTasks = myTaskPairs.filter(({ task }) => task.status !== 'Completed');
+  /*
+    个人这套也要用同一个判据。
+
+    这里**故意不限定在制项目** —— 顾问的「我的任务」看的是自己名下的活，
+    包括挂在已结项项目上还没勾的那几条（他确实还得去处理或跳过）。
+    但 Skipped 必须排除，理由和上面一样：跳过是主动决定，不是欠账。
+  */
+  const myOpenTasks = myTaskPairs.filter(({ task }) => isOpenTask(task));
   const myOverdueTasks = myOpenTasks.filter(({ task }) => diffDays(task.deadline, now) < 0);
   const myDueSoonTasks = myOpenTasks.filter(({ task }) => diffDays(task.deadline, now) >= 0 && diffDays(task.deadline, now) <= 7);
   const thisWeekStart = new Date(now);

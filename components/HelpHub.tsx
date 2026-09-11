@@ -143,6 +143,12 @@ const visibleModals = (): HTMLElement[] => {
   return Array.from(document.querySelectorAll<HTMLElement>('.fixed.inset-0'))
     .filter(el => {
       if (el.closest('[data-help-ui]')) return false;
+      // 手机 AI 面板隐藏时仍占满屏幕；尺寸存在不代表用户看得见。
+      // 连同祖先一起检查，避免把 opacity:0 的抽屉当成当前业务弹窗。
+      for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+        const style = window.getComputedStyle(node);
+        if (node.hidden || node.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+      }
       const r = el.getBoundingClientRect();
       // 铺满视口才算弹窗遮罩：宽高都得接近整屏，且确实压在屏幕上
       if (r.width < vwNow * 0.9 || r.height < vhNow * 0.9) return false;
@@ -174,7 +180,8 @@ export const HelpHub: React.FC<{
   onOpen: () => void;
 }> = ({ open, initialMode = 'menu', onClose, onOpen, onReplayTour }) => {
   const location = useLocation();
-  const { activeRole, previewPersona } = useApp();
+  const { activeRole, previewPersona, setIsModuleGuideActive } = useApp();
+  const [hasSample, setHasSample] = useState(false);
   const guideRole = previewPersona ? PERSONA_TO_ROLE[previewPersona] : activeRole;
   const [mode, setMode] = useState<Mode>('menu');
   const [guide, setGuide] = useState<RolePageGuide | null>(null);
@@ -251,10 +258,18 @@ export const HelpHub: React.FC<{
 
   const enterPage = () => { resolveGuide(); setPageIndex(0); setMode('page'); };
 
+  useEffect(() => {
+    setIsModuleGuideActive(open && mode === 'page');
+    if (!open || mode !== 'page') { setHasSample(false); return; }
+    const timer = window.setTimeout(() => setHasSample(Boolean(pageRoot.current?.querySelector('[data-sample="1"]'))), 120);
+    return () => { window.clearTimeout(timer); setIsModuleGuideActive(false); };
+  }, [open, mode, location.pathname, setIsModuleGuideActive]);
+
   const pageSteps = guide ? [
     { title: '这个模块负责什么', text: guide.what },
     { title: '通常按什么顺序使用', text: guide.order.map((line, index) => `${index + 1}. ${line}`).join('\n\n') },
     ...guide.areas.map(area => ({ title: area.name, text: area.role })),
+    ...(hasSample ? [{title: '对照样例认识一条记录', text: '标着「样例」的记录使用本页的字段与布局。按表头或卡片标签查看名称、状态和负责人。样例只供观察，不会保存、提交或计入统计；实际操作请退出帮助后使用真实记录。', sample: true}] : []),
     ...(guide.result ? [{title: '做完后去哪里看结果', text: guide.result + (guide.empty ? '\n\n没有记录时：' + guide.empty : '')}] : []),
     ...(guide.misread ? [{ title: '使用时留意这一点', text: guide.misread }] : []),
   ] : [];
@@ -270,7 +285,8 @@ export const HelpHub: React.FC<{
         return r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
       };
       if (root) {
-        if (pageIndex === 0) target = Array.from(root.querySelectorAll<HTMLElement>('h1,h2,h3')).find(visible) || null;
+        if ('sample' in (pageSteps[pageIndex] || {})) target = Array.from(root.querySelectorAll<HTMLElement>('[data-sample="1"]')).find(el => el.getBoundingClientRect().width > 0) || null;
+        else if (pageIndex === 0) target = Array.from(root.querySelectorAll<HTMLElement>('h1,h2,h3')).find(visible) || null;
         else if (pageIndex === 1) target = Array.from(root.querySelectorAll<HTMLElement>('form,table,[role="tablist"]')).find(visible) || null;
         else {
           const name = guide?.areas[pageIndex - 2]?.name;
@@ -283,13 +299,17 @@ export const HelpHub: React.FC<{
       } else setPageRect(null);
       if (pageCard.current) setPageCardH(pageCard.current.getBoundingClientRect().height);
     };
+    if ('sample' in (pageSteps[pageIndex] || {})) {
+      const sample = Array.from(pageRoot.current?.querySelectorAll<HTMLElement>('[data-sample="1"]') || []).find(el => el.getBoundingClientRect().width > 0);
+      if (sample) { sample.style.scrollMarginTop = '96px'; sample.scrollIntoView({block: 'start'}); }
+    }
     update();
     const observer = new ResizeObserver(update);
     if (pageCard.current) observer.observe(pageCard.current);
     window.addEventListener('resize', update);
     window.addEventListener('scroll', update, true);
     return () => { observer.disconnect(); window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
-  }, [open, mode, pageIndex, guide]);
+  }, [open, mode, pageIndex, guide, hasSample]);
 
   useEffect(() => { if (open && mode === 'page') { resolveGuide(); setPageIndex(0); } }, [location.pathname, guideRole]);
 
@@ -465,7 +485,7 @@ export const HelpHub: React.FC<{
           {mode === 'page' && pageRect && <div className="fixed z-[90] pointer-events-none rounded-xl ring-2 ring-blue-500" style={{...pageRect, boxShadow: '0 0 0 9999px rgba(0,0,0,0.3)'}} /> }
           <div ref={pageCard} role="dialog" aria-modal="true" aria-label={mode === 'menu' ? '新手引导' : '了解当前模块'} style={mode === 'page' && pageRect && !isMobile ? {
             left: Math.max(12, Math.min(pageRect.left + pageRect.width + 16 + 380 < vw ? pageRect.left + pageRect.width + 16 : pageRect.left - 396 > 12 ? pageRect.left - 396 : vw - 404, vw - 392)),
-            top: Math.max(12, Math.min(pageRect.top, window.innerHeight - pageCardH - 12)), right: 'auto',
+            top: Math.max(12, Math.min(pageRect.left + pageRect.width + 396 < vw || pageRect.left > 408 ? pageRect.top : pageRect.top + pageRect.height + 16 + pageCardH < window.innerHeight - 12 ? pageRect.top + pageRect.height + 16 : pageRect.top - pageCardH - 16 > 12 ? pageRect.top - pageCardH - 16 : window.innerHeight - pageCardH - 12, window.innerHeight - pageCardH - 12)), right: 'auto',
           } : undefined} className={`fixed z-[91] flex flex-col bg-white shadow-xl ${isMobile
             ? 'inset-x-0 bottom-0 max-h-[75dvh] overflow-hidden rounded-t-3xl'
             : 'right-6 top-20 w-[380px] max-h-[calc(100dvh-40px)] overflow-hidden rounded-2xl border border-gray-200'}`}

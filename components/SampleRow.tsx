@@ -24,7 +24,7 @@ import { useApp } from '../context/AppContext';
  * 而这些数字正是用来判断「现在忙不忙、钱回来没有」的 ——
  * 跟历史合同顺手建僵尸项目是同一个坑，只是这次是我自己挖的。
  *
- * 所以它只是**渲染出来的一行**：刷新就没了，不进任何统计，
+ * 所以它只是**渲染出来的一行**：按引导或空列表状态显示，不进任何统计，
  * 也不需要谁事后去清理。
  *
  * ── 什么时候出现 ──────────────────────────────────────────────
@@ -45,14 +45,17 @@ export const SampleRow: React.FC<{
   /** 样例长什么样，由各页面自己给 —— 它得像那一页真实的行 */
   children: React.ReactNode;
   className?: string;
-}> = ({ empty = false, caption, children, className = '' }) => {
+  contentClassName?: string;
+}> = ({ empty = false, caption, children, className = '', contentClassName = 'px-4 pt-4 pb-3' }) => {
   const { isTourActive } = useApp();
   if (!isTourActive && !empty) return null;
 
   return (
     <div
-      data-sample="1"
-      className={`relative rounded-xl border border-dashed border-amber-300 bg-amber-50/40 ${className}`}
+      data-sample="1" data-onboard="sample-record"
+      onClickCapture={e => { e.preventDefault(); e.stopPropagation(); }}
+      onKeyDownCapture={e => { if (e.key !== 'Tab') { e.preventDefault(); e.stopPropagation(); } }}
+      className={`relative rounded-2xl border border-gray-100 bg-white shadow-sm ${className}`}
     >
       {/*
         标签要压在边框上、而且是暖色。
@@ -65,10 +68,10 @@ export const SampleRow: React.FC<{
         <Sparkles className="w-3 h-3" />
         样例 · 不是真实数据
       </span>
-      <div className="px-4 pt-4 pb-3">{children}</div>
+      <div className={contentClassName}>{children}</div>
       {caption && (
-        <p className="border-t border-dashed border-amber-200 px-4 py-2 text-[11px] font-bold leading-relaxed text-amber-800/90">
-          {caption}
+        <p data-sample-caption="1" className="border-t border-gray-100 px-4 py-2 text-[11px] font-bold leading-relaxed text-gray-500">
+          {caption.replace(/\*\*/g, '')}
         </p>
       )}
     </div>
@@ -96,10 +99,10 @@ export const SampleTr: React.FC<{
 
   return (
     <>
-      <tr data-sample="1" className="bg-amber-50/40">
+      <tr data-sample="1" data-onboard="sample-record" onClickCapture={e => { e.preventDefault(); e.stopPropagation(); }} className="bg-white hover:bg-gray-50/80">
         {children}
       </tr>
-      <tr data-sample="1" className="bg-amber-50/40">
+      <tr data-sample-caption="1" className="bg-white">
         <td colSpan={colSpan} className="px-4 pb-2.5 pt-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800 ring-1 ring-amber-300">
@@ -107,7 +110,7 @@ export const SampleTr: React.FC<{
               样例 · 不是真实数据
             </span>
             {caption && (
-              <span className="text-[11px] font-bold text-amber-800/90">{caption}</span>
+              <span className="text-[11px] font-bold text-gray-500">{caption.replace(/\*\*/g, '')}</span>
             )}
           </div>
         </td>
@@ -115,3 +118,33 @@ export const SampleTr: React.FC<{
     </>
   );
 };
+
+/** 只给渲染列表加演示记录，复用真实卡片；原始数组仍用于统计、导出与保存。 */
+export function SampleList<T>({ items, sample, render }: {
+  items: T[]; sample: T; render: (item: T, index: number) => React.ReactElement;
+}) {
+  const { isTourActive } = useApp();
+  const showSample = isTourActive || items.length === 0;
+  return <>{(showSample ? [sample, ...items] : items).map((item, index) => {
+    const element = render(item, index);
+    const key = element.key ?? (item as {id?: string}).id ?? index;
+    if (item !== sample) return React.cloneElement(element, {key});
+    const decorate = (element: React.ReactElement<any>): React.ReactElement => {
+    if (element.type === React.Fragment) return React.cloneElement(element, {}, React.Children.map(element.props.children, child => React.isValidElement(child) ? decorate(child) : child));
+    const badge = <span className="mb-2 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">样例 · 不是真实数据</span>;
+    const sampleChildren = element.type === 'tr'
+      ? element.props.children
+      : <>{badge}{element.props.children}</>;
+    const decorated = React.cloneElement(element, {
+      key, 'data-sample': '1', 'data-onboard': 'sample-record',
+      className: `${element.props.className || ''} relative`,
+      onClickCapture: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); },
+      onKeyDownCapture: (e: React.KeyboardEvent) => { if (e.key !== 'Tab') { e.preventDefault(); e.stopPropagation(); } },
+      children: sampleChildren,
+    });
+    if (element.type === 'tr') return <React.Fragment key={key}>{decorated}<tr data-sample-caption="1"><td colSpan={React.Children.toArray(element.props.children).length} className="px-4 py-1 border-b border-gray-100">{badge}</td></tr></React.Fragment>;
+    return decorated;
+    };
+    return decorate(element);
+  })}</>;
+}

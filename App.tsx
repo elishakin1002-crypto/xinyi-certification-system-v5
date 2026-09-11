@@ -1,7 +1,9 @@
 
 import React, { useEffect, useState } from 'react';
-import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
+import StateSyncNotice from './components/StateSyncNotice';
+import CrashBoundary from './components/CrashBoundary';
 import Dashboard from './pages/Dashboard';
 import Leads from './pages/Leads';
 import Customers from './pages/Customers';
@@ -36,6 +38,26 @@ const LoadingScreen = () => (
     正在校验登录状态...
   </div>
 );
+
+/*
+  页面级崩溃边界。
+
+  放在 Layout **里面**、Routes **外面**，位置是有讲究的：
+  这样某一页塌了，左边导航和顶部还在，人可以直接点去别的模块，
+  而不是整屏白掉只能刷新。
+
+  key 用当前路由：不加的话，一页崩过之后边界会一直停在错误态，
+  点到别的页面还是那张错误卡片，看起来像整个系统都坏了。
+  换路由就换 key，等于换一个新的边界重新开始。
+*/
+const PageBoundary: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const location = useLocation();
+  return (
+    <CrashBoundary key={location.pathname} area={location.pathname}>
+      {children}
+    </CrashBoundary>
+  );
+};
 
 const App = () => {
   const [authRequired] = useState(() => envAuthRequired || readDevAuthOverride());
@@ -92,6 +114,8 @@ const App = () => {
           </Routes>
         ) : (
           <Layout>
+            <StateSyncNotice />
+            <PageBoundary>
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/login" element={<Navigate to="/dashboard" replace />} />
@@ -115,6 +139,7 @@ const App = () => {
               {/* 自己的登录设备，人人可看，不需要任何额外权限 —— 看的是自己 */}
               <Route path="/my-devices" element={<div className="p-4 md:p-6 max-w-3xl mx-auto"><LoginSessions /></div>} />
             </Routes>
+            </PageBoundary>
           </Layout>
         )}
       </Router>

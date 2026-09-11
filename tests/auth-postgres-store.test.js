@@ -126,6 +126,43 @@ test('密码错了不给会话', async () => {
   assert.equal(nobody, null, '不存在的账号也给了会话');
 });
 
+test('登录失败要分得清是哪一种 —— 但不能泄露账号存不存在', async () => {
+  /*
+    2026-09-09：金恩来密码变了不知道，连试五次被锁 15 分钟，
+    而界面从头到尾只说 "Invalid account or password" ——
+    于是他继续试，**每试一次锁定都重新计时**，越急越进不去。
+
+    authenticateUser 对五种情况一律返回 null（不存在/密码错/停用/过期/锁定），
+    describeLoginFailure 负责把它们分开，供接口层翻成人话。
+
+    分寸在这里：「锁定 / 停用 / 过期」要如实说 —— 这三种再试也没用，
+    瞒着只会让人一直试；而「密码错」和「账号不存在」**必须继续合并**，
+    分开等于告诉外人哪些账号真实存在。
+  */
+  const store = freshStore();
+  await store.initAuthStore();
+  const pw = `Right-${Date.now()}!aA1`;
+
+  await store.createUser({ name: 'D', username: 'lf-disabled', password: pw, roles: ['CONSULTANT'], status: 'disabled' });
+  await store.createUser({ name: 'E', username: 'lf-expired', password: pw, roles: ['CONSULTANT'], accountExpiresAt: '2020-01-01' });
+  await store.createUser({ name: 'N', username: 'lf-normal', password: pw, roles: ['CONSULTANT'] });
+
+  assert.equal((await store.describeLoginFailure('lf-disabled')).reason, 'disabled');
+  assert.equal((await store.describeLoginFailure('lf-expired')).reason, 'expired');
+
+  // 账号枚举：这两种必须给出**完全一样**的结果
+  assert.equal((await store.describeLoginFailure('lf-normal')).reason, 'bad_credentials');
+  assert.equal((await store.describeLoginFailure('nosuchuser-at-all')).reason, 'bad_credentials');
+
+  // 连续试错到锁定，要能报出还剩几分钟 —— 说不出剩多久，人就只能瞎试
+  for (let i = 0; i < 6; i += 1) {
+    await store.authenticateUser({ account: 'lf-normal', password: 'nope' });
+  }
+  const locked = await store.describeLoginFailure('lf-normal');
+  assert.equal(locked.reason, 'locked', '试错到上限之后没识别成「已锁定」');
+  assert.ok(locked.minutesLeft >= 1, '锁定了却说不出还剩多久');
+});
+
 test('搬迁脚本不重新哈希密码，直接搬哈希值', () => {
   /*
     走 createUser 的话会**用原文重新哈希**，而我们手上只有哈希值——
