@@ -1,6 +1,6 @@
 import { aiService } from '../aiService';
 import { compressImage, extractTextFromDocx, IngestResult } from './fileUtils';
-import { extractTextFromPdf, renderPdfPagesAsImages } from '../documentParsers';
+import { extractTextFromPdf, renderPdfPagesAsImages, getLastParseFailure } from '../documentParsers';
 
 const PLACEHOLDER_RE = /(某某|xxx|示例|样例|测试|待定|未知|北京某某|2024-xx-xx|合同编号|请填写)/i;
 const CONTRACT_MODEL_CHAIN = ['kimi-k2.5', 'gemini-3-flash'];
@@ -296,7 +296,7 @@ export const processContract = async (file: File): Promise<IngestResult> => {
         if (imagePages.length > 0) {
           promptVariants = buildImagePromptVariants(imagePages);
         } else {
-          throw new Error('PDF 未提取到可读内容（文本/OCR均失败）。请改用清晰扫描件或先转图片后上传。');
+          throw new Error(`PDF 没读出内容。${getLastParseFailure() || '文本层和转图都没拿到东西'}\n\n如果是清晰的电子版合同还是失败，那多半是系统这边的问题，把这句话发给我。`);
         }
       }
     } else if (isImage) {

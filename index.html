@@ -15,7 +15,23 @@
     <script src="/vendor/tailwind.min.js"></script>
     <script src="/vendor/mammoth.browser.min.js"></script>
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/vendor/pdf.min.js"></script>
+    <!--
+      pdf.js 不再从这里全局加载（2026-09-12）。
+
+      这里原来挂着 pdf.min.js@2.16.105，而 package.json 里装的是 5.4.624 ——
+      **两份，而且全局那份会赢**（documentParsers 先看 window.pdfjsLib）。
+      更要命的是它配套的 worker 文件从来没放进 vendor/，
+      于是 workerSrc 指向一个 404，合同 PDF 一个都识别不了，
+      界面却只说「请改用清晰扫描件」，把锅甩给用户的文件。
+
+      这个 bug 正是上面那段注释预言过的：「pdf 没加载，合同解析静默失效，
+      用的人只觉得『这功能坏了』」。预言对了，但防的方式不对 ——
+      手工维护 vendor 副本，本身就是"两份会长歪"的根源。
+
+      改成走 npm 那一份，由 Vite 打包（同样是本地文件，不碰 CDN），
+      而且是按需加载：不传合同就不会下载这 1MB。
+      worker 地址由打包器给出，不用人去同步。
+    -->
     <!-- Inter 只保留 latin/latin-ext 两个子集，136KB。
          中文不下载字体：Noto Sans SC 完整包好几 MB，而 Mac 有苹方、Windows 有微软雅黑，
          系统自带的中文字体本来就够好，为它等几秒不值得。 -->

@@ -9,7 +9,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { aiService } from '../services/aiService'; 
 import { IngestionUploader } from '../components/IngestionUploader';
 import { Receivable, Lead, Status, Contract, ContractAttachment, KnowledgeDoc } from '../types';
-import { extractTextFromDocx, extractTextFromPdf, renderPdfPagesAsImages } from '../services/documentParsers';
+import { extractTextFromDocx, extractTextFromPdf, renderPdfPagesAsImages, getLastParseFailure } from '../services/documentParsers';
+import { ServicePicker } from '../components/ServicePicker';
+import { matchCatalogItems, toServiceLine } from '../src/modules/serviceCatalogMatch';
 import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { buildImportPlan, ContractImportPlan, HISTORY_IMPORT_TAG } from '../src/modules/contractImport';
@@ -37,10 +39,18 @@ const Contracts = () => {
 
   const [formData, setFormData] = useState({
       title: '', contractNo: '', customerId: '', customerName: '', contactPerson: '', amount: '',
-      signDate: new Date().toISOString().split('T')[0], serviceLine: 'ISO 标准',
+      signDate: new Date().toISOString().split('T')[0], serviceLine: '',   // 默认留空：逼人真的去选，别把占位值带进库
       paymentMethod: '', remarks: '', createProject: true
   });
   
+  /*
+    AI 从合同里读到的服务项**原话**。
+
+    留着它不是为了存库，是为了摆在选择器旁边对照：
+    人能一眼看出「系统勾的」和「合同写的」差在哪。
+    只给结论不给依据，错了没人发现 —— 这是自由文本时代的老问题。
+  */
+  const [aiServiceRaw, setAiServiceRaw] = useState('');
   const [extractedReceivables, setExtractedReceivables] = useState<Receivable[]>([]);
   const [extractedServiceItems, setExtractedServiceItems] = useState<Array<any>>([]);
   const [fileAttachments, setFileAttachments] = useState<ContractAttachment[]>([]);
@@ -66,7 +76,7 @@ const Contracts = () => {
     contactPerson: '',
     amount: '',
     signDate: new Date().toISOString().split('T')[0],
-    serviceLine: 'ISO 标准',
+    serviceLine: '',   // 默认留空：逼人真的去选，别把占位值带进库
     paymentMethod: '',
     remarks: '',
     createProject: true
@@ -630,7 +640,7 @@ const Contracts = () => {
                           inlineData: { mimeType: 'image/jpeg', data }
                       }));
                   } else {
-                      throw new Error('PDF 未提取到可读内容（文本/OCR均失败）。请改用清晰扫描件或先转图片后上传。');
+                      throw new Error(`PDF 没读出内容。${getLastParseFailure() || '文本层和转图都没拿到东西'}\n\n如果是清晰的电子版合同还是失败，那多半是系统这边的问题，把这句话发给我。`);
                   }
               }
           } else {
@@ -764,10 +774,18 @@ const Contracts = () => {
               contactPerson: finalContact || prev.contactPerson,
               amount: finalAmount ? String(finalAmount) : String(prev.amount || ''),
               signDate: extractedSignDate,
-              serviceLine: finalServiceLine || prev.serviceLine,
+              // 原话留着对照；勾选用匹配到的标准项，匹配不上的原样带过来让人确认
+              serviceLine: (() => {
+                const raw = finalServiceLine || '';
+                if (!raw) return prev.serviceLine;
+                const m = matchCatalogItems(raw);
+                return m.matched.length ? toServiceLine(m.matched, m.unmatched) : raw;
+              })(),
               paymentMethod: finalPaymentMethod || prev.paymentMethod,
               remarks: finalNotes || prev.remarks
           }));
+
+          setAiServiceRaw(finalServiceLine || '');
 
           if (Array.isArray(payload?.paymentPlan)) {
              const newReceivables: Receivable[] = payload.paymentPlan
@@ -827,6 +845,15 @@ const Contracts = () => {
     const perm = checkActionPermission('CONTRACT_CREATE', { owner: currentUser.name });
     if (!perm.allowed) {
       alert(`权限拒绝：${perm.reason || '无权限'}`);
+      return;
+    }
+    /*
+      服务项目原来靠 <input required> 卡着。换成多选组件后没有原生校验了，
+      得自己补一句 —— 漏了的话空服务项会直接进库，
+      而下游（派活建议、流程模板、「这家做过什么」）全靠它。
+    */
+    if (!String(formData.serviceLine || '').trim()) {
+      alert('请选一下服务项目。\n\n它决定这单派给谁、套哪套流程，也是以后查「这家做过什么」的依据 —— 空着的话这几样都用不上。');
       return;
     }
     const result = addContract(
@@ -1494,6 +1521,7 @@ const Contracts = () => {
                                 const normalizedServiceLine = serviceItemsFromAI.length > 0
                                   ? serviceItemsFromAI.map(item => String(item.standardName || item.name)).join(' / ')
                                   : (data.serviceLine || '');
+                                setAiServiceRaw(normalizedServiceLine || '');
                                 const matchedCustomer = findCustomerByName(String(data.customerName || ''));
                                 setFormData(prev => ({
                                     ...prev,
@@ -1504,7 +1532,12 @@ const Contracts = () => {
                                     contactPerson: data.contactPerson || prev.contactPerson,
                                     amount: resolvedAmount ? resolvedAmount.toString() : prev.amount,
                                     signDate: data.signDate || prev.signDate,
-                                    serviceLine: normalizedServiceLine || prev.serviceLine,
+                                    serviceLine: (() => {
+                                      const raw = normalizedServiceLine || '';
+                                      if (!raw) return prev.serviceLine;
+                                      const m = matchCatalogItems(raw);
+                                      return m.matched.length ? toServiceLine(m.matched, m.unmatched) : raw;
+                                    })(),
                                     paymentMethod: data.paymentMethod || prev.paymentMethod,
                                     remarks: data.notes || prev.remarks
                                 }));
@@ -1589,8 +1622,29 @@ const Contracts = () => {
                             <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.contactPerson} onChange={e => setFormData({...formData, contactPerson: e.target.value})} />
                           </div>
                           <div>
-                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">服务项目</label>
-                            <input required type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.serviceLine} onChange={e => setFormData({...formData, serviceLine: e.target.value})} />
+                            {/*
+                              服务项目改成「从标准目录多选」（2026-09-12）。
+
+                              金恩来：「目前的合同不够规范，同时识别 pdf 也常常不够准确，
+                              这里还是需要，提供标准的服务项目多选会更准确，高效」。
+
+                              原来是个自由文本框，后果在别处才显形：
+                              10 份合同 10 种写法，「这家做过哪些体系」查不出来；
+                              一份合同做两项服务存成一句话，拆不开；
+                              派活建议和流程模板只能靠猜服务类型，猜错就派错人。
+
+                              AI 的职责也随之变了：不再是填一个字符串，
+                              而是**在目录里替人先勾好**，并把合同原话摆在旁边对照 ——
+                              勾错了人一眼看得出来，自由文本错了没人看得出来。
+                            */}
+                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">
+                              服务项目 <span className="ml-1 font-bold normal-case tracking-normal text-gray-400">（标准目录，可多选）</span>
+                            </label>
+                            <ServicePicker
+                              value={formData.serviceLine}
+                              onChange={next => setFormData({ ...formData, serviceLine: next })}
+                              aiRawText={aiServiceRaw}
+                            />
                           </div>
                         </div>
                         <div className="grid grid-cols-3 gap-4"> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">合同总额 (¥)</label> <input required type="number" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm font-mono font-bold" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">签订日期</label> <input required type="date" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.signDate} onChange={e => setFormData({...formData, signDate: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">支付方式</label> <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.paymentMethod} onChange={e => setFormData({...formData, paymentMethod: e.target.value})} /> </div> </div>
