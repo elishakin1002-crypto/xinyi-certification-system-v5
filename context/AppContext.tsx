@@ -1,6 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { detectStandards, buildPdcaTitle } from '../src/modules/knowledge/standards';
+import { findDuplicateByName } from '../src/modules/customerIdentity';
 import { Lead, Customer, Contract, ContractAttachment, Project, Settlement, Reminder, AuditIssue, Status, KnowledgeDoc, Vendor, ProjectTask, ServiceItem, RoleID, DashboardPersona, TaskTemplate, UserProfile, PermissionCode, FollowUpRecord, AuditNode, StrategicTask, Receivable, CertificateDetail, ProjectCategory, AIDecisionLog, AIAction, ActionCode, AIAllowedAction, AggregatedReminder, ReminderSeverity, ImportRecord, MarketSignal, ProjectWorkLog } from '../types';
 import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG, ROLE_TO_PERSONA, PERSONA_TO_ROLE } from '../constants';
 import { dataService } from '../services/dataService';
@@ -115,7 +116,8 @@ export interface AppContextType {
    * 建完要立刻选中它，拿不到 id 就只能让人再去下拉里找一遍，
    * 而那正是这个功能要省掉的那一步。
    */
-  addCustomer: (customer: Omit<Customer, 'id'>) => Customer;
+  /** 重名时不新建，返回已有那家并带 duplicated: true —— 调用方必须告诉人 */
+  addCustomer: (customer: Omit<Customer, 'id'>) => Customer & { duplicated?: boolean };
   addCustomerFollowUp: (customerId: string, record: Omit<FollowUpRecord, 'id'>) => void;
 
   addContract: (
@@ -3334,7 +3336,25 @@ ${receivableLines}
     }
   };
 
-  const addCustomer = (customer: Omit<Customer, 'id'>): Customer => {
+  /*
+    查重收在这里，不放在页面上（2026-09-12）。
+
+    金恩来撞到的：弹窗里建「测试1」建不出第二个，
+    客户管理里建几个都行 —— 因为查重只写在弹窗那一处。
+    在客户管理页再补一遍规则，就是第三处、第四处，早晚再漏。
+
+    **addCustomer 是所有入口的唯一收口**（弹窗、客户管理、AI 助手
+    三条路都走它），规则放这儿，以后再加入口也不会漏掉。
+
+    行为：发现重名就**不建**，把已有那家还回去，并标记 duplicated，
+    让调用方去告诉人「用的是已有的这家」。
+    静默复用和静默新建一样糟 —— 他这次就是因为没有任何反馈，
+    以为功能坏了。
+  */
+  const addCustomer = (customer: Omit<Customer, 'id'>): Customer & { duplicated?: boolean } => {
+    const existing = findDuplicateByName(String(customer.name || ''), customers);
+    if (existing) return { ...existing, duplicated: true };
+
     const newCustomer: Customer = { ...customer, id: `C-${Date.now()}` };
     const previousCustomers = customers;
     setCustomers(prev => [newCustomer, ...prev]);

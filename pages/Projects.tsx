@@ -192,6 +192,8 @@ const Projects = () => {
   /** 「找不到？直接新建客户」展开没有 */
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState('');
+  /** 当场建客户之后说一句结果 —— 静默复用会被当成功能坏了 */
+  const [customerNotice, setCustomerNotice] = useState('');
   const defaultWorkLogDraft = () => ({
     logDate: new Date().toISOString().split('T')[0],
     serviceItemId: '',
@@ -717,13 +719,14 @@ const Projects = () => {
   const handleQuickCreateCustomer = () => {
     const name = newCustomerName.trim();
     if (!name) return;
-    const existing = customers.find(c => c.name === name);
-    if (existing) {
-      setFormData(prev => ({ ...prev, customerId: existing.id }));
-      setShowNewCustomer(false);
-      setNewCustomerName('');
-      return;
-    }
+    /*
+      查重规则不写在这里了 —— addCustomer 里那一份是唯一的一份。
+      这里原来自己写了 `c.name === name`，而客户管理页一份都没有，
+      于是同一个动作走两个门结果不一样（2026-09-12 金恩来撞到）。
+
+      这里只负责**把结果说出来**。原来重名时静默选中已有客户，
+      什么都不提示 —— 他因此以为「直接建新客户」这个按钮坏了。
+    */
     const created = addCustomer({
       name,
       contactPerson: '',
@@ -736,6 +739,9 @@ const Projects = () => {
     setFormData(prev => ({ ...prev, customerId: created.id }));
     setShowNewCustomer(false);
     setNewCustomerName('');
+    setCustomerNotice(created.duplicated
+      ? `客户档案里已经有「${created.name}」了，已经帮你选中它 —— 没有重复建一家。`
+      : `已新建客户「${created.name}」并选中。其他资料以后在客户管理里补。`);
   };
 
   /**
@@ -2001,7 +2007,20 @@ const Projects = () => {
                          </div>
                              </div>
                              <input className={`w-full bg-transparent font-bold text-sm mb-2 focus:outline-none ${task.status === 'Completed' ? 'text-gray-400 line-through' : 'text-gray-900'}`} value={task.title} onChange={e => updateProjectTask(project.id, task.id, { title: e.target.value })} />
-                             <div className="flex justify-between items-center">
+                             {/*
+                               2026-09-12 金恩来：「全屏显示下有BUG，排版和显示都有问题」
+
+                               实测 1400/1500/1600 三个常见笔记本宽度下，
+                               「核心」这个徽标被压成 21×44 —— 一个字一行，竖着叠，
+                               和旁边的下拉框糊在一起。2000 宽反而正常，
+                               所以我第一次按 2000 验，没验出来。
+
+                               原因是这一行里三样东西抢宽度：日期 + 两个 140px 的下拉框
+                               + 徽标，加起来超过卡片内宽，而徽标是唯一没设 shrink-0 的，
+                               于是全由它让位。现在：徽标不许缩、下拉框可以缩、
+                               真放不下就换行 —— 三条缺一不可。
+                             */}
+                             <div className="flex flex-wrap justify-between items-center gap-y-2">
                                 <div className="flex items-center text-[10px] font-mono text-gray-400">
                                    <Timer className={`w-3 h-3 mr-1 ${isOverdue ? 'text-red-500' : ''}`} />
                                    <input type="date" className="bg-transparent focus:outline-none" value={task.deadline} onChange={e => changeTaskDeadline(project, task, e.target.value)} />
@@ -2009,7 +2028,7 @@ const Projects = () => {
                                 <div className="flex items-center gap-2">
                                   {serviceItems.length > 0 && (
                                     <select
-                                      className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
+                                      className="min-w-0 flex-shrink bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
                                       value={task.serviceItemId || ''}
                                       onChange={e => updateProjectTask(project.id, task.id, { serviceItemId: e.target.value || undefined })}
                                     >
@@ -2031,7 +2050,7 @@ const Projects = () => {
                                   {(project.tasks || []).length > 1 && (
                                     <select
                                       title="选一个必须先做完的任务。前置没做完时会提醒，但不拦你"
-                                      className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
+                                      className="min-w-0 flex-shrink bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
                                       value={(task.dependsOn || [])[0] || ''}
                                       onChange={e => updateProjectTask(project.id, task.id, { dependsOn: e.target.value ? [e.target.value] : [] })}
                                     >
@@ -2044,7 +2063,7 @@ const Projects = () => {
                                     </select>
                                   )}
                                   <span
-                                    className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter ${
+                                    className={`shrink-0 whitespace-nowrap text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter ${
                                       task.category === 'Core'
                                         ? 'bg-blue-100 text-blue-700'
                                         : task.category === 'ThirdParty'
@@ -2100,7 +2119,20 @@ const Projects = () => {
                          </div>
                              </div>
                              <input className={`w-full bg-transparent font-bold text-sm mb-2 focus:outline-none ${task.status === 'Completed' ? 'text-gray-400 line-through' : 'text-gray-900'}`} value={task.title} onChange={e => updateProjectTask(project.id, task.id, { title: e.target.value })} />
-                             <div className="flex justify-between items-center">
+                             {/*
+                               2026-09-12 金恩来：「全屏显示下有BUG，排版和显示都有问题」
+
+                               实测 1400/1500/1600 三个常见笔记本宽度下，
+                               「核心」这个徽标被压成 21×44 —— 一个字一行，竖着叠，
+                               和旁边的下拉框糊在一起。2000 宽反而正常，
+                               所以我第一次按 2000 验，没验出来。
+
+                               原因是这一行里三样东西抢宽度：日期 + 两个 140px 的下拉框
+                               + 徽标，加起来超过卡片内宽，而徽标是唯一没设 shrink-0 的，
+                               于是全由它让位。现在：徽标不许缩、下拉框可以缩、
+                               真放不下就换行 —— 三条缺一不可。
+                             */}
+                             <div className="flex flex-wrap justify-between items-center gap-y-2">
                                 <div className="flex items-center text-[10px] font-mono text-gray-400">
                                    <Timer className={`w-3 h-3 mr-1 ${isOverdue ? 'text-red-500' : ''}`} />
                                    <input type="date" className="bg-transparent focus:outline-none" value={task.deadline} onChange={e => changeTaskDeadline(project, task, e.target.value)} />
@@ -2108,7 +2140,7 @@ const Projects = () => {
                                 <div className="flex items-center gap-2">
                                   {serviceItems.length > 0 && (
                                     <select
-                                      className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
+                                      className="min-w-0 flex-shrink bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
                                       value={task.serviceItemId || ''}
                                       onChange={e => updateProjectTask(project.id, task.id, { serviceItemId: e.target.value || undefined })}
                                     >
@@ -2130,7 +2162,7 @@ const Projects = () => {
                                   {(project.tasks || []).length > 1 && (
                                     <select
                                       title="选一个必须先做完的任务。前置没做完时会提醒，但不拦你"
-                                      className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
+                                      className="min-w-0 flex-shrink bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
                                       value={(task.dependsOn || [])[0] || ''}
                                       onChange={e => updateProjectTask(project.id, task.id, { dependsOn: e.target.value ? [e.target.value] : [] })}
                                     >
@@ -2143,7 +2175,7 @@ const Projects = () => {
                                     </select>
                                   )}
                                   <span
-                                    className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter ${
+                                    className={`shrink-0 whitespace-nowrap text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter ${
                                       task.category === 'Core'
                                         ? 'bg-blue-100 text-blue-700'
                                         : task.category === 'ThirdParty'
@@ -2204,7 +2236,7 @@ const Projects = () => {
                           <div className="flex items-center gap-2">
                             {serviceItems.length > 0 && (
                               <select
-                                className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
+                                className="min-w-0 flex-shrink bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black text-gray-600 outline-none max-w-[140px]"
                                 value={task.serviceItemId || ''}
                                 onChange={e => updateProjectTask(project.id, task.id, { serviceItemId: e.target.value || undefined })}
                               >
@@ -2215,7 +2247,7 @@ const Projects = () => {
                               </select>
                             )}
                             <span
-                              className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter ${
+                              className={`shrink-0 whitespace-nowrap text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter ${
                                 task.category === 'Core'
                                   ? 'bg-blue-100 text-blue-700'
                                   : task.category === 'ThirdParty'
@@ -2890,6 +2922,11 @@ const Projects = () => {
                                         >
                                           创建并选中
                                         </button>
+                                      </span>
+                                    )}
+                                    {customerNotice && (
+                                      <span className="mt-2 block rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[11px] font-bold leading-relaxed text-indigo-800">
+                                        {customerNotice}
                                       </span>
                                     )}
                                   </span>

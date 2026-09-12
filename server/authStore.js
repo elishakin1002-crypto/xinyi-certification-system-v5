@@ -1052,6 +1052,37 @@ const cleanupSessionsPostgres = async () => {
   await pool.query('DELETE FROM auth_sessions WHERE expires_at <= NOW();');
 };
 
+/*
+  每人最多留 MAX_SESSIONS_PER_USER 条会话，超出的按最近活跃从旧到新删。
+
+  2026-09-12 金恩来看见自己名下 11 行 Mac·Chrome 时问出来的：
+  登录成功就插一条，只清过期的，**没有上限**。
+  勾了「14 天免登录」的话一条能活 14 天 ——
+  一个人每天开机登一次，稳定压着十几条；13 个人用一年，表只涨不降。
+
+  他那句话是对的：「发现问题时能现在处理的，就不要留到以后」。
+  写进待办的东西，表格本身会被遗忘、弃用、改掉。
+
+  为什么是 20：够用且够小。真实场景是电脑 + 手机 + 偶尔换浏览器，
+  一个人同时活着的设备不会超过五六台；20 条给重复登录留了余量，
+  又不至于让「我的登录设备」再变成一屏。
+  超出时删最旧的那条 —— 它离现在最远，最不可能是人正在用的那台。
+*/
+const MAX_SESSIONS_PER_USER = Math.max(5, Number(process.env.XINYI_MAX_SESSIONS_PER_USER || 20));
+
+const trimSessionsPostgres = async (userId) => {
+  await pool.query(
+    `DELETE FROM auth_sessions
+      WHERE id IN (
+        SELECT id FROM auth_sessions
+         WHERE user_id = $1
+         ORDER BY COALESCE(last_seen_at, created_at) DESC
+         OFFSET $2
+      );`,
+    [String(userId), MAX_SESSIONS_PER_USER]
+  );
+};
+
 
 /**
  * 账号是否已过有效期。
@@ -1145,6 +1176,8 @@ const authenticateUser = async ({ account, password, ip = '', userAgent = '', re
       `,
       [sessionId, user.id, expiresAt, trimOrigin(ip, 64), trimOrigin(userAgent, 300), ttl]
     );
+    // 插完再修剪：保证刚建的这条一定留得住（它是最新的）
+    await trimSessionsPostgres(user.id);
     return { sessionId, user: toUserProfileFromRow(user), expiresAt };
   }
 

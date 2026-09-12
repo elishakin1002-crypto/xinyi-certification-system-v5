@@ -1,4 +1,5 @@
 import { SampleList } from '../components/SampleRow';
+import { findDuplicateByName } from '../src/modules/customerIdentity';
 import { SAMPLE_CUSTOMER } from '../src/modules/onboarding/sampleRecords';
 
 
@@ -662,6 +663,35 @@ const Customers = () => {
     };
 
     if (isCreating) {
+      /*
+        建之前先问一句（2026-09-12）。
+
+        这一页原来**一次查重都没做**，于是同一个「测试1」能建三家。
+        而建项目弹窗那边是查的 —— 同一个动作走两个门结果不一样。
+
+        判断本身已经收进 addCustomer，这里只做一件它做不了的事：
+        **在动手前把选择权交给人**。重名有合法情况
+        （集团下面真有两家名字极像的公司），所以是确认不是拦死；
+        但默认答案是「不建」，因为重复客户会把合同、项目、回款
+        劈成两半，事后合并极贵。
+      */
+      const dup = findDuplicateByName(String(dataToSave.name || ''), customers);
+      if (dup) {
+        const go = window.confirm(
+          `客户档案里已经有「${dup.name}」了。\n\n` +
+          `再建一家同名的，这家客户的合同、项目、回款会被劈成两半 —— ` +
+          `以后查「这家做过什么」两边都只看到一半，合并起来很麻烦。\n\n` +
+          `确定还要新建吗？（点「取消」= 去打开已有的那一家）`
+        );
+        if (!go) {
+          setIsCreating(false);
+          setIsEditing(false);
+          setSelectedCustomer(dup);
+          return;
+        }
+        // 人坚持要建：给它一个能区分的名字，否则列表上两行一模一样，谁也认不出谁
+        dataToSave.name = `${String(dataToSave.name || '').trim()}（${new Date().toLocaleDateString('zh-CN')}新建）`;
+      }
       addCustomer(dataToSave as Omit<Customer, 'id'>);
       setIsCreating(false);
       setIsEditing(false);

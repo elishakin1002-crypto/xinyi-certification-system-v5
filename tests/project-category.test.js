@@ -72,11 +72,25 @@ test('当场新建客户 —— 不用为了建项目先跑去客户管理', () 
   // 只要名字就够；逼人填完整档案，结果是他干脆不建项目
   const fn = src.slice(src.indexOf('const handleQuickCreateCustomer'), src.indexOf('const handleCreate'));
   assert.match(fn, /const name = newCustomerName\.trim\(\)/, '新建客户要的不止一个名字');
-  assert.match(fn, /customers\.find\(c => c\.name === name\)/, '同名客户会被重复创建');
 
-  // addCustomer 必须把新建的那条返回出来，否则选不中
-  assert.match(read('context/AppContext.tsx'), /addCustomer: \(customer: Omit<Customer, 'id'>\) => Customer;/,
-    'addCustomer 没有返回新建的客户');
+  /*
+    2026-09-12 改：查重搬走了，这条断言跟着改。
+
+    原来这里钉的是 `customers.find(c => c.name === name)` —— **钉的是位置，不是行为**。
+    结果它保护的其实是「查重只写在这一个页面里」这个缺陷本身：
+    客户管理页一直没查重，同一个动作走两个门结果不一样，
+    金恩来因此建出了 3 个「测试1」。
+
+    现在规则收进 addCustomer（三条入口唯一的收口），
+    这里只需确认弹窗**用得上**这个能力：知道是复用了还是新建了，并说出来。
+    规则本身由 tests/customer-dedup.test.js 守。
+  */
+  assert.match(fn, /created\.duplicated/, '弹窗没有区分「复用了已有客户」和「新建了一家」');
+
+  // addCustomer 必须把客户返回出来，否则选不中
+  assert.match(read('context/AppContext.tsx'),
+    /addCustomer: \(customer: Omit<Customer, 'id'>\) => Customer & \{ duplicated\?: boolean \};/,
+    'addCustomer 没有返回客户（以及它是不是复用的已有那家）');
 });
 
 test('不让人选类别，类别由两个答案推出来', () => {
