@@ -225,7 +225,45 @@ const main = async () => {
   const { Pool } = require(path.join(ROOT, 'node_modules/pg'));
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   await pool.query('delete from auth_users where username like $1', ['mx-%']);
+
+  /*
+    ── 顺便查一件事：这一轮有没有建出「空记录」（2026-09-12 加）──
+
+    金恩来：「创建项目页面的关联合同下面都是 0¥ 怎么回事？」
+    本机 52 份合同里 40 份标题为空、金额为 0 ——
+    「关联合同」下拉变成一排「（¥0）」，一条也认不出来。
+
+    来源就是这个脚本：它给每个非 GET 接口发 `{}`。
+    **发空 body 是对的**（要验的是 403 和非 403），
+    错的是 `POST /api/contracts` 空 body 也返回 201 ——
+    projects / customers / leads 三个早就 400 了，唯独合同漏了。
+
+    所以这里不改请求体，改成**跑完数一遍**：
+    空 body 建出了记录，就说明那个接口缺输入校验。
+    以后再新增建类接口忘了加校验，这一行会当场喊出来，
+    而不是等半年后有人看见一排「（¥0）」。
+  */
+  const emptyChecks = [
+    ['contracts', 'title', '合同'],
+    ['projects', 'name', '项目'],
+    ['customers', 'name', '客户'],
+    ['leads', 'name', '线索'],
+  ];
+  const leftovers = [];
+  for (const [table, col, label] of emptyChecks) {
+    try {
+      const { rows: [r] } = await pool.query(
+        `select count(*)::int c from ${table} where coalesce(${col},'') = ''`);
+      if (r.c > 0) leftovers.push(`${label} ${r.c} 条`);
+    } catch { /* 列名对不上就跳过，不让自检本身把主流程打断 */ }
+  }
   await pool.end();
+
+  if (leftovers.length) {
+    console.log(`\n⚠️  库里有没名字的空记录：${leftovers.join('、')}`);
+    console.log('   空 body 能建出记录 = 那个建接口缺输入校验（合同就这么漏过一次，');
+    console.log('   结果「关联合同」下拉里全是一排「（¥0）」）。');
+  }
 
   const pad = (s, n) => { const w = [...String(s)].reduce((a, c) => a + (c.charCodeAt(0) > 255 ? 2 : 1), 0); return String(s) + ' '.repeat(Math.max(0, n - w)); };
   console.log(`\n全角色 × 受保护接口 实跑鉴权矩阵  —  ${BASE}`);

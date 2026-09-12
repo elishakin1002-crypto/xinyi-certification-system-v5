@@ -5059,9 +5059,16 @@ app.get('/api/contracts/:id', async (req, res) => {
   }
 });
 
+/*
+  ⚠️ 这个处理器实际跑不到 —— `POST /api/contracts` 由 server/routes/batch3.js
+  接走（batch 路由先挂载）。2026-09-12 我把「合同名称不能为空」的校验
+  加在这里，测出来接口照样返回 201，才发现改的是死代码。
+  **改合同/客户/线索这类接口之前，先确认真正生效的是哪一处。**
+  （离这里二十行就有一条同类警告，我还是踩了。）
+*/
 app.post('/api/contracts', async (req, res) => {
   try {
-    const contract = buildContractForApiCreate(getContractPayload(req.body));
+    const contract = buildContractForApiCreate(payload);
     const contracts = await getContractsDataset();
     const nextContracts = [contract, ...contracts.filter((item) => String(item?.id || '') !== contract.id)];
     const result = await saveContractsDataset(nextContracts, {

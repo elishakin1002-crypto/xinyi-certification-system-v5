@@ -84,6 +84,28 @@ router.post('/api/contracts',
   requireAction('CONTRACT_CREATE', { resource: contractResource }),
   wrap(async (req, res) => {
   const raw = getContractPayload(req.body);
+  /*
+    ── 没名字的合同建不了（2026-09-12）──────────────────────────
+
+    金恩来：「创建项目页面的关联合同下面都是 0¥ 怎么回事？」
+    本机 52 份合同里 40 份标题为空、金额为 0，于是建项目时
+    「关联合同」下拉是一排「（¥0）」，一条都认不出来。
+
+    那批是我的越权巡检脚本发 `{}` 建出来的 —— 发空 body 是对的
+    （那个脚本要验的是 403 和非 403），**能建成功才是缺陷**：
+    projects / customers / leads 三个建接口早就返回 400 了，
+    唯独合同没加。同一件事做了三处漏一处，这个项目的老毛病。
+
+    另外记一笔给下一个人：我第一次把校验加在 `server/app.js` 的
+    `app.post('/api/contracts')` 上，**完全不生效** ——
+    真正跑的是这里（batch3 路由先挂载）。app.js 里离那段代码
+    二十行的地方正好写着这个坑的警告，我还是踩了。
+  */
+  if (!String(raw?.title || '').trim()) {
+    return sendFail(res, ERROR_CODES.PARAM_ERROR,
+      '合同名称不能为空 —— 建项目时「关联合同」下拉里会是一行空白（¥0），谁也认不出这是哪一份。',
+      {}, 400);
+  }
   const contract = await contractRepo.create({
     status: 'Active', archiveStatus: 'active', riskLevel: 'Low',
     signDate: today(), receivables: [], attachments: [], serviceItems: [],
