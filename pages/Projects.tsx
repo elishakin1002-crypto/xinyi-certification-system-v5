@@ -2691,7 +2691,38 @@ const Projects = () => {
         {/* Mobile Card View */}
         <div className="block md:hidden">
           <SampleList items={filteredProjects} sample={SAMPLE_PROJECT} render={project => (
-            <div key={project.id} className="p-4 border-b border-gray-100 hover:bg-gray-50 active:bg-gray-100 transition-colors" onClick={() => setExpandedProject(expandedProject === project.id ? null : project.id)}>
+            /*
+              ── 只有摘要那一块负责展开/折叠（2026-09-12）──────────────
+
+              金恩来：「在中等屏幕尺寸下……点击添加服务项目或者服务流水，
+              都会自动弹出到上一级界面」。
+
+              原因是**展开的详情原来就长在这个 onClick 容器里面**：
+              点详情里的任何东西，事件都冒泡到外层，把它自己折叠掉。
+              于是这一档宽度下，项目详情里**什么都点不了** ——
+              加服务项、记日志、改任务，点一下就退回列表。
+
+              桌面表格版没这个毛病，因为那边详情是独立的一行（兄弟节点）。
+              **同一个功能两套结构，只有一套是对的** —— 这个项目的老毛病。
+              现在手机版也改成兄弟节点，和桌面对齐。
+
+              没有用 stopPropagation 收场：那只是把冒泡按住，
+              详情里以后每加一个控件都得记得别漏。结构摆对，这类问题不会再有。
+            */
+            <div key={project.id} className="border-b border-gray-100">
+             <div
+               role="button"
+               tabIndex={0}
+               aria-expanded={expandedProject === project.id}
+               className="p-4 cursor-pointer hover:bg-gray-50 active:bg-gray-100 transition-colors"
+               onClick={() => setExpandedProject(expandedProject === project.id ? null : project.id)}
+               onKeyDown={e => {
+                 if (e.key === 'Enter' || e.key === ' ') {
+                   e.preventDefault();
+                   setExpandedProject(expandedProject === project.id ? null : project.id);
+                 }
+               }}
+             >
               <div className="flex justify-between items-start mb-2">
                 <div>
                   <h3 className="font-black text-gray-900 text-base">{project.name}</h3>
@@ -2714,8 +2745,10 @@ const Projects = () => {
                  })()}
                  {expandedProject === project.id ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
               </div>
+             </div>
+              {/* 详情是兄弟节点，不在上面那个可点击块里面 —— 点它不会折叠 */}
               {expandedProject === project.id && (
-                <div className="mt-4 pt-4 border-t border-gray-100 animate-in slide-in-from-top-2 duration-200">
+                <div className="px-4 pb-4 pt-4 border-t border-gray-100 animate-in slide-in-from-top-2 duration-200">
                   {renderProjectDetail(project)}
                 </div>
               )}
