@@ -90,9 +90,9 @@ test('查重必须在 addCustomer 里，不能只写在某个页面上', () => {
     共同的收口，规则放那儿才不会再漏。
   */
   const ctx = fs.readFileSync(path.join(root, 'context/AppContext.tsx'), 'utf8');
-  assert.match(ctx, /const addCustomer[\s\S]{0,400}?findDuplicateByName\(/,
+  assert.match(ctx, /const addCustomer[\s\S]{0,800}?judgeDuplicate\(/,
     'addCustomer 里没有查重 —— 规则又散回页面上了');
-  assert.match(ctx, /if \(existing\) return \{ \.\.\.existing, duplicated: true \}/,
+  assert.match(ctx, /verdict\.kind === 'same'[\s\S]{0,200}?duplicated: true/,
     '发现重名后没有「不建、返回已有那家」');
 });
 
@@ -118,5 +118,61 @@ test('重名时必须告诉人 —— 静默复用会被当成功能坏了', () 
   const proj = fs.readFileSync(path.join(root, 'pages/Projects.tsx'), 'utf8');
   assert.match(proj, /created\.duplicated/, '建项目弹窗没有区分「复用了已有客户」和「新建了」');
   const cust = fs.readFileSync(path.join(root, 'pages/Customers.tsx'), 'utf8');
-  assert.match(cust, /findDuplicateByName\(/, '客户管理页保存前没有查重提示');
+  assert.match(cust, /judgeDuplicate\(/, '客户管理页保存前没有查重');
+});
+
+test('身份优先按统一社会信用代码判 —— 改了名也认得出是同一家', () => {
+  /*
+    2026-09-12 金恩来：「客户的名字规范应该怎么统一？同样名字的客户可以出现吗？」
+
+    答案：身份是**法人主体**，不是那串字。公司会改名、会被简写、
+    会打错字，而统一社会信用代码不会。
+  */
+  const { judgeDuplicate } = require(out);
+  const list = [{ id: 'C1', name: '温州天越包装有限公司', unifiedSocialCreditCode: '91330300MA2ABCDE1X' }];
+
+  // 改过名，代码没变 —— 还是同一家
+  const v = judgeDuplicate({ name: '浙江天越新材料有限公司', unifiedSocialCreditCode: '91330300MA2ABCDE1X' }, list);
+  assert.equal(v.kind, 'same');
+  assert.equal(v.by, 'uscc', '代码相同时应该按代码判，不是按名字');
+});
+
+test('重名但代码不同 —— 真的是两家，要放行', () => {
+  /*
+    「温州XX包装厂」（个体户）和「温州XX包装有限公司」简写后可能撞车。
+    这种情况系统分得清，就不该拦 —— 依据是工商代码，不是让人拍脑袋。
+
+    这条是「默认拦死」的唯一例外，必须守住：
+    拦过头会让真实存在的两家公司录不进来。
+  */
+  const { judgeDuplicate } = require(out);
+  const list = [{ id: 'C1', name: '温州鸿达包装', unifiedSocialCreditCode: '91330300AAAAAAAA1X' }];
+  const v = judgeDuplicate({ name: '温州鸿达包装', unifiedSocialCreditCode: '91330300BBBBBBBB2Y' }, list);
+  assert.equal(v.kind, 'namesake', '两家代码不同的公司重名，应该放行');
+});
+
+test('只有一边填了代码，仍然按名字算同一家', () => {
+  /*
+    现实：生产库 11 家客户里只有 3 家填了代码。
+    只要有一边没填，就没有「分得清」这个前提，只能按名字保守处理 ——
+    **保守 = 认成同一家**，因为合并两条比劈成两半容易。
+  */
+  const { judgeDuplicate } = require(out);
+  const list = [{ id: 'C1', name: '温州天越包装有限公司' }];
+  assert.equal(judgeDuplicate({ name: '温州天越包装有限公司', unifiedSocialCreditCode: '91330300MA2ABCDE1X' }, list).kind, 'same');
+});
+
+test('客户管理页重名要拦死，不许再弹「确定还要新建吗」', () => {
+  /*
+    2026-09-12 第二次改。第一版我弹了个 confirm 让人自己决定，他当场问回来：
+    「这些不是来想的就可以了吗？怎么还要我来想？」
+
+    他说得对：一个人在录客户的那三秒钟里，没有信息也没有义务判断
+    「这两条该不该合并」—— 那是数据模型的问题，该在这边定死。
+  */
+  const raw = fs.readFileSync(path.join(root, 'pages/Customers.tsx'), 'utf8');
+  // 注释里要留着这段历史（为什么不再这么做），所以只看会跑到的代码
+  const cust = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/确定还要新建吗/.test(cust), '又把「建不建重复客户」这个决定丢回给用户了');
+  assert.match(cust, /verdict\.kind === 'same'/, '没有按判定结果拦下重复创建');
 });

@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { detectStandards, buildPdcaTitle } from '../src/modules/knowledge/standards';
-import { findDuplicateByName } from '../src/modules/customerIdentity';
+import { judgeDuplicate } from '../src/modules/customerIdentity';
 import { Lead, Customer, Contract, ContractAttachment, Project, Settlement, Reminder, AuditIssue, Status, KnowledgeDoc, Vendor, ProjectTask, ServiceItem, RoleID, DashboardPersona, TaskTemplate, UserProfile, PermissionCode, FollowUpRecord, AuditNode, StrategicTask, Receivable, CertificateDetail, ProjectCategory, AIDecisionLog, AIAction, ActionCode, AIAllowedAction, AggregatedReminder, ReminderSeverity, ImportRecord, MarketSignal, ProjectWorkLog } from '../types';
 import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG, ROLE_TO_PERSONA, PERSONA_TO_ROLE } from '../constants';
 import { dataService } from '../services/dataService';
@@ -3352,8 +3352,11 @@ ${receivableLines}
     以为功能坏了。
   */
   const addCustomer = (customer: Omit<Customer, 'id'>): Customer & { duplicated?: boolean } => {
-    const existing = findDuplicateByName(String(customer.name || ''), customers);
-    if (existing) return { ...existing, duplicated: true };
+    const verdict = judgeDuplicate(customer as any, customers as any);
+    if (verdict.kind === 'same') {
+      const existing = customers.find(c => c.id === verdict.existing.id);
+      if (existing) return { ...existing, duplicated: true };
+    }
 
     const newCustomer: Customer = { ...customer, id: `C-${Date.now()}` };
     const previousCustomers = customers;

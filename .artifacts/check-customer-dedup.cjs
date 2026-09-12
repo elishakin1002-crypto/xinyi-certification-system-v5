@@ -37,12 +37,12 @@ const check = (ok, label, extra = '') => { if (!ok) bad++; console.log(`${ok ? '
   await p.waitForTimeout(800);
   // 客户名那一栏用 placeholder 认，别用 .first() 猜 —— 猜错就填到别的框里，
   // 然后弹「请输入客户名称」，看起来像产品问题，其实是探针问题
-  await p.getByPlaceholder('请输入客户名称').fill('测试1');
+  await p.getByPlaceholder(/营业执照全称/).fill('测试1');   // placeholder 改成了命名规范
   const save = p.getByRole('button', { name: /保存|确定|创建/ }).first();
   await save.click().catch(() => {});
   await p.waitForTimeout(1200);
 
-  check(/已经有「测试1」/.test(lastDialog), '客户管理建重名时会拦一下并说清后果',
+  check(/已经在客户档案里了/.test(lastDialog), '客户管理建重名时直接拦下并打开已有那一家',
     lastDialog.replace(/\s+/g, ' ').slice(0, 70));
 
   const after = await countNamed('测试1');

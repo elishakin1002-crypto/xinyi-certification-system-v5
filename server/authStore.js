@@ -1070,6 +1070,40 @@ const cleanupSessionsPostgres = async () => {
 */
 const MAX_SESSIONS_PER_USER = Math.max(5, Number(process.env.XINYI_MAX_SESSIONS_PER_USER || 20));
 
+/*
+  ── 同一台设备重新登录，替换掉它自己那条旧会话（2026-09-12 第二次改）──
+
+  **按条数封顶这个设计本身是错的，我昨天就把金恩来踢下线了。**
+
+  经过：我为了验证上限，用脚本以黄佳佳的身份登了 34 次。
+  上限逻辑按「最近活跃」保留最新的 20 条 ——
+  他浏览器里那条真实会话活跃时间靠后，被当成"最旧的"删掉了。
+  他再点保存就是「Session expired or invalid」，
+  而界面上的表现是「任务加不了也删不了」，看着像功能坏了。
+
+  **只封顶不解决根因**：一个人在一台机器上反复登录，
+  就能把自己在别的设备上的登录挤掉 —— 这个行为任何系统都不该有。
+
+  根因是「一次登录 = 一条新记录」。同一台设备重复登录本来就该是
+  **续上那条**，而不是再堆一条。改掉之后：
+    · 十几条同名会话从源头就不会产生（他最早问的就是这个）
+    · 一台设备再怎么反复登，也挤不掉别的设备
+    · 条数上限退化成纯保险丝，正常使用永远碰不到
+
+  边界：同机同浏览器开无痕窗口再登，UA+IP 一样，会顶掉正常窗口那条。
+  内部 13 个人的系统里这种用法基本不存在，
+  而「一台设备一条会话」换来的是设备列表真的可读 —— 这笔划算。
+*/
+const dropSameDeviceSessionsPostgres = async (userId, ip, userAgent) => {
+  await pool.query(
+    `DELETE FROM auth_sessions
+      WHERE user_id = $1
+        AND COALESCE(ip, '') = COALESCE($2, '')
+        AND COALESCE(user_agent, '') = COALESCE($3, '');`,
+    [String(userId), trimOrigin(ip, 64), trimOrigin(userAgent, 300)]
+  );
+};
+
 const trimSessionsPostgres = async (userId) => {
   await pool.query(
     `DELETE FROM auth_sessions
@@ -1166,6 +1200,8 @@ const authenticateUser = async ({ account, password, ip = '', userAgent = '', re
 
     await clearPostgresLoginFailures(user.id);
     await cleanupSessionsPostgres();
+    // 同一台设备重新登录 = 换掉它自己那条，不是再堆一条
+    await dropSameDeviceSessionsPostgres(user.id, ip, userAgent);
     const sessionId = crypto.randomBytes(32).toString('hex');
     const ttl = ttlFor(remember);
     const expiresAt = new Date(Date.now() + ttl).toISOString();

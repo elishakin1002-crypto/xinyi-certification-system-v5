@@ -7,7 +7,7 @@ import { TaskSkipButton } from '../components/TaskSkipButton';
 import { TaskStatusControl } from '../components/TaskStatusControl';
 import { canBePrerequisite, knockOnDelays } from '../src/modules/taskFlow';
 import { ProjectCompleteChecklist } from '../components/ProjectCompleteChecklist';
-import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog, TaskSkipReason, TASK_SKIP_REASON_LABEL } from '../types';
+import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog, TaskSkipReason, TASK_SKIP_REASON_LABEL, ServiceItem} from '../types';
 import { SERVICE_CATALOG, SERVICE_CATEGORIES, SERVICE_CATEGORY_DELIVERY_MODE, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY } from '../constants';
 import { 
   Briefcase, Search, Plus, Clock, AlertTriangle, 
@@ -29,7 +29,7 @@ import {
 } from '../src/modules/projectCategory';
 import { buildSuggestion, buildSuggestionRecord } from '../src/modules/ownerSuggestion';
 import { PROJECT_TYPE_META } from '../types';
-import { SERVICE_GROUPS } from '../src/modules/serviceLine';
+import { SERVICE_GROUPS, GROUP_TO_CATALOG_CATEGORY, type ServiceGroup } from '../src/modules/serviceLine';
 
 const normalizeServiceToken = (value: string) => (value || '')
   .toUpperCase()
@@ -839,10 +839,40 @@ const Projects = () => {
     if (creating) return;
     setCreating(true);
     setCreatedNotice('');
+    /*
+      ── 选了服务类型，就把它落成服务项（2026-09-12）──────────────
+
+      金恩来：「我创建的『测试2』只写了个名字，但任务列表里
+      直接就生成了 5 张类似体系相关的任务卡片」。
+
+      那 5 张来自通用交付模板，是照体系认证写的，却套在每个客户项目上。
+      而我上一轮加的「服务类型」下拉**存的时候被丢掉了** ——
+      它只喂了派活建议，没进项目。（这个项目里第三次栽在
+      「白名单漏字段」上：accountExpiresAt、vendorName，现在是 serviceGroup。）
+
+      接回去之后：选了服务类型 → 落成一条服务项 → 走那个大类自己的
+      流程模板；没选 → 什么都不生成（见 disableDefaultTemplateTasks），
+      因为**猜错的五张任务比零张更费事**：还得一张张删。
+    */
+    const chosenGroup = String((formData as any).serviceGroup || '').trim();
+    const seedService = chosenGroup && chosenGroup !== '未分类'
+      ? [{
+          name: chosenGroup,
+          category: (GROUP_TO_CATALOG_CATEGORY[chosenGroup as ServiceGroup] || '其他') as ServiceItem['category'],
+          owner: manager,
+          status: 'Pending' as ServiceItem['status'],
+          autoGenerateTasks: true,
+        }]
+      : [];
+
     const saved = await addProject({
       ...formData,
       manager,
       customerId,
+      ...(seedService.length
+        ? { initialServiceItems: seedService }
+        // 不知道是什么服务就别瞎生成 —— 空列表里有「模板管理」可以一键套
+        : { disableDefaultTemplateTasks: true }),
       projectCategory: deriveCategory({ customerId: hasCustomer ? (customerId || 'pending') : '', billable }),
       billable,
       // 不涉及客户的活没有合同这一说

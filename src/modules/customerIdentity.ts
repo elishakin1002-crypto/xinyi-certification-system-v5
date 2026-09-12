@@ -40,7 +40,83 @@ export const normalizeCompanyName = (raw?: string): string =>
     .replace(/[（）]/g, (c) => (c === '（' ? '(' : ')'))
     .toLowerCase();
 
-export interface NamedRecord { id: string; name?: string }
+/**
+ * 一家客户的「身份」是什么 —— 这是这个文件真正要回答的问题。
+ *
+ * 金恩来 2026-09-12：「客户的名字规范应该怎么统一？都用公司名字吗？
+ * 或者什么厂？同样名字的客户可以出现吗？」
+ *
+ * ── 结论：身份是**法人主体**，不是那串字 ──────────────────────
+ *
+ * 一家公司在工商局只有一个身份：**统一社会信用代码**（18 位）。
+ * 名字是贴在它身上的标签 —— 会简写、会打错、会改名，
+ * 而代码不会。所以：
+ *
+ *   · 填了代码 → 按代码判重（最可靠，改名也认得出是同一家）
+ *   · 没填代码 → 按工商全称判重（够用，也是现在的现实）
+ *
+ * ── 为什么不能允许重名 ────────────────────────────────────────
+ *
+ * 合同、项目、不符合项三张表都按 customer_id 挂在客户身上。
+ * 同一家公司两条记录 = 两个 id = **这家的历史被劈成两半**：
+ * 打开 A 看到三个项目，打开 B 看到两个，两边都不是全貌。
+ * 而「这家做过什么、还能复用什么」正是这个系统的核心用途。
+ *
+ * 所以默认**不许建**，而不是弹个框让人自己决定 ——
+ * 把数据模型层面的问题丢给正在录数据的人当场判断，是设计没做完。
+ *
+ * ── 唯一的例外 ────────────────────────────────────────────────
+ *
+ * 两家**代码不同**的公司确实可能重名（「温州XX包装厂」个体户
+ * 和「温州XX包装有限公司」简写后撞车）。这种情况下系统分得清，
+ * 所以放行 —— 判断依据是代码，不是让人拍脑袋。
+ */
+export interface NamedRecord {
+  id: string;
+  name?: string;
+  unifiedSocialCreditCode?: string;
+}
+
+/** 统一社会信用代码归一：去空格、转大写。18 位，含字母。 */
+export const normalizeUscc = (raw?: string): string =>
+  String(raw || '').replace(/\s+/g, '').toUpperCase();
+
+export type DuplicateVerdict =
+  | { kind: 'none' }
+  /** 同一家：代码相同，或（都没代码时）名字相同 */
+  | { kind: 'same'; existing: NamedRecord; by: 'uscc' | 'name' }
+  /** 重名但代码不同 —— 确实是两家，放行 */
+  | { kind: 'namesake'; existing: NamedRecord };
+
+/**
+ * 判一条待建/待改的客户和库里已有的关系。
+ * @param excludeId 改现有客户时排除它自己
+ */
+export const judgeDuplicate = (
+  candidate: { name?: string; unifiedSocialCreditCode?: string },
+  list: NamedRecord[],
+  excludeId?: string
+): DuplicateVerdict => {
+  const others = list.filter((c) => String(c.id) !== String(excludeId || ''));
+  const code = normalizeUscc(candidate.unifiedSocialCreditCode);
+  const key = normalizeCompanyName(candidate.name);
+
+  // ① 代码相同 —— 铁证，哪怕名字完全不一样（改过名）也是同一家
+  if (code) {
+    const byCode = others.find((c) => normalizeUscc(c.unifiedSocialCreditCode) === code);
+    if (byCode) return { kind: 'same', existing: byCode, by: 'uscc' };
+  }
+  if (!key) return { kind: 'none' };
+
+  const byName = others.find((c) => normalizeCompanyName(c.name) === key);
+  if (!byName) return { kind: 'none' };
+
+  // ② 名字相同，但两边代码都填了且不一样 —— 真是两家，放行
+  const otherCode = normalizeUscc(byName.unifiedSocialCreditCode);
+  if (code && otherCode && code !== otherCode) return { kind: 'namesake', existing: byName };
+
+  return { kind: 'same', existing: byName, by: 'name' };
+};
 
 /**
  * 在已有客户里找同名的那一家。
@@ -57,3 +133,13 @@ export const findDuplicateByName = <T extends NamedRecord>(
     (c) => String(c.id) !== String(excludeId || '') && normalizeCompanyName(c.name) === key
   ) || null;
 };
+
+/**
+ * 客户名该怎么写 —— 界面上直接告诉人，而不是指望大家默契一致。
+ *
+ * 规范就一条：**照营业执照的全称写**。
+ * 「温州天越包装」「天越厂」「天越」都指同一家，但系统认不出来，
+ * 而营业执照上的名字全公司只有一个版本。
+ */
+export const CUSTOMER_NAME_RULE = '照营业执照全称写，别用简称或厂名';
+export const CUSTOMER_NAME_PLACEHOLDER = '营业执照全称，例如：温州天越包装有限公司';

@@ -1,5 +1,5 @@
 import { SampleList } from '../components/SampleRow';
-import { findDuplicateByName } from '../src/modules/customerIdentity';
+import { judgeDuplicate, CUSTOMER_NAME_PLACEHOLDER, CUSTOMER_NAME_RULE } from '../src/modules/customerIdentity';
 import { SAMPLE_CUSTOMER } from '../src/modules/onboarding/sampleRecords';
 
 
@@ -675,22 +675,37 @@ const Customers = () => {
         但默认答案是「不建」，因为重复客户会把合同、项目、回款
         劈成两半，事后合并极贵。
       */
-      const dup = findDuplicateByName(String(dataToSave.name || ''), customers);
-      if (dup) {
-        const go = window.confirm(
-          `客户档案里已经有「${dup.name}」了。\n\n` +
-          `再建一家同名的，这家客户的合同、项目、回款会被劈成两半 —— ` +
-          `以后查「这家做过什么」两边都只看到一半，合并起来很麻烦。\n\n` +
-          `确定还要新建吗？（点「取消」= 去打开已有的那一家）`
+      /*
+        ── 重名直接拦死，不弹框让人选（2026-09-12 第二次改）──────────
+
+        第一版我弹了个 confirm：「确定还要新建吗？」
+        金恩来当场问回来：「现在客户管理的逻辑是，允许建重名的客户是吗？
+        ……一个客户一个档案不是就够了吗？这些不是来想的就可以了吗？
+        怎么还要我来想？」
+
+        他说得对。**那个框是我把没做完的设计丢给正在录数据的人。**
+        一个人在录客户的那三秒钟里，没有信息也没有义务去判断
+        「这两条该不该合并」—— 那是数据模型的问题，该我决定。
+
+        决定：同一家就是不许建两条。系统分得清是两家时（代码不同）
+        才放行，依据是工商代码，不是谁拍脑袋。
+      */
+      const verdict = judgeDuplicate(dataToSave as any, customers as any);
+      if (verdict.kind === 'same') {
+        const why = verdict.by === 'uscc'
+          ? `统一社会信用代码和「${verdict.existing.name}」是同一个`
+          : `名字和「${verdict.existing.name}」一样`;
+        alert(
+          `这家已经在客户档案里了（${why}），已经帮你打开它。\n\n` +
+          `一家公司只留一个档案 —— 合同、项目、不符合项都挂在它身上，` +
+          `分成两条的话「这家做过什么」就再也查不全了。\n\n` +
+          `要补资料就在这一条上改；确实是两家不同的公司（名字撞车），` +
+          `把两边的统一社会信用代码都填上，系统就分得清了。`
         );
-        if (!go) {
-          setIsCreating(false);
-          setIsEditing(false);
-          setSelectedCustomer(dup);
-          return;
-        }
-        // 人坚持要建：给它一个能区分的名字，否则列表上两行一模一样，谁也认不出谁
-        dataToSave.name = `${String(dataToSave.name || '').trim()}（${new Date().toLocaleDateString('zh-CN')}新建）`;
+        setIsCreating(false);
+        setIsEditing(false);
+        setSelectedCustomer(customers.find(c => c.id === verdict.existing.id) || null);
+        return;
       }
       addCustomer(dataToSave as Omit<Customer, 'id'>);
       setIsCreating(false);
@@ -1135,7 +1150,7 @@ const Customers = () => {
                     <div className="flex items-center space-x-4 mb-4 md:mb-0 w-full md:w-auto">
                         <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center shrink-0 border border-indigo-100"> <Building className="w-7 h-7 text-indigo-600" /> </div>
                         <div className="min-w-0 flex-1">
-                            {isEditing ? ( <input className="text-2xl font-black text-gray-900 border-b border-gray-300 focus:border-indigo-500 outline-none w-full md:w-96 mb-1" value={editingData.name} onChange={e => setEditingData({...editingData, name: e.target.value})} placeholder="请输入客户名称" /> ) : ( <h2 className="text-2xl font-black text-gray-900 truncate tracking-tight">{selectedCustomer.name}</h2> )}
+                            {isEditing ? ( <input className="text-2xl font-black text-gray-900 border-b border-gray-300 focus:border-indigo-500 outline-none w-full md:w-96 mb-1" value={editingData.name} onChange={e => setEditingData({...editingData, name: e.target.value})} placeholder={CUSTOMER_NAME_PLACEHOLDER} title={CUSTOMER_NAME_RULE} /> ) : ( <h2 className="text-2xl font-black text-gray-900 truncate tracking-tight">{selectedCustomer.name}</h2> )}
                         </div>
                     </div>
                     <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto justify-end flex-wrap md:flex-nowrap">
