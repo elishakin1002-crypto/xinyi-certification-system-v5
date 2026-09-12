@@ -131,6 +131,19 @@ const kindOf = (el: HTMLElement): ControlKind => {
  *    真正的弹窗有一个共同特征：**它铺满视口**（那层半透明遮罩）。
  *    所以按「几乎盖住整屏」来认，再按 z-index 取最上面那个。
  *    侧边栏 256 宽、AI 面板 432 宽，都自然被排除。
+ *
+ * 4）**下拉菜单的「点空白处关闭」层，长得和弹窗遮罩一模一样。**
+ *    2026-09-11 金恩来：「点击头像时，右下角的问号怎么还在那里？」
+ *
+ *    头像菜单、铃铛面板、手机侧边栏都各铺一层 `fixed inset-0` 来接
+ *    「点外面关掉我」这个手势 —— 铺满整屏、fixed、可见，
+ *    上面三条规则一条都筛不掉它。于是点一下头像，
+ *    右下角就冒出「这个弹窗要我填什么？」，而根本没有东西要填。
+ *
+ *    **靠长相区分已经到头了**：这一层和弹窗遮罩在 DOM 上没有任何
+ *    可靠差别。所以改成让它自己声明身份 —— `data-dismiss-layer`。
+ *    以后再加下拉菜单，照着标一下即可；漏标会被
+ *    tests/help-modal-detection.test.js 挡住。
  */
 const visibleModals = (): HTMLElement[] => {
   if (typeof document === 'undefined') return [];
@@ -143,6 +156,8 @@ const visibleModals = (): HTMLElement[] => {
   return Array.from(document.querySelectorAll<HTMLElement>('.fixed.inset-0'))
     .filter(el => {
       if (el.closest('[data-help-ui]')) return false;
+      // 下拉菜单的「点空白处关闭」层：长得像遮罩，但没有任何东西要填
+      if (el.closest('[data-dismiss-layer]')) return false;
       // 手机 AI 面板隐藏时仍占满屏幕；尺寸存在不代表用户看得见。
       // 连同祖先一起检查，避免把 opacity:0 的抽屉当成当前业务弹窗。
       for (let node: HTMLElement | null = el; node; node = node.parentElement) {

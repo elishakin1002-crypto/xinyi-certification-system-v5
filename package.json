@@ -74,7 +74,8 @@
     "checkup:authz": "node scripts/authz-matrix-live.mjs",
     "walkthrough:snapshot": "node scripts/walkthrough-env.mjs snapshot",
     "walkthrough:reset": "node scripts/walkthrough-env.mjs reset",
-    "walkthrough:status": "node scripts/walkthrough-env.mjs status"
+    "walkthrough:status": "node scripts/walkthrough-env.mjs status",
+    "walkthrough:accounts": "node scripts/walkthrough-accounts.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

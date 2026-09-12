@@ -394,8 +394,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const renderBellPanel = () => (
     <>
-      {/* 点空白处关闭。没有这层，面板只能靠再点一次铃铛关掉 */}
-      <div className="fixed inset-0 z-40" onClick={() => setIsBellOpen(false)} />
+      {/*
+        点空白处关闭。没有这层，面板只能靠再点一次铃铛关掉。
+
+        `data-dismiss-layer` 是给别人看的标记，不是样式：
+        它铺满整屏、又是 fixed，长得和弹窗遮罩一模一样，
+        于是帮助那边把它当成「打开了一个弹窗」，在右下角弹出
+        「这个弹窗要我填什么？」—— 点个铃铛而已，没有任何东西要填。
+        见 HelpHub 的 visibleModals()。
+      */}
+      <div data-dismiss-layer="1" className="fixed inset-0 z-40" onClick={() => setIsBellOpen(false)} />
       <div className="absolute top-full right-0 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-2xl border border-gray-100 z-50 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-50">
           <div>
@@ -519,8 +527,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
             {isAccountMenuOpen && (
               <>
-                {/* 点击空白处关闭。没有这层遮罩，菜单只能靠再点一次按钮关掉 */}
-                <div className="fixed inset-0 z-40" onClick={() => setIsAccountMenuOpen(false)} />
+                {/* 点击空白处关闭。data-dismiss-layer 的原因见上面铃铛那一处 */}
+                <div data-dismiss-layer="1" className="fixed inset-0 z-40" onClick={() => setIsAccountMenuOpen(false)} />
                 <div className="absolute top-full right-0 mt-2 w-60 bg-white rounded-xl shadow-2xl border border-gray-100 p-1 z-50" role="menu">
                   <div className="px-3 py-2.5 border-b border-gray-50">
                     <p className="text-sm font-bold text-gray-900">{currentUserDisplayName}</p>
@@ -621,7 +629,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     <div className="flex h-screen overflow-hidden bg-gray-50 flex-col md:flex-row">
       {/* Mobile Sidebar & Header logic remains preserved... */}
       <div className={`fixed inset-0 z-40 transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:inset-auto md:block ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-         <div className={`fixed inset-0 bg-black/50 transition-opacity md:hidden ${isSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setIsSidebarOpen(false)} />
+         {/* 侧边栏的遮罩同理：菜单不是「要填的弹窗」，见上面铃铛那一处 */}
+         <div data-dismiss-layer="1" className={`fixed inset-0 bg-black/50 transition-opacity md:hidden ${isSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setIsSidebarOpen(false)} />
          <Sidebar className="relative z-50 h-full shadow-xl md:shadow-none" onClose={() => setIsSidebarOpen(false)} />
       </div>
 

@@ -63,10 +63,48 @@ if (!/localhost|127\.0\.0\.1/.test(url)) {
 const dockerPgDump = () => execFileSync('docker', ['exec', DOCKER_DB, 'pg_dump', '-d', url, '-Fc'],
   { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1024 * 1024 * 1024 });
 
+/*
+  ── 账号表不参与还原（2026-09-11 踩的坑）────────────────────────
+
+  症状：跑完 reset 之后，走查账号**一个都登不进去**，
+  连试几次直接变成「密码连续输错多次，账号已暂时锁定」。
+
+  真因：基线是 06:38 拍的，而走查账号的密码是那之后才设的。
+  pg_restore --clean 把 auth_users 整张表倒回旧样子，
+  密码自然跟着回到旧值 —— 于是拿着密码本也登不进去，
+  再试五次就把自己锁了。
+
+  **这是最糟的一种失败**：reset 的全部意义就是「放心乱点，一键还原」，
+  结果它把人锁在门外，而错误信息说的是「密码输错」，
+  人只会怀疑自己记错了密码，根本想不到是刚才那条还原命令干的。
+
+  所以还原**只倒业务数据，不碰账号**。谁能登录、密码是什么、
+  有没有被锁 —— 这些不是「走查造出来的脏数据」，
+  它们是走查的**前提条件**。
+*/
+const AUTH_TABLES = ['auth_users', 'auth_sessions', 'auth_audit_logs'];
+
 const dockerPgRestore = (file) => {
   const buf = fs.readFileSync(file);
-  execFileSync('docker', ['exec', '-i', DOCKER_DB, 'pg_restore', '-d', url, '--clean', '--if-exists', '--no-owner'],
+  const exclude = AUTH_TABLES.flatMap((t) => ['--exclude-table-data', t, '-T', t]);
+  execFileSync('docker', ['exec', '-i', DOCKER_DB, 'pg_restore', '-d', url,
+    '--clean', '--if-exists', '--no-owner', ...exclude],
     { input: buf, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 1024 * 1024 * 1024 });
+};
+
+/*
+  还原本身不该把人锁在门外，所以顺手把锁定计数清零。
+  走查期间连错几次是常态（五个账号轮着登），
+  而「等 15 分钟」在走查中间等于把人赶走。
+*/
+const clearLockouts = async () => {
+  const pool = new Pool({ connectionString: url });
+  try {
+    const { rowCount } = await pool.query(
+      `update auth_users set failed_login_count = 0, locked_until = null
+       where failed_login_count > 0 or locked_until is not null`);
+    return rowCount;
+  } catch { return 0; } finally { await pool.end(); }
 };
 
 const counts = async () => {
@@ -102,6 +140,7 @@ const reset = async () => {
   }
   const before = await counts();
   dockerPgRestore(BASELINE);
+  const unlocked = await clearLockouts();
   const after = await counts();
   const meta = JSON.parse(fs.readFileSync(META, 'utf8'));
   console.log(`\n✅ 已还原到基线（${meta.at.slice(0, 16).replace('T', ' ')}）\n`);
@@ -109,6 +148,7 @@ const reset = async () => {
     const d = (before[k] ?? 0) - (after[k] ?? 0);
     console.log(`   ${k.padEnd(6)} ${String(before[k]).padStart(5)} → ${String(after[k]).padStart(5)}  ${d > 0 ? `（清掉 ${d} 条走查数据）` : ''}`);
   }
+  console.log(`\n   账号密码不受影响（账号表不参与还原）${unlocked ? `，顺便解开了 ${unlocked} 个被锁的账号` : ''}`);
   console.log('\n⚠️ 页面上可能还留着旧数据 —— 刷新一下浏览器。\n');
 };
 
