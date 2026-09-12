@@ -35,6 +35,59 @@ const deviceLabel = (ua: string) => {
   return { mobile, text: br ? `${os} · ${br}` : os };
 };
 
+/**
+ * 把「一次登录」合并成「一台设备」。
+ *
+ * ── 为什么要合并（2026-09-12）────────────────────────────────
+ *
+ * 金恩来：「为什么出现那么多台 Mac Chrome？」
+ *
+ * 因为登录成功就往 auth_sessions 插一条，**没有任何按设备去重**。
+ * 同一台电脑登十次 = 十行，而且十行长得一模一样（UA 相同）。
+ *
+ * 这不只是难看，它**把这一页的用处废掉了**：
+ * 这一页存在的唯一理由是「看到不是自己的设备就下线」，
+ * 而十行同名的东西里根本挑不出那个陌生的。
+ * 越常用系统的人，列表越长、越没法用 —— 正好反了。
+ *
+ * 所以按「设备」归并：同一个 UA + 同一个 IP 视为同一台。
+ * 显示最近一次活跃，下线时把这台上的**每一次登录**都踢掉 ——
+ * 只踢一条等于没踢，剩下的会话照样能用。
+ */
+export interface DeviceGroup {
+  key: string;
+  sessions: LoginSession[];
+  latest: LoginSession;
+  /** 这台设备上还活着几次登录 */
+  count: number;
+  isCurrent: boolean;
+  remembered: boolean;
+}
+
+export const groupByDevice = (list: LoginSession[]): DeviceGroup[] => {
+  const map = new Map<string, LoginSession[]>();
+  for (const s of list) {
+    // 带上 userId：看全公司那一档里，两个人用同型号电脑不能并成一台
+    const key = `${s.userId || ''}|${s.userAgent || ''}|${s.ip || ''}`;
+    map.set(key, [...(map.get(key) || []), s]);
+  }
+  const at = (s: LoginSession) => Date.parse(s.lastSeenAt || s.createdAt || '') || 0;
+  return Array.from(map.entries())
+    .map(([key, sessions]) => {
+      const sorted = [...sessions].sort((a, b) => at(b) - at(a));
+      return {
+        key,
+        sessions: sorted,
+        latest: sorted[0],
+        count: sorted.length,
+        // 只要这台上有一条是当前会话，这台就是「当前这台」
+        isCurrent: sorted.some(s => s.isCurrent),
+        remembered: sorted.some(s => s.remembered),
+      };
+    })
+    .sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0) || at(b.latest) - at(a.latest));
+};
+
 const when = (iso: string) => {
   const t = Date.parse(iso || '');
   if (!Number.isFinite(t)) return '—';
@@ -72,23 +125,33 @@ export const LoginSessions: React.FC<{
 
   useEffect(() => { load(); }, [load]);
 
-  const kick = async (s: LoginSession) => {
-    setBusyId(s.id);
+  /*
+    踢的是「一台设备」，不是「一次登录」。
+
+    这台上可能压着好几次登录（每次登录插一条）。只撤其中一条，
+    别人换个标签页照样在线 —— 那等于点了个没用的按钮，
+    而人还以为自己已经把对方踢下去了。**安全动作最怕这种假成功。**
+  */
+  const kick = async (g: DeviceGroup) => {
+    setBusyId(g.key);
     setError('');
     try {
-      await authService.revokeSession(s.id);
-      setList(prev => prev.filter(x => x.id !== s.id));
+      for (const s of g.sessions) await authService.revokeSession(s.id);
+      const gone = new Set(g.sessions.map(s => s.id));
+      setList(prev => prev.filter(x => !gone.has(x.id)));
       /*
         踢的是自己正在用的这一台 —— 服务端已经清了 cookie，
         再留在页面上只会在下一次点击时莫名其妙报错，不如直接回登录页。
       */
-      if (s.isCurrent) window.location.reload();
+      if (g.isCurrent) window.location.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : '下线失败');
     } finally {
       setBusyId('');
     }
   };
+
+  const devices = groupByDevice(list);
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
@@ -105,8 +168,8 @@ export const LoginSessions: React.FC<{
       </div>
       <p className="text-xs font-bold text-gray-400 mb-4">
         {all
-          ? '每一行是一次还没过期的登录。看到不认识的，直接下线。'
-          : '看到不是自己的设备，点「下线」——它会立刻失效，不用改密码。'}
+          ? '每一行是一台还登录着的设备。看到不认识的，直接下线。'
+          : '每一行是一台设备（同一台上登过几次会并成一行）。看到不是自己的，点「下线」——它立刻失效，不用改密码。'}
       </p>
 
       {error && (
@@ -121,10 +184,11 @@ export const LoginSessions: React.FC<{
         <p className="py-6 text-center text-sm font-bold text-gray-400">没有正在生效的登录。</p>
       ) : (
         <ul className="flex flex-col divide-y divide-gray-100">
-          {list.map(s => {
+          {devices.map(g => {
+            const s = g.latest;
             const dev = deviceLabel(s.userAgent);
             return (
-              <li key={s.id} className="flex items-center justify-between gap-3 py-3">
+              <li key={g.key} className="flex items-center justify-between gap-3 py-3">
                 <div className="flex items-start gap-3 min-w-0">
                   <span className="mt-0.5 text-gray-400 shrink-0">
                     {dev.mobile ? <Smartphone className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
@@ -134,30 +198,38 @@ export const LoginSessions: React.FC<{
                       <span className="text-sm font-bold text-gray-800">
                         {all ? `${s.userName}　${dev.text}` : dev.text}
                       </span>
-                      {s.isCurrent && (
+                      {g.isCurrent && (
                         <span className="rounded px-1.5 py-0.5 text-[10px] font-black bg-emerald-50 text-emerald-700">
                           当前这台
                         </span>
                       )}
-                      {s.remembered && (
+                      {/*
+                        原来这里写「常用设备」，是**错的**：它对应的是登录时
+                        勾没勾「这台电脑我常用，14 天内免登录」，
+                        和用得多不多没有关系。照字面读会以为系统认得这台机器。
+                        改成照抄登录页那句话，两边对得上。
+                      */}
+                      {g.remembered && (
                         <span className="rounded px-1.5 py-0.5 text-[10px] font-black bg-blue-50 text-blue-700">
-                          常用设备
+                          14 天免登录
                         </span>
                       )}
                     </div>
                     <div className="text-xs font-bold text-gray-400 truncate">
                       最近活跃 {when(s.lastSeenAt || s.createdAt)}
                       {s.ip ? ` · ${s.ip}` : ''}
+                      {/* 说清这台上压着几次登录，否则「下线」踢掉多少人心里没数 */}
+                      {g.count > 1 ? ` · 这台上有 ${g.count} 次登录` : ''}
                     </div>
                   </div>
                 </div>
                 <button
-                  onClick={() => kick(s)}
-                  disabled={busyId === s.id}
+                  onClick={() => kick(g)}
+                  disabled={busyId === g.key}
                   className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200 disabled:opacity-60"
                 >
-                  {busyId === s.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5" />}
-                  {s.isCurrent ? '退出这台' : '下线'}
+                  {busyId === g.key ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5" />}
+                  {g.isCurrent ? '退出这台' : '下线'}
                 </button>
               </li>
             );
