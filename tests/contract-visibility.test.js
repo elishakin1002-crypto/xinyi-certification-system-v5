@@ -79,3 +79,53 @@ test('撞上重复时要说清是谁录的，并把筛选调到看得见它', ()
   assert.match(block, /setContractScope\('all'\)/, '撞重复后没把范围切到全公司 —— 滚过去也看不见');
   assert.match(block, /setFilterStatus\('all'\)/, '状态筛选没放开，归档的那份仍会被挡住');
 });
+
+test('合同必须落到客户身上 —— 「不绑定」不能是默认值', () => {
+  /*
+    2026-09-12 金恩来：「合同和客户我发现也没有关联起来，就是我在创建合同时
+    没有给到可以选择关联老客户或者创建新客户的选项。」
+
+    下拉本来是有的，缺的是**建新客户的口子**；而第一项又是「不绑定」
+    且是默认值 —— 最省事的路径就是不绑定。
+    **生产上 12 份合同有 4 份没关联客户，整整三分之一。**
+
+    代价不在合同这一页：客户 360 看不到这份合同、回款算不进这家的累计、
+    「这家做过什么」永远缺一块。
+  */
+  const page = code('pages/Contracts.tsx');
+  assert.ok(!/<option value="">不绑定/.test(page),
+    '「不绑定」又变回下拉的默认第一项了');
+  assert.match(page, /<option value="">— 选一家客户 —<\/option>/, '默认项不是「选一家客户」');
+  assert.match(page, /handleQuickCreateContractCustomer/, '合同弹窗里没有「直接新建客户」的口子');
+  assert.match(page, /落到某一家客户身上/, '没选客户时不会拦一下');
+});
+
+test('合同里建客户不许自己写查重 —— 走 addCustomer 那个收口', () => {
+  /*
+    这是第三个建客户的入口（前两个：客户管理、建项目弹窗）。
+    每多一个入口就多一次「在这里再写一遍规则」的机会，
+    而那正是他建出 3 个「测试1」的原因。
+  */
+  const page = code('pages/Contracts.tsx');
+  const at = page.indexOf('handleQuickCreateContractCustomer');
+  const fn = page.slice(at, at + 900);
+  assert.match(fn, /addCustomer\(/, '没走 addCustomer，可能自己实现了一套');
+  assert.ok(!/customers\s*\.find\(\s*c\s*=>\s*c\.name\s*===/.test(fn), '又自己写了一套按名字查重');
+  assert.match(fn, /created\.duplicated/, '没区分「新建了」和「复用了已有的」');
+});
+
+test('服务选择器要能选「公司用过但不在目录里」的那些', () => {
+  /*
+    他问：「目录里没有、需要加上的服务项目，是不是可以增加设置成模版的选项。」
+
+    没有建「自定义目录」那套存储（要加表、迁移、同步，而且从此两份目录要维护）。
+    改成把**已经录进合同的服务名**直接当候选：零基建，
+    而且自带淘汰 —— 用得多就是「该写进标准目录」的信号。
+  */
+  const picker = code('components/ServicePicker.tsx');
+  assert.match(picker, /usedNames/, '选择器没有接收「用过的服务名」');
+  assert.match(picker, /公司用过（不在标准目录）/, '没有把用过的单独分组标出来');
+
+  const page = code('pages/Contracts.tsx');
+  assert.match(page, /usedServiceNames/, '合同页没有把历史服务名喂给选择器');
+});

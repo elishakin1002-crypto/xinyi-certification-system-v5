@@ -11,6 +11,7 @@ import { IngestionUploader } from '../components/IngestionUploader';
 import { Receivable, Lead, Status, Contract, ContractAttachment, KnowledgeDoc } from '../types';
 import { extractTextFromDocx, extractTextFromPdf, renderPdfPagesAsImages, getLastParseFailure } from '../services/documentParsers';
 import { ServicePicker } from '../components/ServicePicker';
+import { CUSTOMER_NAME_PLACEHOLDER } from '../src/modules/customerIdentity';
 import { matchCatalogItems, toServiceLine } from '../src/modules/serviceCatalogMatch';
 import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
@@ -18,7 +19,7 @@ import { buildImportPlan, ContractImportPlan, HISTORY_IMPORT_TAG } from '../src/
 import { Badge, SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 
 const Contracts = () => {
-  const { contracts, customers, addContract, bindContractToCustomer, claimReceivablePaid, deleteContract, archiveContract, projects, addProject, addKnowledgeDoc, checkActionPermission, activeRole, currentUser, userProfiles, addContractAttachment, removeContractAttachment } = useApp();
+  const { contracts, customers, addCustomer, addContract, bindContractToCustomer, claimReceivablePaid, deleteContract, archiveContract, projects, addProject, addKnowledgeDoc, checkActionPermission, activeRole, currentUser, userProfiles, addContractAttachment, removeContractAttachment } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -56,6 +57,21 @@ const Contracts = () => {
     顾问原来根本没有这个开关 —— 不是「默认收起」，是「看不到」。
   */
   const [contractScope, setContractScope] = useState<'related' | 'all'>('related');
+  /** 合同弹窗里当场建客户 —— 和建项目弹窗同一套做法 */
+  const [showNewContractCustomer, setShowNewContractCustomer] = useState(false);
+  const [newContractCustomerName, setNewContractCustomerName] = useState('');
+  const [contractCustomerNotice, setContractCustomerNotice] = useState('');
+
+  /*
+    公司以前在合同里写过的服务名 —— 喂给选择器当「用过」那一组。
+    不建自定义目录表：已经录进合同的那些字，本身就是最真实的候选来源。
+  */
+  const usedServiceNames = useMemo(
+    () => Array.from(new Set(
+      contracts.flatMap(c => String(c.serviceLine || '').split(/[、,，]/).map(x => x.trim()))
+    )).filter(Boolean),
+    [contracts]
+  );
   const [extractedReceivables, setExtractedReceivables] = useState<Receivable[]>([]);
   const [extractedServiceItems, setExtractedServiceItems] = useState<Array<any>>([]);
   const [fileAttachments, setFileAttachments] = useState<ContractAttachment[]>([]);
@@ -179,9 +195,36 @@ const Contracts = () => {
     return customers.find(c => normalizeNameKey(c.name) === key);
   };
 
+  /*
+    当场建客户。**不自己写查重** —— 走 addCustomer 那个唯一收口，
+    它会判重名/统一社会信用代码，重名时返回已有那家并标 duplicated。
+    在这里再写一套规则，就是「同一件事第三处」，早晚长歪。
+  */
+  const handleQuickCreateContractCustomer = () => {
+    const name = newContractCustomerName.trim();
+    if (!name) return;
+    const created = addCustomer({
+      name,
+      contactPerson: '',
+      totalValue: 0,
+      riskStatus: 'low',
+      activeContracts: 0,
+      status: Status.Active,
+      followUpRecords: [],
+    } as any);
+    setFormData(prev => ({ ...prev, customerId: created.id, customerName: created.name }));
+    setShowNewContractCustomer(false);
+    setNewContractCustomerName('');
+    setContractCustomerNotice(created.duplicated
+      ? `客户档案里已经有「${created.name}」了，已经帮你选中它 —— 没有重复建一家。`
+      : `已新建客户「${created.name}」并选中。其他资料以后在客户管理里补。`);
+  };
+
   const applyCustomerSelection = (customerId: string) => {
-    if (!customerId) {
-      setFormData(prev => ({ ...prev, customerId: '' }));
+    // __none__ 是「明确选择不绑定」；空值是「还没选」。两者要分得开，
+    // 否则提交时没法判断他是漏了还是真的不想绑
+    if (!customerId || customerId === '__none__') {
+      setFormData(prev => ({ ...prev, customerId: customerId === '__none__' ? '__none__' : '' }));
       return;
     }
     const found = customers.find(c => c.id === customerId);
@@ -861,9 +904,25 @@ const Contracts = () => {
       alert('请选一下服务项目。\n\n它决定这单派给谁、套哪套流程，也是以后查「这家做过什么」的依据 —— 空着的话这几样都用不上。');
       return;
     }
+    /*
+      客户没选就拦一下 —— 但允许他明确选「不绑定」。
+
+      生产上 12 份合同有 4 份没关联客户。不是谁偷懒，是
+      「不绑定」原来就是下拉的第一项兼默认值，最省事的路径就是它。
+      现在默认改成「— 选一家客户 —」，漏了就在这里提醒，
+      并写清代价 —— 代价不在合同页，在客户 360 和回款统计那边。
+    */
+    if (!String(formData.customerId || '').trim()) {
+      alert('这份合同还没落到某一家客户身上。\n\n不关联的话：客户档案里看不到这份合同、回款也算不进这家的累计，'
+        + '以后查「这家做过什么」会缺这一笔。\n\n下拉里选一家；档案里还没有就点「找不到？直接新建客户」。'
+        + '\n\n确实不该绑（比如政府交办），在下拉最后一项选「不绑定」。');
+      return;
+    }
     const result = addContract(
       {
         ...formData,
+        // __none__ 只是界面上的哨兵（区分"还没选"和"明确不绑定"），不许进库
+        customerId: formData.customerId === '__none__' ? '' : formData.customerId,
         serviceItems: extractedServiceItems,
         receivables: extractedReceivables.length > 0 ? extractedReceivables : undefined,
         riskLevel: riskAssessment?.level || 'Low',
@@ -1637,17 +1696,79 @@ const Contracts = () => {
                         {/* ... Rest of the form is unchanged ... */}
                         <div className="grid grid-cols-2 gap-4">
                           <div>
-                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">关联客户（可选）</label>
+                            {/*
+                              ── 合同必须落到某一家客户身上（2026-09-12）────────────
+
+                              金恩来：「合同和客户我发现也没有关联起来，就是我在创建合同时
+                              没有给到可以选择关联老客户或者创建新客户的选项。」
+
+                              下拉是有的，缺的是**建新客户的口子** —— 而第一项又是
+                              「不绑定」且是默认值。于是最省事的路径就是不绑定：
+                              **生产上 12 份合同有 4 份没关联客户，整整三分之一。**
+
+                              没关联的后果不在合同这一页，在别处：
+                              客户 360 页看不到这份合同、回款算不进这家的累计、
+                              「这家做过什么」永远缺一块。
+
+                              所以：① 默认不再是「不绑定」，改成提示去选；
+                                    ② 补上「找不到？直接新建客户」，走 addCustomer 那个
+                                       唯一收口（自带查重，不会建出第二个「测试1」）；
+                                    ③ 真要不绑定，把它挪到最后并写清后果。
+                            */}
+                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">
+                              关联客户 <span className="ml-1 font-bold normal-case tracking-normal text-gray-400">（合同要落到某一家身上）</span>
+                            </label>
                             <select
                               className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm"
                               value={formData.customerId}
                               onChange={(e) => applyCustomerSelection(e.target.value)}
                             >
-                              <option value="">不绑定（仅保留客户名称快照）</option>
+                              <option value="">— 选一家客户 —</option>
                               {sortedCustomers.map(customer => (
                                 <option key={customer.id} value={customer.id}>{customer.name}</option>
                               ))}
+                              <option value="__none__">不绑定（这家的累计金额和历史会缺这一笔）</option>
                             </select>
+                            {!showNewContractCustomer ? (
+                              <button
+                                type="button"
+                                onClick={() => { setShowNewContractCustomer(true); setNewContractCustomerName(formData.customerName || ''); }}
+                                className="mt-2 text-[11px] font-bold text-indigo-600 hover:underline"
+                              >
+                                + 找不到？直接新建客户
+                              </button>
+                            ) : (
+                              <div className="mt-2">
+                                <div className="flex gap-2">
+                                  <input
+                                    autoFocus
+                                    value={newContractCustomerName}
+                                    onChange={e => setNewContractCustomerName(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleQuickCreateContractCustomer(); } }}
+                                    placeholder={CUSTOMER_NAME_PLACEHOLDER}
+                                    className="flex-1 min-w-0 rounded-xl border border-indigo-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={handleQuickCreateContractCustomer}
+                                    className="shrink-0 rounded-xl bg-indigo-600 px-3 text-xs font-black text-white hover:bg-indigo-700"
+                                  >
+                                    创建并选中
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                            {/*
+                              提示要放在展开块**外面**。
+                              第一版我写在里面，而建完会把那块收起来（setShowNewContractCustomer(false)）——
+                              于是提示刚渲染出来就被卸载，一个字都看不到。
+                              和之前「静默复用客户」是同一个毛病：做对了事，但没说。
+                            */}
+                            {contractCustomerNotice && (
+                              <p className="mt-2 rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[11px] font-bold leading-relaxed text-indigo-800">
+                                {contractCustomerNotice}
+                              </p>
+                            )}
                           </div>
                           <div>
                             <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">客户名称</label>
@@ -1696,6 +1817,7 @@ const Contracts = () => {
                               value={formData.serviceLine}
                               onChange={next => setFormData({ ...formData, serviceLine: next })}
                               aiRawText={aiServiceRaw}
+                              usedNames={usedServiceNames}
                             />
                           </div>
                         </div>

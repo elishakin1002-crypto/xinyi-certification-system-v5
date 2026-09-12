@@ -35,7 +35,23 @@ export const ServicePicker: React.FC<{
   onChange: (next: string) => void;
   /** AI 从合同里读到的原话 —— 摆出来对照，别让人猜系统是怎么勾的 */
   aiRawText?: string;
-}> = ({ value, onChange, aiRawText }) => {
+  /**
+   * 公司以前用过、但不在标准目录里的服务名。
+   *
+   * 金恩来 2026-09-12：「在选择目录里没有，需要加上的服务项目时，
+   * 是不是可以增加设置成模版的选项。」
+   *
+   * 他要的是「这次写的，下次能直接选」。做法有两种：
+   *   ① 建一套「自定义目录」存储 —— 要加数据表、迁移、同步，
+   *      而且从此有两份目录要维护
+   *   ② **把已经录进合同的服务名直接当作目录的一部分**
+   *
+   * 选 ②：零基建，而且自带淘汰机制 ——
+   * 用过一次就出现在候选里，一直没人再用就自然沉底；
+   * 反过来，某一条被反复用到，那就是「该把它写进标准目录」的信号。
+   */
+  usedNames?: string[];
+}> = ({ value, onChange, aiRawText, usedNames = [] }) => {
   const [keyword, setKeyword] = useState('');
   const [open, setOpen] = useState(false);
   const [customDraft, setCustomDraft] = useState('');
@@ -58,6 +74,16 @@ export const ServicePicker: React.FC<{
   }, []);
 
   const results = useMemo(() => searchCatalog(keyword).slice(0, 60), [keyword]);
+
+  /* 公司用过、但目录里没有的 —— 单独一组，标出来它不是标准项 */
+  const usedExtras = useMemo(() => {
+    const inCatalog = new Set(SERVICE_CATALOG.map(i => i.name));
+    const k = keyword.trim();
+    return Array.from(new Set(usedNames))
+      .filter(n => n && !inCatalog.has(n))
+      .filter(n => !k || n.includes(k))
+      .slice(0, 20);
+  }, [usedNames, keyword]);
   const grouped = useMemo(() => {
     const g = new Map<string, ServiceCatalogItem[]>();
     results.forEach(i => g.set(i.category, [...(g.get(i.category) || []), i]));
@@ -185,7 +211,32 @@ export const ServicePicker: React.FC<{
               </div>
             ))}
 
-            {results.length === 0 && (
+            {usedExtras.length > 0 && (
+              <div>
+                <p className="sticky top-[41px] bg-amber-50 px-3 py-1 text-[10px] font-black tracking-widest text-amber-700">
+                  公司用过（不在标准目录）
+                </p>
+                {usedExtras.map(n => {
+                  const on = selectedNames.includes(n);
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => toggle(n)}
+                      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-amber-50 ${on ? 'bg-amber-50/60' : ''}`}
+                    >
+                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${on ? 'border-amber-600 bg-amber-600 text-white' : 'border-gray-300'}`}>
+                        {on && <span className="text-[10px] leading-none">✓</span>}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{n}</span>
+                      <span className="shrink-0 text-[10px] text-amber-600">用过</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {results.length === 0 && usedExtras.length === 0 && (
               <p className="px-3 py-3 text-xs font-bold text-gray-400">目录里没有「{keyword}」</p>
             )}
 
