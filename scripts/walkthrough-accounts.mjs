@@ -89,6 +89,29 @@ const main = async () => {
   const file = backup();
   console.log(`\n已备份 auth_users → ${path.relative(ROOT, file)}`);
 
+  /*
+    ── 说清楚这条命令会覆盖掉什么（2026-09-12）────────────────────
+
+    金恩来：「为什么我的 admin 的账号进不去了？」
+
+    因为这个脚本会把**密码本里的密码写进每一个列出来的账号**，
+    包括 admin。而 admin 是他自己天天用的账号，有他自己的密码 ——
+    我上一轮跑 `--fix` 救走查账号时，顺手把它也覆盖了，没说一声。
+
+    他下次登录用的是自己记得的那个密码，当然进不去，
+    而且系统只会说「账号或密码不对」，看不出是被人改过。
+
+    改不了这个脚本的职责（它就是用来重置密码的），
+    但可以让它**把要覆盖的账号明明白白列出来**，
+    尤其点名 admin —— 覆盖之后那个账号的旧密码就作废了。
+  */
+  console.log('\n⚠️  下面这些账号的密码会被**改成密码本里的值**，原来的密码作废：');
+  rows.filter(r => r.u).forEach(r => {
+    const warn = r.login === 'admin' ? '   ← 这是你自己常用的管理员账号' : '';
+    console.log(`      ${r.login}${warn}`);
+  });
+  console.log('   改完之后，登录一律用 .runtime/走查账号密码.json 里的密码。\n');
+
   let n = 0;
   for (const r of rows) {
     if (!r.u) continue;

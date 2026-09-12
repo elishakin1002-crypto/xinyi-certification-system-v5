@@ -3643,7 +3643,24 @@ ${receivableLines}
     })();
 
     if (existing) {
-      return { ok: false, reason: '合同已存在，已阻止重复录入。', existingContractId: existing.id };
+      /*
+        说清楚「是谁、什么时候录的」（2026-09-12）。
+
+        原来只说一句「合同已存在」。而查重扫的是全量合同，
+        撞上的那一份**很可能不在他的列表里** ——
+        于是他既不知道是谁录的，也找不到它，只能去群里问
+        「这份是不是你录过了」。合同明明就在他自己邮箱里。
+
+        谁录的、什么时候录的，这两条足够他判断
+        「那就不用我录了」还是「这是另一份，得继续」。
+      */
+      const who = String(existing.owner || '').trim();
+      const when = String(existing.signDate || '').slice(0, 10);
+      return {
+        ok: false,
+        reason: `这份合同已经录过了${who ? `，录入人：${who}` : ''}${when ? `，签订日期 ${when}` : ''}。\n\n已经帮你打开它（范围自动切到「全公司」）。\n如果你手上那份其实是另一份合同（比如续签），改一下合同编号再录。`,
+        existingContractId: existing.id
+      };
     }
 
     if (!linkedCustomerId) {

@@ -51,6 +51,11 @@ const Contracts = () => {
     只给结论不给依据，错了没人发现 —— 这是自由文本时代的老问题。
   */
   const [aiServiceRaw, setAiServiceRaw] = useState('');
+  /*
+    范围：默认只看和自己有关的，需要时切全公司。
+    顾问原来根本没有这个开关 —— 不是「默认收起」，是「看不到」。
+  */
+  const [contractScope, setContractScope] = useState<'related' | 'all'>('related');
   const [extractedReceivables, setExtractedReceivables] = useState<Receivable[]>([]);
   const [extractedServiceItems, setExtractedServiceItems] = useState<Array<any>>([]);
   const [fileAttachments, setFileAttachments] = useState<ContractAttachment[]>([]);
@@ -872,6 +877,14 @@ const Contracts = () => {
       alert(result.reason || '录入失败');
       if (result.existingContractId) {
         closeContractModal();
+        /*
+          把筛选调到「一定看得见它」那一档 —— 和建项目那边同一个教训：
+          代码早就写了「滚动到那一份」，但它被筛选挡着，于是静默失败，
+          人看到的是「提示了一句，然后什么也没发生」。
+        */
+        setContractScope('all');
+        setFilterStatus('all');
+        setSearchTerm('');
         setExpandedContract(result.existingContractId);
         setTimeout(() => {
           const element = document.getElementById(`contract-row-${result.existingContractId}`);
@@ -916,7 +929,28 @@ const Contracts = () => {
   };
   const normalizedContractQuery = searchTerm.trim().toLowerCase();
   const filteredContracts = contracts.filter(c => {
-    if (activeRole === 'CONSULTANT') {
+    /*
+      ── 「与我相关 / 全公司」是筛选，不是权限（2026-09-12 改）────────
+
+      金恩来：「我登录的是黄佳佳的账号……提示合同已经存在……
+      是不是因为之前是用管理员的账号录入的合同，所以黄佳佳的账号看不到。
+      他们若是都想当然自己录入也遇到了同样的问题是要去问其他人有没有录入吗？」
+
+      他说中了，而且这里本来就是自相矛盾的：
+      **四个角色在 constants.ts 里的 readScope 全是 'ALL'** ——
+      权限模型说「合同都能看，只有金额分级」（顾问那行注释写得很清楚：
+      刻意不给 CONTRACT_VIEW_AMOUNT，避免议价和比价）。
+      而这一页自己又硬写了一条「顾问只能看自己的」，把模型盖掉了。
+
+      后果正是他撞到的那个死结：查重查得到（查重扫的是全量），
+      列表里却找不到 —— 页面甚至已经写了"滚动到那一份"的代码，
+      只是那一份被这条过滤挡掉了，于是静默失败。
+      人只能去问同事「这份是不是你录的」，而合同就在他自己邮箱里。
+
+      现在按模型来：**能看见存在，看不看得到金额另算**（maskAmount 照旧）。
+      日常默认仍是「与我相关」，噪音不变；要找就切「全公司」。
+    */
+    if (contractScope === 'related') {
       const ownByContract = String(c.owner || '').trim() === String(currentUser.name || '').trim();
       const linkedProject = projects.find(p => p.contractRef === c.id || p.contractRef === c.contractNo);
       const ownByProject = Boolean(
@@ -1121,6 +1155,24 @@ const Contracts = () => {
             <div className="text-xs opacity-80 font-bold uppercase tracking-tight">{canSeeContractAmount ? `已回款 · 回款率 ${contractStats.paidRate}%` : '已回款（金额不可见）'}</div>
           </div>
         </div>
+      </div>
+      {/* 范围切换：和项目管理页同一个口径，别让人在两页学两套 */}
+      <div className="mb-3 flex items-center gap-2">
+        <span className="text-xs font-black uppercase tracking-widest text-gray-400">范围</span>
+        {([['related', '与我相关'], ['all', '全公司']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setContractScope(id)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+              contractScope === id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        <span className="text-[11px] font-bold text-gray-400">
+          合同全公司可见；金额按身份显示（顾问看到的是 ¥ ***）
+        </span>
       </div>
       <div className="flex space-x-2 mb-6 border-b border-gray-200 pb-1 overflow-x-auto no-scrollbar"> {[ { id: 'all', label: '全部活跃', icon: AlignLeft }, { id: 'active', label: '执行中', icon: Zap }, { id: 'risk', label: '风险预警', icon: ShieldAlert }, { id: 'archived', label: '已归档', icon: Archive }, ].map(tab => ( <button key={tab.id} onClick={() => setFilterStatus(tab.id as any)} className={`flex items-center px-4 py-2 text-sm font-bold border-b-2 transition-colors whitespace-nowrap uppercase tracking-wide ${ filterStatus === tab.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' }`} > <tab.icon className="w-4 h-4 mr-2" /> {tab.label} </button> ))} </div>
       <div className="mb-4 space-y-2">
