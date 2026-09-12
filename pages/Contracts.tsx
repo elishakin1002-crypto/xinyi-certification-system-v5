@@ -4,7 +4,7 @@ import { SAMPLE_CONTRACT } from '../src/modules/onboarding/sampleRecords';
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { SampleTr } from '../components/SampleRow';
-import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search, FileSpreadsheet } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search, FileSpreadsheet, Sparkles} from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { aiService } from '../services/aiService'; 
 import { IngestionUploader } from '../components/IngestionUploader';
@@ -52,6 +52,8 @@ const Contracts = () => {
     只给结论不给依据，错了没人发现 —— 这是自由文本时代的老问题。
   */
   const [aiServiceRaw, setAiServiceRaw] = useState('');
+  /** AI 从合同里读到的客户**原名** —— 摆出来对照，不再当成第二个输入框 */
+  const [aiContractCustomerName, setAiContractCustomerName] = useState('');
   /*
     范围：默认只看和自己有关的，需要时切全公司。
     顾问原来根本没有这个开关 —— 不是「默认收起」，是「看不到」。
@@ -834,6 +836,7 @@ const Contracts = () => {
           }));
 
           setAiServiceRaw(finalServiceLine || '');
+          setAiContractCustomerName(finalCustomer || '');
 
           if (Array.isArray(payload?.paymentPlan)) {
              const newReceivables: Receivable[] = payload.paymentPlan
@@ -912,6 +915,11 @@ const Contracts = () => {
       现在默认改成「— 选一家客户 —」，漏了就在这里提醒，
       并写清代价 —— 代价不在合同页，在客户 360 和回款统计那边。
     */
+    if (formData.customerId === '__none__' && !String(formData.customerName || '').trim()) {
+      alert('选了「不绑定」就得写上客户名称 —— 否则这份合同在列表里认不出是谁的，'
+        + '由它生成的项目也会没有名字。');
+      return;
+    }
     if (!String(formData.customerId || '').trim()) {
       alert('这份合同还没落到某一家客户身上。\n\n不关联的话：客户档案里看不到这份合同、回款也算不进这家的累计，'
         + '以后查「这家做过什么」会缺这一笔。\n\n下拉里选一家；档案里还没有就点「找不到？直接新建客户」。'
@@ -1584,7 +1592,20 @@ const Contracts = () => {
                      <div className="mb-6">
                         <IngestionUploader 
                             source="contract"
-                            label="点击上传或拖拽合同文件"
+                            /*
+                              弹窗里用 compact（组件里本来就有这个变体，
+                              一行按钮，约 40px）。
+
+                              金恩来：「合同录入区域是不是搞的太大了，
+                              下面服务项目的下拉框常常受尺寸影响，显示不全，
+                              要拖到下面才能显示全」。
+
+                              大尺寸那版将近 180px 高，在 max-h-[90vh] 的弹窗里
+                              一个人吃掉小半屏 —— 而它是「用一次」的东西，
+                              下面的字段才是每次都要填的。占屏比例反了。
+                            */
+                            compact
+                            label="上传合同文件 · AI 自动识别金额/条款/支付节点"
                             subLabel="支持 PDF, Word, 图片 • 自动识别金额、条款与支付节点"
                             disabled={isUploading || !createContractPerm.allowed}
                             onSuccess={(result, file) => {
@@ -1633,6 +1654,7 @@ const Contracts = () => {
                                   ? serviceItemsFromAI.map(item => String(item.standardName || item.name)).join(' / ')
                                   : (data.serviceLine || '');
                                 setAiServiceRaw(normalizedServiceLine || '');
+                                setAiContractCustomerName(String(data.customerName || ''));
                                 const matchedCustomer = findCustomerByName(String(data.customerName || ''));
                                 setFormData(prev => ({
                                     ...prev,
@@ -1771,22 +1793,65 @@ const Contracts = () => {
                             )}
                           </div>
                           <div>
-                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">客户名称</label>
-                            <input
-                              required
-                              type="text"
-                              className={`w-full px-3 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm ${hasSubjectMismatch ? 'border-yellow-400 bg-yellow-50' : 'border-gray-200 bg-gray-50'}`}
-                              value={formData.customerName}
-                              onChange={e => {
-                                const nextName = e.target.value;
-                                const matched = findCustomerByName(nextName);
-                                setFormData({
-                                  ...formData,
-                                  customerName: nextName,
-                                  customerId: matched?.id || ''
-                                });
-                              }}
-                            />
+                            {/*
+                              ── 「客户名称」不再是一个要人填的框（2026-09-12）──────
+
+                              金恩来：「有关联客户又客户名称是不是重复了，
+                              或者有点设计过度了」。
+
+                              他说得对。customerName 在**每一条路径上都是自动填的**：
+                              选客户时填、当场新建时填、AI 从合同里读出来时填。
+                              把它摆成第二个输入框，等于把同一件事问两遍，
+                              而且两边还能填得不一样（改了名字 customerId 就被清空，
+                              合同又变回没关联 —— 我们刚修好的那个问题会从这儿漏回来）。
+
+                              成熟做法是**一个查找框**（Salesforce 的 Account lookup、
+                              Dynamics 的客户查找）：选一家就完事，
+                              名字是选完的结果，不是另一个要填的字段。
+
+                              这里保留的是 AI 的价值：合同上写的名字如果和选中的不一致，
+                              把原话摆出来，并给一个「按合同上的名字建一家」的口子 ——
+                              让 AI 的结果**可操作**，而不是塞进一个框里等人核对。
+                            */}
+                            {/*
+                              选了「不绑定」才需要手填名字 —— 这时它是**唯一**的客户线索
+                              （项目名、列表显示都靠它）。绑定了就不需要：名字是选出来的结果。
+
+                              这就是「字段只在它承载信息的时候出现」：
+                              常态下少一个框，例外时不丢信息。
+                            */}
+                            {formData.customerId === '__none__' && (
+                              <div className="mb-2">
+                                <label className="mb-1 block text-xs font-black uppercase tracking-widest text-gray-400">
+                                  客户名称 <span className="ml-1 font-bold normal-case tracking-normal text-amber-600">（不绑定时必填，否则这份合同认不出是谁的）</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  className="w-full rounded-xl border border-amber-300 bg-amber-50/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400/20"
+                                  value={formData.customerName}
+                                  onChange={e => setFormData({ ...formData, customerName: e.target.value })}
+                                  placeholder="照合同甲方全称写"
+                                />
+                              </div>
+                            )}
+                            {aiContractCustomerName && (
+                              <div className="rounded-xl bg-indigo-50/70 px-3 py-2 text-[11px] font-bold leading-relaxed text-indigo-900">
+                                <Sparkles className="mr-1 inline h-3 w-3" />
+                                合同上写的是：{aiContractCustomerName}
+                                {!formData.customerId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => { setShowNewContractCustomer(true); setNewContractCustomerName(aiContractCustomerName); }}
+                                    className="ml-2 rounded bg-indigo-600 px-2 py-0.5 text-[11px] font-black text-white hover:bg-indigo-700"
+                                  >
+                                    按这个名字建一家
+                                  </button>
+                                )}
+                                {hasSubjectMismatch && (
+                                  <span className="ml-1 text-amber-700">· 和选中的客户对不上，确认一下</span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4">

@@ -58,6 +58,31 @@ export const ServicePicker: React.FC<{
   const boxRef = useRef<HTMLDivElement>(null);
 
   /*
+    ── 下面放不下就往上开（2026-09-12）──────────────────────────
+
+    金恩来：「下面服务项目的下拉框，常常受尺寸影响，显示不全。
+    要拖到下面才能显示全！」
+
+    这个字段在弹窗偏下的位置，而弹窗本身是 max-h-[90vh] + overflow-y-auto。
+    下拉是 absolute 定位的，**会被那个滚动容器裁掉** ——
+    人看到半截列表，得先滚动才能看全，选完还要滚回去。
+
+    做法：打开的瞬间量一下下方还剩多少空间，不够就往上开。
+    这是原生 select 和成熟组件库（Radix/Headless UI）的默认行为，
+    人不会觉得奇怪 —— 奇怪的是被裁掉那一半。
+  */
+  const [openUp, setOpenUp] = useState(false);
+  const decideDirection = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom;
+    const above = r.top;
+    // 下面不够 280px、而上面比下面宽裕，就往上开
+    setOpenUp(below < 280 && above > below);
+  };
+
+  /*
     已选 = 把 value 那串字反解回来。
     存的是标准名而不是 id：合同的 serviceLine 一直是字符串，
     改成存 id 要动库结构和所有读它的地方；而名字既然来自固定目录，
@@ -115,7 +140,7 @@ export const ServicePicker: React.FC<{
       {/* 已选的摆在最上面 —— 人最想确认的是「我选了什么」 */}
       <div
         className="min-h-[42px] w-full cursor-text rounded-xl border border-gray-200 bg-gray-50 px-2 py-1.5 focus-within:ring-2 focus-within:ring-blue-500/20"
-        onClick={() => setOpen(true)}
+        onClick={() => { decideDirection(); setOpen(true); }}
       >
         {selectedNames.length === 0 ? (
           <span className="px-1 text-sm text-gray-400">点这里从标准目录选，可多选</span>
@@ -176,7 +201,11 @@ export const ServicePicker: React.FC<{
         <>
           {/* 点空白处收起。data-dismiss-layer 的原因见 HelpHub 的 visibleModals() */}
           <div data-dismiss-layer="1" className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 right-0 z-50 mt-1 max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-2xl">
+          <div
+            className={`absolute left-0 right-0 z-50 max-h-72 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-2xl ${
+              openUp ? 'bottom-full mb-1' : 'top-full mt-1'
+            }`}
+          >
             <div className="sticky top-0 flex items-center gap-2 border-b border-gray-100 bg-white px-3 py-2">
               <Search className="h-4 w-4 shrink-0 text-gray-400" />
               <input

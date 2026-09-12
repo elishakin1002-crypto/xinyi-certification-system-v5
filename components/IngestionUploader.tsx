@@ -157,7 +157,9 @@ export const IngestionUploader: React.FC<IngestionUploaderProps> = ({
           <p className={`text-sm font-bold ${errorMsg ? 'text-red-600' : 'text-gray-900'}`}>
             {isProcessing ? 'AI 正在智能分析...' : errorMsg || label}
           </p>
-          <p className="text-xs text-gray-400 max-w-[200px] mx-auto leading-relaxed">
+          {/* 原来套着 max-w-[200px]，把「自动识别金额、条款与支付节点」
+              硬折成「自动识别金 / 额、条款…」—— 断在词中间。宽度交给容器。 */}
+          <p className="text-xs text-gray-400 leading-relaxed">
             {isProcessing ? '正在极速分析中...' : subLabel}
           </p>
         </div>

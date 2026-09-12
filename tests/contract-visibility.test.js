@@ -129,3 +129,64 @@ test('服务选择器要能选「公司用过但不在目录里」的那些', ()
   const page = code('pages/Contracts.tsx');
   assert.match(page, /usedServiceNames/, '合同页没有把历史服务名喂给选择器');
 });
+
+test('「客户名称」只在不绑定时出现 —— 平时它是选出来的结果，不是要填的字段', () => {
+  /*
+    2026-09-12 金恩来：「有关联客户又客户名称是不是重复了，或者有点设计过度了」。
+
+    他说得对。customerName 在**每一条路径上都是自动填的**：
+    选客户时填、当场新建时填、AI 从合同里读出来时填。
+    摆成第二个输入框等于把同一件事问两遍，而且两边能填得不一样 ——
+    改了名字 customerId 就被清空，合同又变回没关联，
+    我们刚修好的问题会从这儿漏回来。
+
+    成熟做法是一个查找框（Salesforce Account lookup）：选一家就完事。
+    唯一真需要手填名字的时刻是「明确不绑定任何客户」——
+    那时它是唯一的客户线索。
+  */
+  const page = code('pages/Contracts.tsx');
+  assert.ok(!/<label[^>]*>客户名称<\/label>/.test(page),
+    '「客户名称」又变回一个常驻的输入框了');
+  assert.match(page, /formData\.customerId === '__none__' &&[\s\S]{0,400}?customerName/,
+    '不绑定时没有给填名字的地方 —— 那份合同会认不出是谁的');
+  assert.match(page, /选了「不绑定」就得写上客户名称/, '不绑定时没有校验名字');
+});
+
+test('AI 读到的客户名要摆出来对照，并且可操作', () => {
+  /*
+    去掉输入框不能把 AI 的结果一起丢掉。
+    合同上的名字如果和选中的对不上，要摆出原话；没匹配上的，
+    给一个「按这个名字建一家」的按钮 —— 让结果可操作，
+    而不是塞进一个框里等人自己核对。
+  */
+  const page = code('pages/Contracts.tsx');
+  assert.match(page, /合同上写的是：/, '没有把合同原文里的客户名摆出来');
+  assert.match(page, /按这个名字建一家/, '没匹配上时没有给一键新建的口子');
+});
+
+test('弹窗里的上传区用 compact，别吃掉半屏', () => {
+  /*
+    他：「合同录入区域是不是搞的太大了，下面服务项目的下拉框
+    常常受尺寸影响，显示不全。要拖到下面才能显示全！」
+
+    大尺寸那版近 180px 高，在 max-h-[90vh] 的弹窗里吃掉小半屏。
+    组件本来就有 compact 变体（一行按钮，实测 34px）——
+    我差点又新写一个，幸好先看了一眼。
+  */
+  const page = code('pages/Contracts.tsx');
+  const at = page.indexOf('<IngestionUploader');
+  const block = page.slice(at, at + 500);
+  assert.match(block, /\bcompact\b/, '合同弹窗里的上传区没用 compact');
+});
+
+test('服务下拉放不下就往上开，不许被滚动容器裁掉', () => {
+  /*
+    下拉是 absolute，而弹窗是 max-h-[90vh] + overflow-y-auto ——
+    字段在偏下位置时，列表会被裁掉一半，人得先滚动才能看全，选完再滚回来。
+    原生 select 和成熟组件库都是「下面不够就往上开」。
+  */
+  const picker = code('components/ServicePicker.tsx');
+  assert.match(picker, /openUp/, '下拉没有判断方向');
+  assert.match(picker, /bottom-full/, '没有往上开的那一档');
+  assert.match(picker, /window\.innerHeight - r\.bottom/, '没有量下方剩余空间');
+});
