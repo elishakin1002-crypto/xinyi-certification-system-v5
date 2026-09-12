@@ -1374,6 +1374,12 @@ const deleteUserIfUnused = async (userId) => {
 module.exports = {
   AUTH_STORE_PATH,
   hashPassword,
+  /*
+    导出是给运维脚本核对用的（walkthrough-env 还原后要自检
+    「走查账号还登得进去吗」）。它是纯函数、无副作用，
+    不会像 authenticateUser 那样顺手记一次失败、建一个会话。
+  */
+  verifyPassword,
   initAuthStore,
   getAuthHealth,
   authenticateUser,

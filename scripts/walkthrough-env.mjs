@@ -84,12 +84,44 @@ const dockerPgDump = () => execFileSync('docker', ['exec', DOCKER_DB, 'pg_dump',
 */
 const AUTH_TABLES = ['auth_users', 'auth_sessions', 'auth_audit_logs'];
 
+/*
+  怎么排除：**用 TOC 清单，不是 --exclude-table-data。**
+
+  第一版我写的是 `--exclude-table-data` + `-T` —— 那是 pg_dump 的参数，
+  pg_restore 根本不认（-T 在 pg_restore 里是「触发器」）。
+  结果 reset 直接 `spawnSync docker EPIPE` 失败。
+
+  好在它是**响亮地失败**：库没被动，账号也没事。
+  真正该怕的是另一种写法 —— 参数被悄悄忽略、还原照跑，
+  那样账号又会被倒回去，而屏幕上一切正常。
+
+  pg_restore 支持的办法是 `-l` 导出目录、过滤掉不要的条目、再用 `-L` 回灌。
+  把账号相关的条目整行删掉，DROP 和 COPY 就都不会执行。
+*/
 const dockerPgRestore = (file) => {
-  const buf = fs.readFileSync(file);
-  const exclude = AUTH_TABLES.flatMap((t) => ['--exclude-table-data', t, '-T', t]);
-  execFileSync('docker', ['exec', '-i', DOCKER_DB, 'pg_restore', '-d', url,
-    '--clean', '--if-exists', '--no-owner', ...exclude],
-    { input: buf, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 1024 * 1024 * 1024 });
+  const inC = '/tmp/wt-restore.dump';
+  const listC = '/tmp/wt-restore.list';
+  execFileSync('docker', ['cp', file, `${DOCKER_DB}:${inC}`], { stdio: 'pipe' });
+
+  const toc = execFileSync('docker', ['exec', DOCKER_DB, 'pg_restore', '-l', inC],
+    { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024 }).toString('utf8');
+
+  const re = new RegExp(`\\b(${AUTH_TABLES.join('|')})\\b`);
+  const kept = toc.split('\n').filter((line) => line.startsWith(';') || !re.test(line));
+  const dropped = toc.split('\n').filter((l) => !l.startsWith(';') && re.test(l)).length;
+  if (dropped === 0) {
+    throw new Error('基线里找不到账号表的条目 —— 排除规则可能失效了，中止还原以免又把账号倒回去');
+  }
+
+  execFileSync('docker', ['exec', '-i', DOCKER_DB, 'sh', '-c', `cat > ${listC}`],
+    { input: kept.join('\n'), stdio: ['pipe', 'pipe', 'pipe'] });
+
+  execFileSync('docker', ['exec', DOCKER_DB, 'pg_restore', '-d', url,
+    '--clean', '--if-exists', '--no-owner', '-L', listC, inC],
+    { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1024 * 1024 * 1024 });
+
+  execFileSync('docker', ['exec', DOCKER_DB, 'rm', '-f', inC, listC], { stdio: 'pipe' });
+  return dropped;
 };
 
 /*
@@ -105,6 +137,59 @@ const clearLockouts = async () => {
        where failed_login_count > 0 or locked_until is not null`);
     return rowCount;
   } catch { return 0; } finally { await pool.end(); }
+};
+
+/*
+  ── 还原完，自检「走查账号还登得进去吗」（2026-09-11）──────────
+
+  排除账号表已经堵住了已知的那条路。但这里要堵的是**下一条还不知道的路**。
+
+  金恩来问得对：「如何防止类似事情再次发生？」
+  光修这一次不够 —— 真正危险的是「还原」这个动作本身：
+  它把库倒回过去，而**登录所依赖的一切也在库里**。
+  今天是密码，明天可能是角色、状态、有效期、会话表结构。
+  再加一条排除规则只能挡住我已经想到的那一种。
+
+  所以改成验结果，不验原因：**还原完，拿密码本挨个真登一次**。
+  登不进去就当场喊出来，并给出修复命令 ——
+  不让人在十分钟后对着「密码输错」怀疑自己记错了密码。
+
+  这和部署脚本末尾那 7 项自检是同一个思路：
+  动作做完不算完，**得证明原本能用的东西还能用**。
+*/
+const verifyWalkthroughLogins = async () => {
+  const book = path.join(ROOT, '.runtime/走查账号密码.json');
+  if (!fs.existsSync(book)) return null;          // 没建过走查账号，不适用
+  let accounts;
+  try { accounts = Object.entries(JSON.parse(fs.readFileSync(book, 'utf8')).账号 || {}); }
+  catch { return null; }
+  if (!accounts.length) return null;
+
+  /*
+    **不许"拿不到校验函数就当通过"**。
+    那种回退正是这个项目最常见的失败方式：自检静默降级成
+    「这个账号存在吗」，于是密码错了它照样绿。
+    拿不到就直接抛，宁可自检报错，也不要假的绿。
+  */
+  const { verifyPassword } = require(path.join(ROOT, 'server/authStore.js'));
+  if (typeof verifyPassword !== 'function') {
+    throw new Error('authStore 没有导出 verifyPassword —— 自检无法进行，不做降级');
+  }
+
+  const pool = new Pool({ connectionString: url });
+  const broken = [];
+  try {
+    for (const [who, a] of accounts) {
+      const { rows: [u] } = await pool.query(
+        'select password_hash, status, locked_until from auth_users where lower(username) = lower($1)',
+        [a.登录名]);
+      const locked = u?.locked_until && new Date(u.locked_until) > new Date();
+      const ok = Boolean(u) && verifyPassword(a.密码, u.password_hash)
+        && u.status === 'active' && !locked;
+      if (!ok) broken.push(`${a.登录名}（${who}）`);
+    }
+  } finally { await pool.end(); }
+  return broken;
 };
 
 const counts = async () => {
@@ -149,6 +234,19 @@ const reset = async () => {
     console.log(`   ${k.padEnd(6)} ${String(before[k]).padStart(5)} → ${String(after[k]).padStart(5)}  ${d > 0 ? `（清掉 ${d} 条走查数据）` : ''}`);
   }
   console.log(`\n   账号密码不受影响（账号表不参与还原）${unlocked ? `，顺便解开了 ${unlocked} 个被锁的账号` : ''}`);
+
+  // 自检：还原完，走查账号是不是真的还登得进去
+  const broken = await verifyWalkthroughLogins();
+  if (broken === null) {
+    console.log('   （没有走查密码本，跳过登录自检）');
+  } else if (broken.length === 0) {
+    console.log('   ✅ 登录自检：走查账号全部仍可登录');
+  } else {
+    console.log(`\n   ❌ 登录自检不通过：${broken.join('、')} 登不进去了`);
+    console.log('      跑这条修回来（改前自动备份）：');
+    console.log('        npm run walkthrough:accounts -- --fix\n');
+  }
+
   console.log('\n⚠️ 页面上可能还留着旧数据 —— 刷新一下浏览器。\n');
 };
 
