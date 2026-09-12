@@ -89,9 +89,38 @@ export const IngestionUploader: React.FC<IngestionUploaderProps> = ({
     if (picked) handleFile(picked);
   };
 
+  /*
+    ── compact：小，但不能小到看不见（2026-09-12 二改）──────────────
+
+    金恩来：「上传合同区域虽然小了看起来也不协调，同时也容易忽略
+    上传合同的窗口，提示好像不够直观」。
+
+    第一版 compact 是一行居中的小字按钮 —— 确实不占地方，
+    但它长得像个次要链接，而这其实是这张表**最省事的那条路**：
+    传一份合同，下面十个字段自己填好。该被看见。
+
+    三处改动：
+      · 左图标 + 两行字（做什么 / 省了什么），不再是一行居中小字
+      · **补上拖拽** —— 原来 compact 分支只有 input，没挂 drag 事件，
+        拖文件上去毫无反应。「不够直观」有一半是这个。
+      · 高度 ~56px：比原来的一行高一点，但离那个 180px 的大块很远
+
+    保持一行的形态，是因为它在弹窗里和别的字段排在一起，
+    做成大方块又会回到「上传区吃掉半屏」那个问题。
+  */
   if (compact) {
     return (
-      <div className="relative group">
+      <div
+        className={`relative group rounded-xl border border-dashed transition-all
+          ${dragActive ? 'border-indigo-500 bg-indigo-50' : ''}
+          ${errorMsg ? 'border-red-300 bg-red-50' : 'border-indigo-200 bg-indigo-50/50 hover:bg-indigo-50 hover:border-indigo-300'}
+          ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+        `}
+        onDragEnter={handleDrag}
+        onDragLeave={handleDrag}
+        onDragOver={handleDrag}
+        onDrop={handleDrop}
+      >
         <input
           type="file"
           accept={accept}
@@ -99,23 +128,30 @@ export const IngestionUploader: React.FC<IngestionUploaderProps> = ({
           disabled={disabled || isProcessing}
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
         />
-        <button 
-          className={`w-full flex items-center justify-center space-x-2 px-4 py-2 rounded-lg border border-dashed transition-all
-            ${errorMsg ? 'border-red-300 bg-red-50 text-red-600' : 'border-indigo-200 bg-indigo-50/50 text-indigo-600 hover:bg-indigo-50'}
-            ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-          `}
-        >
-          {isProcessing ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : errorMsg ? (
-            <AlertCircle className="w-4 h-4" />
-          ) : (
-            <BrainCircuit className="w-4 h-4" />
-          )}
-          <span className="text-xs font-bold">
-            {isProcessing ? 'AI 识别中...' : errorMsg ? '识别失败(重试)' : label}
+        <div className="flex items-center gap-3 px-4 py-2.5">
+          <span className={`shrink-0 rounded-lg p-1.5 ${errorMsg ? 'bg-red-100' : 'bg-white'}`}>
+            {isProcessing ? (
+              <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
+            ) : errorMsg ? (
+              <AlertCircle className="h-4 w-4 text-red-500" />
+            ) : (
+              <BrainCircuit className="h-4 w-4 text-indigo-600" />
+            )}
           </span>
-        </button>
+          <span className="min-w-0 flex-1 text-left">
+            <span className={`block truncate text-sm font-bold ${errorMsg ? 'text-red-600' : 'text-indigo-700'}`}>
+              {isProcessing ? 'AI 识别中…' : errorMsg ? '识别失败，点一下重试' : label}
+            </span>
+            {!isProcessing && !errorMsg && subLabel && (
+              <span className="block truncate text-[11px] font-bold text-indigo-400">{subLabel}</span>
+            )}
+          </span>
+          {!isProcessing && !errorMsg && (
+            <span className="shrink-0 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-black text-white group-hover:bg-indigo-700">
+              选择文件
+            </span>
+          )}
+        </div>
       </div>
     );
   }

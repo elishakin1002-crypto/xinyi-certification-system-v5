@@ -190,3 +190,41 @@ test('服务下拉放不下就往上开，不许被滚动容器裁掉', () => {
   assert.match(picker, /bottom-full/, '没有往上开的那一档');
   assert.match(picker, /window\.innerHeight - r\.bottom/, '没有量下方剩余空间');
 });
+
+test('compact 上传区要能拖拽，而且看得见', () => {
+  /*
+    2026-09-12 金恩来：「上传合同区域虽然小了看起来也不协调，
+    同时也容易忽略上传合同的窗口，提示好像不够直观」。
+
+    第一版 compact 是一行居中的小字按钮，长得像个次要链接 ——
+    而它其实是这张表**最省事的那条路**：传一份合同，下面十个字段自己填好。
+
+    更实在的问题：compact 分支原来只有一个 <input>，**没挂 drag 事件** ——
+    拖文件上去毫无反应。「不够直观」有一半是这个。
+  */
+  const src = read('components/IngestionUploader.tsx');
+  const at = src.indexOf('if (compact)');
+  assert.ok(at > 0, '找不到 compact 分支');
+  const branch = src.slice(at, src.indexOf('return (', src.indexOf('}', at)) + 2000);
+  for (const h of ['onDragEnter', 'onDragOver', 'onDrop']) {
+    assert.ok(branch.includes(h), `compact 分支缺 ${h} —— 拖文件上去没反应`);
+  }
+  assert.match(branch, /subLabel/, 'compact 里没有副标题，看不出这么做能省什么');
+});
+
+test('关联客户占整行 —— 右边不许再空一格', () => {
+  /*
+    「少了客户名称后，那里空着，排版看起来有点奇怪」。
+
+    原来是两列：左关联客户、右客户名称。客户名称去掉后右格就空着，
+    而左边那一格还挂着三样附属内容（新建口子、AI 对照行、
+    不绑定时的名称框），挤在半行里本来就局促。
+  */
+  const page = code('pages/Contracts.tsx');
+  const at = page.indexOf('关联客户');
+  const before = page.slice(Math.max(0, at - 600), at);
+  assert.ok(!/grid-cols-2 gap-4">\s*<div>\s*$/.test(before),
+    '关联客户又被塞回两列里了，右边会空一格');
+  assert.match(page, /grid grid-cols-1 gap-4">[\s\S]{0,1200}?关联客户/,
+    '关联客户不是整行');
+});

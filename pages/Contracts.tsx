@@ -1716,7 +1716,19 @@ const Contracts = () => {
                           </div>
                         </div>
                         {/* ... Rest of the form is unchanged ... */}
-                        <div className="grid grid-cols-2 gap-4">
+                        {/*
+                          关联客户占整行（2026-09-12 二改）。
+
+                          金恩来：「少了客户名称后，那里空着，排版看起来有点奇怪」。
+
+                          原来这是两列：左边关联客户、右边客户名称。
+                          客户名称去掉之后右格就空在那儿 —— 而左边这一格
+                          其实还挂着三样附属内容（新建客户的口子、AI 对照行、
+                          不绑定时的名称框），挤在半行里本来就局促。
+
+                          改成整行：洞没了，附属内容也终于有地方站。
+                        */}
+                        <div className="grid grid-cols-1 gap-4">
                           <div>
                             {/*
                               ── 合同必须落到某一家客户身上（2026-09-12）────────────
@@ -1741,7 +1753,8 @@ const Contracts = () => {
                               关联客户 <span className="ml-1 font-bold normal-case tracking-normal text-gray-400">（合同要落到某一家身上）</span>
                             </label>
                             <select
-                              className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm"
+                              /* 控件宽度跟内容走：一个公司名不需要占满整行 */
+                              className="w-full max-w-md px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm"
                               value={formData.customerId}
                               onChange={(e) => applyCustomerSelection(e.target.value)}
                             >
