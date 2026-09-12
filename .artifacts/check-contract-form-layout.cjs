@@ -36,6 +36,20 @@ const check = (ok, l, e = '') => { if (!ok) bad++; console.log(`${ok ? '✅' : '
   const dupInputs = await p.locator('label:text-is("客户名称")').count();
   check(dupInputs === 0, '「客户名称」不再是第二个要填的框');
 
+  await p.screenshot({ path: `.artifacts/contract-form-closed-${H}.png` });
+
+  // 字段落位：关联客户和服务项目要在同一行（左右并排）
+  const sameRow = await p.evaluate(() => {
+    const lab = [...document.querySelectorAll('label')];
+    const cust = lab.find(l => /关联客户/.test(l.textContent || ''));
+    const svc  = lab.find(l => /服务项目/.test(l.textContent || ''));
+    if (!cust || !svc) return null;
+    const a = cust.getBoundingClientRect(), b = svc.getBoundingClientRect();
+    return { dy: Math.round(Math.abs(a.top - b.top)), dx: Math.round(b.left - a.left) };
+  });
+  check(sameRow && sameRow.dy < 8 && sameRow.dx > 100,
+    '关联客户与服务项目并排在同一行', sameRow ? `行差 ${sameRow.dy}px，列距 ${sameRow.dx}px` : '没找到标签');
+
   // 服务项目下拉：打开后必须整块在视口内
   const field = p.getByText('点这里从标准目录选，可多选');
   await field.scrollIntoViewIfNeeded();

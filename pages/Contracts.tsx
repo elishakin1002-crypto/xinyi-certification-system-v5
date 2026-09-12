@@ -1728,7 +1728,25 @@ const Contracts = () => {
 
                           改成整行：洞没了，附属内容也终于有地方站。
                         */}
-                        <div className="grid grid-cols-1 gap-4">
+                        {/*
+                          ── 重排（2026-09-12 三改）──────────────────────────────
+
+                          金恩来：「为什么把关联客户拉长，这样变得不协调和难看，
+                          为什么不把服务项目移动到原来客户名称的位置，
+                          这样不用移动到下面，也能看全下拉菜单了不是吗？」
+
+                          他是对的，而且一石二鸟 ——
+                          我上一版是**把洞撑开**（关联客户拉满整行），
+                          他说的是**把洞填上**，而且填进去的那个正好是
+                          「位置越高、下拉越有地方展开」的那个字段。
+
+                          连带把整张表统一成两列，不再是 2/1/2/3 混着：
+                            合同标题 │ 合同编号      ← 这份合同是什么
+                            关联客户 │ 服务项目      ← 给谁做、做什么（最关键的两项）
+                            联系人   │ 签订日期
+                            合同总额 │ 支付方式      ← 钱放一起
+                        */}
+                        <div className="grid grid-cols-2 gap-4">
                           <div>
                             {/*
                               ── 合同必须落到某一家客户身上（2026-09-12）────────────
@@ -1753,8 +1771,7 @@ const Contracts = () => {
                               关联客户 <span className="ml-1 font-bold normal-case tracking-normal text-gray-400">（合同要落到某一家身上）</span>
                             </label>
                             <select
-                              /* 控件宽度跟内容走：一个公司名不需要占满整行 */
-                              className="w-full max-w-md px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm"
+                              className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm"
                               value={formData.customerId}
                               onChange={(e) => applyCustomerSelection(e.target.value)}
                             >
@@ -1804,8 +1821,16 @@ const Contracts = () => {
                                 {contractCustomerNotice}
                               </p>
                             )}
-                          </div>
-                          <div>
+                            {/*
+                              下面这段（不绑定时的名称框 + AI 对照行）**并进这一格**，
+                              不能自己占一个格子。
+
+                              2026-09-12 三改时踩到：它原来是 grid 的第三个子元素，
+                              没内容时渲染成 null，但**格子还在** ——
+                              于是 grid-cols-2 排成 [关联客户][空]、[服务项目][空]，
+                              服务项目被挤到第二行左边，看起来像没挪成功。
+                              **不可见 ≠ 不占位**，这一条在 grid 里最容易忘。
+                            */}
                             {/*
                               ── 「客户名称」不再是一个要人填的框（2026-09-12）──────
 
@@ -1866,12 +1891,6 @@ const Contracts = () => {
                               </div>
                             )}
                           </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">联系人</label>
-                            <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.contactPerson} onChange={e => setFormData({...formData, contactPerson: e.target.value})} />
-                          </div>
                           <div>
                             {/*
                               服务项目改成「从标准目录多选」（2026-09-12）。
@@ -1899,7 +1918,14 @@ const Contracts = () => {
                             />
                           </div>
                         </div>
-                        <div className="grid grid-cols-3 gap-4"> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">合同总额 (¥)</label> <input required type="number" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm font-mono font-bold" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">签订日期</label> <input required type="date" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.signDate} onChange={e => setFormData({...formData, signDate: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">支付方式</label> <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.paymentMethod} onChange={e => setFormData({...formData, paymentMethod: e.target.value})} /> </div> </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">联系人</label>
+                            <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.contactPerson} onChange={e => setFormData({...formData, contactPerson: e.target.value})} />
+                          </div>
+                          <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">签订日期</label> <input required type="date" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.signDate} onChange={e => setFormData({...formData, signDate: e.target.value})} /> </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4"> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">合同总额 (¥)</label> <input required type="number" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm font-mono font-bold" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} /> </div> <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">支付方式</label> <input type="text" className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm" value={formData.paymentMethod} onChange={e => setFormData({...formData, paymentMethod: e.target.value})} /> </div> </div>
                         <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100"> <div className="flex justify-between items-center mb-3"> <h4 className="text-xs font-black text-gray-900 uppercase tracking-wider flex items-center"> <Wallet className="w-4 h-4 mr-2 text-blue-600" /> 支付节点与金额 (可编辑) </h4> <button type="button" onClick={addReceivable} className="text-xs font-bold text-blue-600 hover:underline flex items-center"> <Plus className="w-3 h-3 mr-1" /> 添加款项节点 </button> </div> {extractedReceivables.length === 0 && ( <div className="text-center text-gray-400 text-xs py-4 border-2 border-dashed border-gray-200 rounded-xl font-bold"> 暂无支付计划，AI 识别后将在此显示 </div> )} <div className="space-y-2"> {extractedReceivables.map((r, idx) => ( <div key={idx} className="flex space-x-2 items-center"> <div className="flex-1"> <input type="text" className="w-full px-3 py-2 text-sm font-bold border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none" value={r.node} onChange={(e) => handleReceivableChange(idx, 'node', e.target.value)} placeholder="节点名称 (如: 首付款)" /> </div> <div className="w-32 relative"> <span className="absolute left-2 top-2 text-xs text-gray-400">¥</span> <input type="number" className="w-full pl-6 pr-2 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none font-mono font-bold" value={r.amount} onChange={(e) => handleReceivableChange(idx, 'amount', Number(e.target.value))} placeholder="金额" /> </div> <div className="w-36"> <input type="date" className="w-full px-2 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none" value={r.dueDate} onChange={(e) => handleReceivableChange(idx, 'dueDate', e.target.value)} /> </div> <button type="button" onClick={() => removeReceivable(idx)} className="text-gray-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-lg transition-colors" > <Trash2 className="w-4 h-4" /> </button> </div> ))} </div> </div>
                         <div> <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center"> <AlignLeft className="w-4 h-4 mr-1" /> 备注 (注：最后一行内容) </label> <textarea className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:outline-none text-sm resize-none" rows={2} value={formData.remarks} onChange={e => setFormData({...formData, remarks: e.target.value})} ></textarea> </div>
                         <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-start"> <div className="flex items-center h-5"> <input id="createProject" name="createProject" type="checkbox" className="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded" checked={formData.createProject} onChange={e => setFormData({...formData, createProject: e.target.checked})} /> </div> <div className="ml-3 text-sm"> <label htmlFor="createProject" className="font-bold text-blue-900">同时创建合同项目 (推荐)</label> <p className="text-blue-700 text-xs mt-0.5">勾选后将自动在“项目管理”中生成对应项目，项目回款状态将自动同步此处的支付计划。</p> </div> </div>
