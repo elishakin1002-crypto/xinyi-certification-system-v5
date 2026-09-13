@@ -506,32 +506,35 @@ const Contracts = () => {
   };
 
   // FIX: Push to Knowledge Logic - Wrapped in setTimeout for robust execution
-  const handlePushToKnowledge = (e: React.MouseEvent, file: ContractAttachment) => {
-      e.stopPropagation();
-      e.preventDefault();
-      
-      try {
-          const newDoc: KnowledgeDoc = {
-              id: `DOC-FROM-CT-${Date.now()}`,
-              title: file.name.replace(/\.[^/.]+$/, "") + ' (合同归档)',
-              category: 'Template',
-              format: file.type || 'file',
-              size: file.size,
-              updatedAt: new Date().toISOString().split('T')[0],
-              content: `该文档来自合同附件归档 (${file.name})，系统已自动建立索引。\n\n(此处为系统生成的占位符，真实环境将调用 OCR 服务提取全文)`,
-              sourceUrl: file.url,
-              // 这里的 content 目前只是「系统生成的占位符」，进 RAG 纯属污染。
-              // 等真接了 OCR 提取全文，再由人决定是否开放（P0-13）
-              aiVisible: false
-          };
-          addKnowledgeDoc(newDoc);
-          setTimeout(() => alert(`✅ 已成功将 "${file.name}" 推送到知识中心！\n\n您可以在“知识中心”查看。`), 10);
-      } catch (error) {
-          console.error("Push failed:", error);
-          setTimeout(() => alert("❌ 推送失败，请稍后重试。"), 10);
-      }
-  };
+  /*
+    ── 「把合同推进知识中心」这个功能已下线（2026-09-13）────────────
 
+    金恩来：「电子档案右边有一本像书一样的东西，点击说是上传到知识中心，
+    那目前电子档案管理……是不是放在知识中心一起管理，还是单独设置一块？
+    若是在知识中心，全是合同会影响知识中心使用的便利吗？」
+
+    删掉它，三个理由，第一个是决定性的：
+
+    ① **它是一条绕过金额权限的路。**
+       顾问看合同金额是被遮成 `¥ ***` 的（刻意设计，防同事间比价、
+       防对客户议价）。但顾问有知识中心权限，而知识中心不按人过滤 ——
+       把合同 PDF 推进去，谁都能打开，**而 PDF 上就写着金额**。
+       一个按钮把一整套权限设计架空了。
+
+    ② **分类是错的。** 代码里 category 硬写成 'Template'（模板），
+       可一份已签的客户合同不是模板；content 还是一句
+       「此处为系统生成的占位符」—— 推进去也搜不到内容。
+
+    ③ **会把知识中心淹掉。** 信义一年 200-400 份合同，
+       而知识中心现在总共 40 篇。全推进去，真正可复用的那些
+       （体系文件母版、行业资料）会被合同埋掉 —— 他担心的正是这个，而且是对的。
+
+    正确的分工（见下面给他的说明）：
+      · 合同原件的家在**合同记录本身**（电子档案柜），一份合同一个出处
+      · 知识中心装的是**可复用的东西** —— 下一家也能用的母版和模板
+    真要存一份空白合同范本，直接去知识中心上传，不需要从某个客户的
+    已签合同"推"过去。
+  */
   const performFastExtraction = (text: string) => {
       const amountMatch = text.match(/(\d{1,3}(,\d{3})*(\.\d{1,2})?)(?=\s*(元|圆|RMB))/);
       const yearMatch = text.match(/202\d[-/年]\d{1,2}[-/月]\d{1,2}/);
@@ -1492,13 +1495,6 @@ const Contracts = () => {
                                                     <div className="flex space-x-1"> 
                                                         <button onClick={(e) => handlePreviewFile(e, file)} className="p-1 hover:bg-gray-100 rounded text-gray-500" title="预览" > <Eye className="w-4 h-4" /> </button> 
                                                         <button onClick={(e) => handleDownloadFile(e, file)} className="p-1 hover:bg-gray-100 rounded text-gray-500" title="下载" > <Download className="w-4 h-4" /> </button> 
-                                                        <button 
-                                                            onClick={(e) => handlePushToKnowledge(e, file)} 
-                                                            className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-indigo-600 transition-colors" 
-                                                            title="存入知识中心"
-                                                        >
-                                                            <BookOpen className="w-4 h-4" />
-                                                        </button>
                                                         {/* 移除附件入口已下线：后端无删除接口，前端删了刷新又回来 */}
                                                     </div> 
                                                 </div> 
@@ -1534,8 +1530,26 @@ const Contracts = () => {
                           <span className="font-mono font-black text-gray-900">{maskAmount(contract.amount)}</span>
                           <span className="text-gray-400 font-mono">{contract.signDate}</span>
                       </div>
-                      <div className="w-full bg-gray-200 rounded-full h-1.5 mb-3">
-                          <div className={`h-1.5 rounded-full ${progress === 100 ? 'bg-green-500' : 'bg-blue-600'}`} style={{width: `${progress}%`}}></div>
+                      {/*
+                        ── 这根条要有名字（2026-09-13）────────────────────────
+
+                        金恩来：「这个咨询合同书下面的这个长条是什么意思呢？
+                        是这个项目的服务进度吗？还是什么？」
+
+                        它是**回款进度**（已收款 ÷ 合同总额），和项目进度无关。
+                        桌面表格那边有「回款进度」表头，所以看得懂；
+                        **卡片版没有表头，只剩一根裸条** —— 谁都猜不出它在量什么。
+                        灰=一分没收、蓝=收了一部分、绿=全部收齐，
+                        这三种颜色他也是靠猜。
+
+                        百分比对顾问是可见的（那是比例，不是金额），所以直接写出来。
+                      */}
+                      <div className="flex items-center gap-2 mb-3">
+                          <span className="shrink-0 text-[10px] font-black tracking-widest text-gray-400">回款</span>
+                          <div className="h-1.5 flex-1 rounded-full bg-gray-200">
+                              <div className={`h-1.5 rounded-full ${progress === 100 ? 'bg-green-500' : 'bg-blue-600'}`} style={{width: `${progress}%`}}></div>
+                          </div>
+                          <span className="shrink-0 font-mono text-[10px] font-bold text-gray-500">{progress.toFixed(0)}%</span>
                       </div>
                       
                       {expandedContract === contract.id && (
@@ -1556,7 +1570,6 @@ const Contracts = () => {
                                               </div>
                                               <div className="flex space-x-1">
                                                   <button onClick={(e) => handleDownloadFile(e, file)} className="text-gray-400 hover:text-blue-600"><Download className="w-3 h-3" /></button>
-                                                  <button onClick={(e) => handlePushToKnowledge(e, file)} className="text-gray-400 hover:text-indigo-600"><BookOpen className="w-3 h-3" /></button>
                                               </div>
                                           </div>
                                       )) : <EmptyState compact title="暂无附件" />}
