@@ -570,18 +570,27 @@ const IntelRadar = () => {
               {isFetching ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
               抓取今日情报
             </button>
-            <button
-              onClick={archiveDailyDigest}
-              disabled={isArchivingDigest || filtered.length === 0}
-              className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center border shadow-sm transition-all active:scale-95 ${
-                (isArchivingDigest || filtered.length === 0)
-                  ? 'bg-gray-100 text-gray-400 border-gray-200'
-                  : 'bg-white text-gray-800 border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              {isArchivingDigest ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}
-              归档日报
-            </button>
+            {/*
+              ── 「归档日报」已下线（2026-09-13）────────────────────────
+
+              金恩来：「情报雷达的内容有必要沉淀到知识中心吗？感觉有点多余。」
+
+              没必要，三条理由：
+
+              ① **情报本来就存着**。market_signals 表里已经有 349 条，
+                 历史一条不会丢 —— 归档进知识中心是把同一份东西存第二遍。
+              ② **保质期完全不同**。情报是时效品（今天的线索明天就过期），
+                 知识中心装的是「下一家也能用」的母版和模板。
+                 一天一篇，一年 365 篇，会把 40 篇真正可复用的埋掉 ——
+                 和合同那件事同一个问题，只是更快。
+              ③ **它连 AI 都用不上**。日报是 aiVisible:false（代码注释写着
+                 「情报日报是新闻资讯，不是可复用知识，进 RAG 只会污染检索」），
+                 所以存进去唯一的用途就是"人翻历史"，而那件事该在情报雷达页做。
+
+              已经归档的 4 篇没有删 —— 那是他的数据，留着不碍事，
+              要清可以用 npm run checkup:knowledge 看了再决定。
+              archiveDailyDigest 函数也保留着，哪天真需要再接回来。
+            */}
             <button
               onClick={() => setShowConfig((v) => !v)}
               className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center border shadow-sm transition-all active:scale-95 ${

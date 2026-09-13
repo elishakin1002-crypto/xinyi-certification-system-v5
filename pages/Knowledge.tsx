@@ -21,7 +21,7 @@ import { adviseIntake } from '../src/modules/knowledge/intake';
 import { APP_ROUTES } from '../src/routes';
 
 const Knowledge = () => {
-  const { knowledgeDocs, auditIssues, addKnowledgeDoc, deleteKnowledgeDoc, updateKnowledgeDoc, currentUser, backfillPdcaForPaidContracts } = useApp();
+  const { knowledgeDocs, auditIssues, addKnowledgeDoc, deleteKnowledgeDoc, updateKnowledgeDoc, currentUser, activeRole, backfillPdcaForPaidContracts } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
   const [filter, setFilter] = useState('All');
@@ -73,6 +73,26 @@ const Knowledge = () => {
       if (unique.length === allRoles.length) return '全员可见';
       return unique.map(getRoleLabel).join('、');
   };
+
+  /*
+    ── AI 智能摘要只给管理层看（2026-09-13）──────────────────────
+
+    金恩来：「ai智能摘要的功能，只开发给系统管理员、总经理、总助这三个角色吧！
+    其他角色，目前先不用显示这个功能了！」
+
+    照做。三个角色：
+      SYS_ADMIN（系统管理员）、ADMIN（总经理）、MANAGER（总助）
+
+    判断用 activeRole 而不是 roles：系统里有「切换视角」，
+    而视角切换**不改权限**（这条在走查手册里专门写过）——
+    所以要看的是他当前实际生效的角色。
+
+    只是不显示这一块界面，不动 aiVisible 那个字段 ——
+    那是「这份文档准不准进 AI 语料」，和「谁能看到摘要面板」是两件事，
+    今天刚因为把两件事混在一个词里（「机密」）绕过一圈。
+  */
+  const AI_SUMMARY_ROLES: RoleID[] = ['SYS_ADMIN', 'ADMIN', 'MANAGER'];
+  const canUseAiSummary = AI_SUMMARY_ROLES.includes(activeRole);
 
   const accessibleDocs = knowledgeDocs.filter(canAccessDoc);
   const normalizedQuery = searchTerm.trim().toLowerCase();
@@ -592,8 +612,8 @@ const Knowledge = () => {
                       </div>
                   )}
                   
-                  {/* Summary Snippet */}
-                  {doc.summary ? (
+                  {/* Summary Snippet —— 摘要属于 AI 功能，同样只给那三个角色 */}
+                  {canUseAiSummary && (doc.summary ? (
                       <div className={`mt-3 p-2 rounded-lg border ${doc.aiVisible ? 'bg-indigo-50/50 border-indigo-50' : 'bg-gray-50 border-gray-100'}`}>
                           <p className={`text-xs line-clamp-2 leading-relaxed ${doc.aiVisible ? 'text-indigo-800' : 'text-gray-500'}`}>{doc.summary}</p>
                       </div>
@@ -601,7 +621,7 @@ const Knowledge = () => {
                       <div className="mt-3 p-2 rounded-lg bg-gray-50 border border-gray-50">
                           <p className="text-xs text-gray-400 italic">暂无智能摘要</p>
                       </div>
-                  )}
+                  ))}
 
                   {doc.tags && doc.tags.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1">
@@ -905,7 +925,8 @@ const Knowledge = () => {
                           </div>
                       </div>
 
-                      {/* AI Sidebar */}
+                      {/* AI Sidebar —— 只给系统管理员/总经理/总助 */}
+                      {canUseAiSummary && (
                       <div className="w-full md:w-80 bg-white border-l border-gray-100 flex flex-col shrink-0">
                           <div className="p-5 border-b border-gray-100 bg-indigo-50/30">
                               <h3 className="font-bold text-indigo-900 flex items-center">
@@ -971,6 +992,7 @@ const Knowledge = () => {
                               )}
                           </div>
                       </div>
+                      )}
                   </div>
               </div>
           </div>
