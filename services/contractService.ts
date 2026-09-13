@@ -134,6 +134,16 @@ export const contractService = {
     return { id: `A-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`, ...one };
   },
 
+  /** 删一条附件记录（只删记录，磁盘文件留着） */
+  removeAttachment: async (contractId: string, attachmentId: string): Promise<Contract> => {
+    const res = await fetch(
+      `/api/contracts/${encodeURIComponent(contractId)}/attachments/${encodeURIComponent(attachmentId)}`,
+      { method: 'DELETE', credentials: 'include' }
+    );
+    const body = await parseJson<{ contract: Contract }>(res);
+    return body.data.contract;
+  },
+
   addAttachment: async (
     contractId: string,
     attachment: ContractAttachment

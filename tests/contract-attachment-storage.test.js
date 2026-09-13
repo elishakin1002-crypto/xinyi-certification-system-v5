@@ -184,3 +184,44 @@ test('识别服务也不许造 blob —— 那才是知识中心死链的根', (
   assert.ok(!/sourceUrl: doc\.sourceUrl \|\| '#'/.test(page),
     "存不上盘时又拿 '#' 顶上了 —— 会变成「看起来有文件其实没有」的记录");
 });
+
+test('删附件要走 contractRepo，不能走 state store —— 两条路别走岔', () => {
+  /*
+    2026-09-13：我第一版把删除端点写在 app.js，走 saveContractsDataset。
+    接口返回 200，**库里纹丝不动**。
+
+    因为合同有两条写入路径：
+      · /attachments/upload   → contractRepo（关系表 contracts）
+      · /attachments（元数据） → saveContractsDataset（state store）
+    而 contracts 不在 relationalProjection 的 PROJECTED 名单里，
+    两边不会互相同步 —— 删除走错那条，等于删了个空气。
+
+    这也正是当初那句「后端无删除接口，前端删了刷新又回来」的真实由来：
+    **不是没接口，是两条路走岔了。**
+
+    实测（.artifacts/check-attachment-remove.cjs）：
+    删之前 3 条 → 删之后 2 条 → 刷新仍是 2 条。
+  */
+  const uploads = code('server/routes/uploads.js');
+  assert.match(uploads, /router\.delete\('\/api\/contracts\/:id\/attachments\/:attachmentId'/,
+    '删除端点不在 uploads.js 里 —— 它必须和上传走同一个 repo');
+  assert.match(uploads, /contractRepo\.removeAttachment/, '没有用 contractRepo 删');
+
+  const app = code('server/app.js');
+  assert.ok(!/app\.delete\('\/api\/contracts\/:id\/attachments/.test(app),
+    'app.js 里又出现一个删除端点 —— 那条路写不到关系表，会「删了又回来」');
+
+  const repo = code('server/repos/contractRepo.js');
+  assert.match(repo, /removeAttachment: async/, 'contractRepo 缺 removeAttachment');
+});
+
+test('前端「移除附件」按钮要在 —— 不然重传完一堆死的混着好的', () => {
+  /*
+    生产 12 份合同挂着 blob 死链，重传只是"再加一条"。
+    旧那条删不掉的话，每份合同都会变成「一条死的 + 一条好的」，
+    谁也分不清该点哪个。
+  */
+  const page = code('pages/Contracts.tsx');
+  assert.ok(!/移除附件入口已下线/.test(page), '移除入口又被下线了');
+  assert.match(page, /contractService\.removeAttachment\(/, '按钮没有真的调删除接口');
+});

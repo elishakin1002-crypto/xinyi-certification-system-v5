@@ -1495,7 +1495,32 @@ const Contracts = () => {
                                                     <div className="flex space-x-1"> 
                                                         <button onClick={(e) => handlePreviewFile(e, file)} className="p-1 hover:bg-gray-100 rounded text-gray-500" title="预览" > <Eye className="w-4 h-4" /> </button> 
                                                         <button onClick={(e) => handleDownloadFile(e, file)} className="p-1 hover:bg-gray-100 rounded text-gray-500" title="下载" > <Download className="w-4 h-4" /> </button> 
-                                                        {/* 移除附件入口已下线：后端无删除接口，前端删了刷新又回来 */}
+                                                        {/*
+                                                          移除附件（2026-09-13 恢复）。
+
+                                                          原来这里是关着的，注释写着「后端无删除接口，
+                                                          前端删了刷新又回来」—— 现在接口补上了。
+
+                                                          为什么现在必须有：生产上 12 份合同挂着历史遗留的
+                                                          blob 死链，重传只是"再加一条"，旧那条不删
+                                                          就变成「一堆死的混着好的」，谁也分不清该点哪个。
+                                                        */}
+                                                        <button
+                                                          onClick={async (e) => {
+                                                            e.stopPropagation();
+                                                            if (!window.confirm(`确认移除「${file.name}」这条附件记录？\n\n只是从这份合同上摘掉这条记录，不影响别处。`)) return;
+                                                            try {
+                                                              await contractService.removeAttachment(contract.id, file.id);
+                                                              removeContractAttachment(contract.id, file.id);
+                                                            } catch (err) {
+                                                              alert(`移除失败：${err instanceof Error ? err.message : '未知错误'}`);
+                                                            }
+                                                          }}
+                                                          className="p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-600"
+                                                          title="移除这条附件记录"
+                                                        >
+                                                          <Trash2 className="w-4 h-4" />
+                                                        </button>
                                                     </div> 
                                                 </div> 
                                             )) : ( 

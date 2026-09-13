@@ -65,6 +65,37 @@ router.post('/api/contracts/:id/attachments/upload', (req, res, next) => {
   sendSuccess(res, { contract, attachment }, 'success', ERROR_CODES.SUCCESS, 201);
 }));
 
+/*
+  删一条合同附件记录。
+
+  ── 为什么放在这个文件里（2026-09-13）──────────────────────────
+
+  我第一版把它写在 app.js，走 saveContractsDataset（state store 那条路）——
+  接口返回 200，**库里纹丝不动**。
+
+  因为合同有**两条写入路径**：
+    · /attachments/upload  → contractRepo（关系表 contracts）
+    · /attachments（元数据）→ saveContractsDataset（state store）
+  而 contracts 不在 relationalProjection 的 PROJECTED 名单里，
+  两边不会互相同步。删除走错了那条，等于删了个空气。
+
+  这也正是当初那句「后端无删除接口，前端删了刷新又回来」的真实由来 ——
+  **不是没接口，是两条路走岔了。**
+
+  所以放在上传旁边：同一个文件、同一个 repo、同一份数据。
+
+  **只删记录，不删磁盘文件** —— 文件可能被别处引用，留着也不占地方；
+  真要清盘是另一件事，得有专门的脚本才安全。
+*/
+router.delete('/api/contracts/:id/attachments/:attachmentId', (req, res, next) => {
+  if (!pool.isEnabled()) return sendFail(res, ERROR_CODES.SERVER_ERROR, '数据库未启用', {}, 500);
+  next();
+}, wrap(async (req, res) => {
+  const contract = await contractRepo.removeAttachment(req.params.id, req.params.attachmentId);
+  if (!contract) return sendFail(res, ERROR_CODES.NOT_FOUND, '合同不存在', {}, 404);
+  sendSuccess(res, { contract, removed: req.params.attachmentId }, 'success');
+}));
+
 // 通用文件上传：只存盘并返回可访问 URL，不绑定业务记录。
 // 用于表单在保存前先把文件传上来（审核证据、现场照片等），避免把 base64 塞进数据字段。
 const ALLOWED_SCOPES = new Set(['audit-evidence', 'work-log', 'knowledge', 'misc']);

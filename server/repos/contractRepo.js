@@ -63,6 +63,28 @@ const contractRepo = {
     const attachments = Array.isArray(c.attachments) ? c.attachments : [];
     if (attachments.some((a) => a.id === attachment.id)) return c;
     return contractRepo.update(id, { attachments: [...attachments, attachment] });
+  },
+
+  /**
+   * 删掉一条附件记录。
+   *
+   * 2026-09-13：以前没有这个接口，所以前端那个「移除」按钮一直是关着的
+   * （注释写着「后端无删除接口，前端删了刷新又回来」）。
+   *
+   * 现在必须有：生产上 12 份合同的附件是历史遗留的 blob 死链，
+   * 重传是"再加一条"，不重传的那条会一直留着 ——
+   * 变成「12 条死的 + 12 条好的」，谁也分不清该点哪个。
+   *
+   * **只删记录，不删磁盘文件**：文件可能被别处引用，而且留着不占多少地方；
+   * 真要清盘，那是另一件事（有专门的清理脚本才安全）。
+   */
+  removeAttachment: async (id, attachmentId) => {
+    const c = await contractRepo.getById(id);
+    if (!c) return null;
+    const attachments = Array.isArray(c.attachments) ? c.attachments : [];
+    const next = attachments.filter((a) => String(a?.id || '') !== String(attachmentId));
+    if (next.length === attachments.length) return c;   // 没这条，当作已完成
+    return contractRepo.update(id, { attachments: next });
   }
 };
 
