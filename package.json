@@ -75,7 +75,8 @@
     "walkthrough:snapshot": "node scripts/walkthrough-env.mjs snapshot",
     "walkthrough:reset": "node scripts/walkthrough-env.mjs reset",
     "walkthrough:status": "node scripts/walkthrough-env.mjs status",
-    "walkthrough:accounts": "node scripts/walkthrough-accounts.mjs"
+    "walkthrough:accounts": "node scripts/walkthrough-accounts.mjs",
+    "checkup:knowledge": "node scripts/checkup-knowledge.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

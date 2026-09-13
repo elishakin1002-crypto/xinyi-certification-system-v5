@@ -120,3 +120,67 @@ test('顾问看不到金额这条设计还在 —— 上面那条的前提', () 
   assert.ok(!/CONTRACT_VIEW_AMOUNT/.test(m[1]),
     '顾问被授予了看金额的权限 —— 请重新评估合同能不能进知识中心');
 });
+
+test('知识中心上传也要真的存盘 —— 同一个 bug 的第二处', () => {
+  /*
+    2026-09-13 金恩来：「我看了一下现在的知识中心里还是有合同的」。
+
+    顺着看下去发现知识中心的上传也是 `URL.createObjectURL(file)` ——
+    和合同附件同一个 bug。体检结果：40 篇里 **7 篇是 blob 死链**，
+    列表上看着正常，点开是空白。
+
+    注意：文件里还会剩一处 createObjectURL，那一处是**正当**的 ——
+    把 doc.content 当场变成 Blob 下载、下一行就 revoke，不存库。
+    所以这里不能简单地"禁止出现 createObjectURL"，要看它有没有被存进 sourceUrl。
+  */
+  const page = code('pages/Knowledge.tsx');
+  assert.ok(!/sourceUrl:\s*URL\.createObjectURL/.test(page),
+    '知识文档的 sourceUrl 又存成 blob 临时地址了 —— 刷新就变死链');
+  assert.match(page, /\/api\/uploads\/knowledge/, '没有走服务端真实上传');
+  assert.match(page, /没有创建这条记录/, '上传失败时还在建记录 —— 那会直接变成一条死链');
+});
+
+test('打不开的文档要说清是「没存下来」，不是「演示数据」', () => {
+  /*
+    原文案：「【演示模式】此为纯演示条目，无实体内容。」
+    —— 会让人以为是样例，于是不管它。实际是历史遗留的死链，需要重新上传。
+  */
+  const page = code('pages/Knowledge.tsx');
+  assert.ok(!/演示模式.*无实体内容/.test(page), '又把死链说成演示数据了');
+  assert.match(page, /sourceUrl.*startsWith\('blob:'\)/, '没有把 blob 判成失效');
+});
+
+test('「机密」这两个字不许再用来形容 AI 权限', () => {
+  /*
+    金恩来：「点击合同，标签上写着全员可见，又写着机密模式是什么意思？」
+
+    因为是**两个不同的轴**：
+      · 可见范围 = 哪些人能打开（accessRoles）
+      · aiVisible = AI 能不能读
+
+    中文「机密」默认指对人保密，所以「全员可见 + 机密」读起来自相矛盾。
+    改成直说 AI，两个轴各说各的就不打架了。
+  */
+  const page = code('pages/Knowledge.tsx');
+  assert.ok(!/机密模式/.test(page), '又出现「机密模式」—— 和「全员可见」放一起会自相矛盾');
+  assert.ok(!/>机密</.test(page), '徽章又写成「机密」了');
+  assert.match(page, /AI 不可读/, '没有改成直说 AI 的说法');
+});
+
+test('识别服务也不许造 blob —— 那才是知识中心死链的根', () => {
+  /*
+    知识中心有两条入库路径，我第一次只修了页面那条，
+    实测传一份文件上去**还是 blob** —— 因为另一条走识别服务，
+    页面只是原样接收 `doc.sourceUrl`。
+
+    「同一件事有几个出口」这个问题，这次是我自己没数清楚。
+  */
+  const svc = code('services/ingestion/knowledge.ts');
+  assert.ok(!/sourceUrl:\s*URL\.createObjectURL/.test(svc),
+    '识别服务又把 blob 当成 sourceUrl 了');
+  assert.match(svc, /\/api\/uploads\/knowledge/, '识别服务没有真的存盘');
+
+  const page = code('pages/Knowledge.tsx');
+  assert.ok(!/sourceUrl: doc\.sourceUrl \|\| '#'/.test(page),
+    "存不上盘时又拿 '#' 顶上了 —— 会变成「看起来有文件其实没有」的记录");
+});

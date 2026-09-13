@@ -2,6 +2,25 @@ import { aiService } from '../aiService';
 import { extractTextFromDocx, readFileAsBase64, IngestResult } from './fileUtils';
 import { KnowledgeDoc } from '../../types';
 
+/**
+ * 把文件真的存到服务器，返回稳定地址。失败返回空字符串。
+ *
+ * 不抛异常：识别流程本身还是有价值的（摘要、正文都提出来了），
+ * 不该因为存盘失败就整个失败。但**地址必须诚实** ——
+ * 存不上就是空，别拿一个假地址顶上。
+ */
+const storeFile = async (file: File): Promise<string> => {
+  try {
+    const form = new FormData();
+    form.append('files', file);
+    const res = await fetch('/api/uploads/knowledge', { method: 'POST', credentials: 'include', body: form });
+    const body = await res.json();
+    return String(body?.data?.files?.[0]?.url || '');
+  } catch {
+    return '';
+  }
+};
+
 export const processKnowledge = async (file: File, options?: { aiVisible?: boolean }): Promise<IngestResult<Partial<KnowledgeDoc>>> => {
   try {
     let extractedText = "";
@@ -52,7 +71,20 @@ export const processKnowledge = async (file: File, options?: { aiVisible?: boole
       updatedAt: new Date().toISOString().split('T')[0],
       content: content,
       summary: summary,
-      sourceUrl: URL.createObjectURL(file),
+      /*
+        ── 存盘，别造 blob（2026-09-13）──────────────────────────────
+
+        原来是 URL.createObjectURL(file) —— 浏览器临时地址，
+        刷新就失效、换个人永远打不开。
+        体检发现知识中心 40 篇里 **7 篇就是这么变成死链的**：
+        列表上看着正常，点开是空白。
+
+        和合同附件是同一个 bug。这条路更隐蔽 ——
+        页面那边只是原样接收 `doc.sourceUrl`，根在这里。
+        存不上就返回空，由调用方决定要不要建这条记录；
+        **宁可没有文件，也不要一条打不开的死链。**
+      */
+      sourceUrl: await storeFile(file),
       // 默认不开放给 AI：调用方明确需要时再显式传 true。
       // 反过来（默认 true）的话，任何新接入的自动归档都会悄悄进检索库（P0-13）
       aiVisible: options?.aiVisible ?? false

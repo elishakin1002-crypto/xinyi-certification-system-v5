@@ -310,6 +310,20 @@ const Knowledge = () => {
               finalAiVisible = false;   // 无论原来勾没勾，这两类都不进语料
           }
 
+          /* 先存盘拿稳定地址，存不上就别建这条记录 —— 建了也是死链 */
+          let uploadedUrl = '';
+          try {
+            const form = new FormData();
+            form.append('files', file);
+            const up = await fetch('/api/uploads/knowledge', { method: 'POST', credentials: 'include', body: form });
+            const upBody = await up.json();
+            uploadedUrl = String(upBody?.data?.files?.[0]?.url || '');
+            if (!uploadedUrl) throw new Error(upBody?.message || '服务端没有返回文件地址');
+          } catch (err) {
+            alert(`文件没能存到服务器：${err instanceof Error ? err.message : '未知错误'}\n\n没有创建这条记录 —— 否则它会变成一条打不开的死链。请重试。`);
+            return;
+          }
+
           const newDoc: KnowledgeDoc = {
               id: `DOC-${Date.now()}`,
               title: finalTitle,
@@ -318,7 +332,19 @@ const Knowledge = () => {
               size: `${(file.size / 1024).toFixed(1)} KB`,
               updatedAt: new Date().toISOString().split('T')[0],
               content: extractedText,
-              sourceUrl: URL.createObjectURL(file), // Create object URL for preview/download
+              /*
+                ── 真的把文件存下来（2026-09-13）────────────────────────
+
+                原来这里是 URL.createObjectURL(file) —— 浏览器临时地址，
+                刷新就失效，别人永远打不开。
+                **体检发现知识中心 40 篇里有 7 篇就是这么变成死链的**，
+                列表上看着正常，点开是空白。
+
+                和合同附件是同一个 bug（同一天先在合同那边修的）。
+                服务端的通用上传接口本来就是为这种场景准备的，
+                注释里写着「避免把 base64 塞进数据字段」。
+              */
+              sourceUrl: uploadedUrl,
               aiVisible: finalAiVisible,
               accessRoles: visibleRoles
           };
@@ -356,14 +382,24 @@ const Knowledge = () => {
 
   const handleDownload = (e: React.MouseEvent, doc: KnowledgeDoc) => {
       e.stopPropagation();
-      if (!doc.sourceUrl || doc.sourceUrl === '#') {
+      /* blob: 是历史遗留的临时地址，早就失效了 —— 和"没有地址"一个意思 */
+      if (!doc.sourceUrl || doc.sourceUrl === '#' || doc.sourceUrl.startsWith('blob:')) {
           if (doc.content) {
               const blob = new Blob([doc.content], { type: 'text/markdown' });
               const url = URL.createObjectURL(blob);
               triggerDownload(url, `${doc.title}.md`);
               URL.revokeObjectURL(url);
           } else {
-              alert('【演示模式】此为纯演示条目，无实体内容。');
+              /*
+                这里原来说「演示模式，无实体内容」—— 会让人以为是样例数据。
+                实际多半是历史遗留：文件当初存成了 blob 临时地址，早失效了。
+                说清是哪种情况，人才知道要不要重新上传。
+              */
+              alert(String(doc.sourceUrl || '').startsWith('blob:')
+                ? `「${doc.title}」的原文件没有真的存下来。\n\n`
+                  + `它是旧版本留下的临时地址，刷新之后就失效了 —— 别人也从来打不开。\n\n`
+                  + `请重新上传一次，这次会真的存到服务器上。`
+                : `「${doc.title}」没有可下载的文件，只有一条记录。`);
           }
       } else {
           triggerDownload(doc.sourceUrl, doc.title);
@@ -421,7 +457,20 @@ const Knowledge = () => {
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center space-x-4">
               <div className="p-3 bg-gray-50 rounded-xl text-gray-600"><Lock className="w-6 h-6" /></div>
               <div>
-                  <p className="text-xs text-gray-400 font-bold uppercase">机密/隔离文档</p>
+                  {/*
+                    ── 「机密」这个词说的是 AI，不是人（2026-09-13 改）──────────
+
+                    金恩来：「点击合同，提示的标签上写着全员可见，
+                    又写着机密模式是什么意思？」
+
+                    因为这是**两个不同的轴**，而标签让它们看起来互相矛盾：
+                      · 可见范围 = **哪些人**能打开（accessRoles）
+                      · 机密模式 = **AI 能不能读**（aiVisible）
+
+                    中文里「机密」默认指对人保密，所以「全员可见 + 机密」
+                    读起来就是自相矛盾。改成直说 AI —— 两个轴各说各的，就不打架了。
+                  */}
+                  <p className="text-xs text-gray-400 font-bold uppercase">AI 不可读文档</p>
                   <p className="text-2xl font-black text-gray-900">{accessibleDocs.length - learnedDocsCount}</p>
               </div>
           </div>
@@ -515,9 +564,9 @@ const Knowledge = () => {
                               <span className="text-[10px] font-bold text-indigo-600">AI</span>
                           </div>
                       ) : (
-                          <div className="flex items-center space-x-1 bg-gray-100 px-2 py-1 rounded-lg border border-gray-200" title="机密文档 (AI 无法读取)">
+                          <div className="flex items-center space-x-1 bg-gray-100 px-2 py-1 rounded-lg border border-gray-200" title="这份不让 AI 读取（人照常按可见范围打开）">
                               <Lock className="w-3 h-3 text-gray-500" />
-                              <span className="text-[10px] font-bold text-gray-500">机密</span>
+                              <span className="text-[10px] font-bold text-gray-500">AI 不可读</span>
                           </div>
                       )}
                   </div>
@@ -676,7 +725,7 @@ const Knowledge = () => {
                           />
                           <label htmlFor="aiVisible" className="flex-1 cursor-pointer select-none">
                               <div className={`text-sm font-bold ${aiVisible ? 'text-indigo-900' : 'text-gray-700'}`}>
-                                  {aiVisible ? '允许 AI 读取并学习 (RAG)' : '设为机密/隔离文档'}
+                                  {aiVisible ? '允许 AI 读取并学习 (RAG)' : '不让 AI 读这份（人照常能看）'}
                               </div>
                               <div className="text-[10px] text-gray-500 mt-0.5">
                                   {aiVisible ? 'AI 助手可以引用此文档回答问题' : '🔒 仅用于存储，AI 助手无法访问内容'}
@@ -704,7 +753,9 @@ const Knowledge = () => {
                                         updatedAt: new Date().toISOString().split('T')[0],
                                         content: doc.content || '',
                                         summary: doc.summary || '',
-                                        sourceUrl: doc.sourceUrl || '#',
+                                        /* 识别服务存不上盘时会返回空 —— 不要再拿 '#' 顶上，
+                                           那会变成一条"看起来有文件其实没有"的记录 */
+                                        sourceUrl: doc.sourceUrl || '',
                                         aiVisible: aiVisible,
                                         accessRoles: visibleRoles
                                     };
@@ -712,7 +763,9 @@ const Knowledge = () => {
                                     if (!added) return;
                                     setIsModalOpen(false);
                                     setNewDocTitle('');
-                                    alert("✅ 上传成功！AI 已自动处理内容。");
+                                    alert(newDoc.sourceUrl
+                                      ? "✅ 上传成功！文件已存档，AI 已自动处理内容。"
+                                      : "⚠️ 内容已提取入库，但**原文件没能存到服务器** —— 这条记录点开会没有文件。\n\n请稍后重新上传一次。");
                                 }
                             }}
                             onError={(msg) => alert(`上传失败: ${msg}`)}
@@ -747,7 +800,7 @@ const Knowledge = () => {
                                   )}
                                   {!previewDoc.aiVisible && (
                                       <span className="flex items-center text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded border border-red-100 font-bold">
-                                          <Lock className="w-3 h-3 mr-1" /> 机密模式
+                                          <Lock className="w-3 h-3 mr-1" /> AI 不可读
                                       </span>
                                   )}
                               </div>
@@ -866,7 +919,7 @@ const Knowledge = () => {
                                       <ShieldCheck className="w-10 h-10 text-gray-300 mx-auto mb-3" />
                                       <p className="text-sm font-bold text-gray-600">AI 访问受限</p>
                                       <p className="text-xs text-gray-400 mt-2 leading-relaxed">
-                                          该文档已被标记为“机密/隔离”。<br/>为了保护您的数据隐私，<br/>AI 无法读取、总结或引用此内容。
+                                          这份文档设置了**不让 AI 读取**。<br/>AI 不会读取、总结或引用它的内容。<br/><br/>这**不影响人查看** —— 谁能打开，看上面的「可见范围」。
                                       </p>
                                   </div>
                               ) : isSummarizing ? (

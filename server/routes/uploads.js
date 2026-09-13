@@ -67,7 +67,7 @@ router.post('/api/contracts/:id/attachments/upload', (req, res, next) => {
 
 // 通用文件上传：只存盘并返回可访问 URL，不绑定业务记录。
 // 用于表单在保存前先把文件传上来（审核证据、现场照片等），避免把 base64 塞进数据字段。
-const ALLOWED_SCOPES = new Set(['audit-evidence', 'work-log', 'misc']);
+const ALLOWED_SCOPES = new Set(['audit-evidence', 'work-log', 'knowledge', 'misc']);
 const genericStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const scope = ALLOWED_SCOPES.has(String(req.params.scope)) ? String(req.params.scope) : 'misc';
