@@ -112,7 +112,30 @@ const login = async (account, password) => {
  * 所以这里按 URL 前缀取对应资源的真实 id，取不到就跳过这条 ——
  * **宁可少测一条，也不要报一条假的。**
  */
-const fillParams = (url, ids) => {
+const fillParams = (url, ids, method) => {
+  /*
+    ── DELETE 一律用假 id（2026-09-13）──────────────────────────
+
+    这个脚本自动发现所有路由，包括 `router.delete('/api/knowledge/:id')`，
+    然后拿**真实 id** 去调 —— 于是每跑一次巡检，
+    每个有权限的角色就真删掉一条真实记录。
+
+    实测：跑一次 checkup:authz，知识中心从 8 篇变 6 篇。
+    这就是本机数据总和生产对不上的原因之一 ——
+    **我的巡检工具自己在破坏数据。**
+
+    而这里根本不需要真 id：判定只看「是不是 403」。
+      · 有权限 + 假 id → 404（不是 403）→ 判为「放行」✅
+      · 没权限 + 假 id → 403           → 判为「拒绝」✅
+    两种情况都判得准，而且一条真实记录都不会少。
+
+    PATCH/PUT 发的是空 body `{}`，改不动什么，保持用真 id
+    （那样能顺带验到 ownership 之类的范围判断）。
+  */
+  if (String(method || '').toUpperCase() === 'DELETE') {
+    return url.replace(/:[a-zA-Z]+/g, 'ZZZ-NOT-EXIST');
+  }
+
   const kind = url.startsWith('/api/leads') ? 'lead'
     : url.startsWith('/api/customers') ? 'customer'
       : url.startsWith('/api/projects') ? 'project'
@@ -160,7 +183,7 @@ const main = async () => {
 
     for (const ep of endpoints) {
       const should = caps[u.role].includes(ep.action);
-      const url = fillParams(ep.url, ids);
+      const url = fillParams(ep.url, ids, ep.method);
       if (!url) { if (u === users[0]) skipped.push(`${ep.method} ${ep.url}（没有可用的真实 id）`); continue; }
       let status = 0; let policy = '';
       try {
@@ -248,6 +271,9 @@ const main = async () => {
     ['projects', 'name', '项目'],
     ['customers', 'name', '客户'],
     ['leads', 'name', '线索'],
+    // 2026-09-13 补：知识中心当初漏在名单外，于是每跑一次巡检就多几条
+    // 空壳文档，而这段自检看不见它们 —— 自检自己有盲区，比没有自检更糟。
+    ['knowledge_docs', 'title', '知识文档'],
   ];
   const leftovers = [];
   for (const [table, col, label] of emptyChecks) {

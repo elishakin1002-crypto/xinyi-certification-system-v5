@@ -1116,7 +1116,33 @@ const Contracts = () => {
 
   // 顶部概览：执行中、合同总额、风险预警、已回款
   const contractStats = (() => {
-    const live = contracts.filter(c => c.archiveStatus !== ARCHIVE_STATUS.ARCHIVED);
+    /*
+      ── 统计要跟着「范围」走（2026-09-13）────────────────────────
+
+      金恩来：「现在显示执行中的合同和金额等都不对，实际合同就看到一份」。
+
+      不是数据错了，是**两边口径不一致**：
+        · 顶上四张卡按 contracts（全量）算
+        · 下面列表按 filteredContracts（受「范围/状态/搜索」筛）显示
+
+      他当时是系统管理员、范围＝「与我相关」，而没有一份合同挂在他名下 ——
+      于是列表空空、统计却写着 13 份 ¥262,400。
+
+      这和之前工作台那次「在制项目 8 / 人均 3.67 全是假的」是同一类：
+      **同一个数字有两套算法**。修法也一样 —— 统一口径。
+
+      跟「范围」走，但不跟「状态页签」和「搜索框」走：
+      那两个是范围之内的下钻，而这四张卡本身就是按状态汇总的
+      （执行中 / 风险预警），再跟一次会变成自己筛自己。
+    */
+    const scoped = contracts.filter(c => {
+      if (contractScope !== 'related') return true;
+      const owner = String((c as any).owner || '').trim();
+      if (owner) return owner === currentUser.name;
+      const linked = projects.find(p => p.contractRef === c.id || p.contractRef === c.contractNo);
+      return linked ? String(linked.manager || '') === currentUser.name : false;
+    });
+    const live = scoped.filter(c => c.archiveStatus !== ARCHIVE_STATUS.ARCHIVED);
     const risk = live.filter(c =>
       c.riskLevel === 'High'
       || c.status === Status.Risk
@@ -1217,10 +1243,19 @@ const Contracts = () => {
              />
              <button
                onClick={() => importInputRef.current?.click()}
-               title="从 Excel 批量导入已经做完的老合同，不会生成合同项目"
+               /*
+                 名字要说清是什么格式（2026-09-13）。
+
+                 金恩来：「为什么导入历史合同无法导入PDF？」——
+                 因为它是 **Excel 台账批量导入**，一次搬几十上百条老合同的**记录**，
+                 不是传合同**文件**。但「导入历史合同」这个名字听起来就是后者。
+
+                 传 PDF 的入口在另一处：合同详情 → 电子档案柜 → 添加。
+               */
+               title="把 Excel/CSV 台账里的老合同批量搬进来（只导记录，不传文件、不生成项目）。要传合同 PDF 请进合同详情的电子档案柜"
                className="bg-white text-gray-700 border border-gray-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-50 flex items-center shadow-sm whitespace-nowrap"
              >
-               <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" /> 导入历史合同
+               <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" /> Excel 批量导入
              </button>
              <button
                onClick={openContractModal}
@@ -1276,7 +1311,7 @@ const Contracts = () => {
           </button>
         ))}
         <span className="text-[11px] font-bold text-gray-400">
-          合同全公司可见；金额按身份显示（顾问看到的是 ¥ ***）
+          上面四张卡按这个范围统计；合同全公司可见，金额按身份显示（顾问看到 ¥ ***）
         </span>
       </div>
       <div className="flex space-x-2 mb-6 border-b border-gray-200 pb-1 overflow-x-auto no-scrollbar"> {[ { id: 'all', label: '全部活跃', icon: AlignLeft }, { id: 'active', label: '执行中', icon: Zap }, { id: 'risk', label: '风险预警', icon: ShieldAlert }, { id: 'archived', label: '已归档', icon: Archive }, ].map(tab => ( <button key={tab.id} onClick={() => setFilterStatus(tab.id as any)} className={`flex items-center px-4 py-2 text-sm font-bold border-b-2 transition-colors whitespace-nowrap uppercase tracking-wide ${ filterStatus === tab.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' }`} > <tab.icon className="w-4 h-4 mr-2" /> {tab.label} </button> ))} </div>

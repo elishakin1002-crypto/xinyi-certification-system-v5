@@ -57,7 +57,27 @@ const guardAiVisible = (body = {}) => {
 router.post('/api/knowledge',
   requireAction('KNOWLEDGE_WRITE', { resource: (req) => ({ type: 'knowledge', id: req.params?.id || '' }) }),
   wrap(async (req, res) => {
-  const doc = await knowledgeRepo.create({ source: 'manual', ...guardAiVisible(payload(req.body)) });
+  /*
+    ── 空 body 不许建出记录（2026-09-13）────────────────────────
+
+    金恩来看见知识中心里一堆没标题的条目。追下去发现是
+    `npm run checkup:authz` 造的：那个脚本给每个非 GET 接口发 `{}`
+    来验鉴权，而这里空 body 也照样 201 —— 于是每跑一次巡检
+    就多出几条空壳文档。09-11 那 25 条就是这么来的。
+
+    **发空 body 是对的**（要验的是 403 和非 403），
+    错的是建接口不校验。contracts / projects / customers / leads
+    早就补了 400，唯独知识中心和合同一样漏了。
+
+    标题是最低要求：没有标题的文档，列表上认不出、搜也搜不到，
+    存在本身就是噪音。
+  */
+  const body = payload(req.body) || {};
+  if (!String(body.title || '').trim()) {
+    return sendFail(res, ERROR_CODES.PARAM_ERROR,
+      '缺少文档标题。没有标题的文档在列表里认不出、也搜不到，等于存了个空壳。', {}, 400);
+  }
+  const doc = await knowledgeRepo.create({ source: 'manual', ...guardAiVisible(body) });
   sendSuccess(res, { doc }, 'success', ERROR_CODES.SUCCESS, 201);
 }));
 

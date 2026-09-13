@@ -225,3 +225,38 @@ test('前端「移除附件」按钮要在 —— 不然重传完一堆死的混
   assert.ok(!/移除附件入口已下线/.test(page), '移除入口又被下线了');
   assert.match(page, /contractService\.removeAttachment\(/, '按钮没有真的调删除接口');
 });
+
+test('权限巡检不许删真实数据 —— DELETE 用假 id', () => {
+  /*
+    2026-09-13 全面自检时抓到的：`npm run checkup:authz` 自动发现所有路由，
+    包括 `router.delete('/api/knowledge/:id')`，然后拿**真实 id** 去调 ——
+    每跑一次，每个有权限的角色就真删掉一条真实记录。
+
+    实测：跑一次巡检，知识中心从 8 篇变 6 篇。
+    **我的巡检工具自己在破坏数据**，而这正是本机总和生产对不上的原因之一。
+
+    修法不需要真 id：判定只看「是不是 403」——
+      有权限 + 假 id → 404（非 403）→ 判「放行」✅
+      没权限 + 假 id → 403          → 判「拒绝」✅
+    两种都判得准，而且一条真记录都不会少。
+  */
+  const src = fs.readFileSync(path.join(root, 'scripts/authz-matrix-live.mjs'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.match(src, /=== 'DELETE'[\s\S]{0,120}ZZZ-NOT-EXIST/,
+    'DELETE 又用真实 id 了 —— 巡检会把真记录删掉');
+  assert.match(src, /fillParams\(ep\.url, ids, ep\.method\)/, 'fillParams 没收到 method，判断不了是不是 DELETE');
+});
+
+test('建知识文档要校验标题 —— 空 body 不许建出空壳', () => {
+  /*
+    空壳文档的来源：巡检给每个非 GET 接口发 `{}`，而这个接口空 body 也返回 201。
+    contracts / projects / customers / leads 早就补了 400，唯独知识中心漏了。
+    发空 body 是对的（要验 403 与非 403），错的是建接口不校验。
+  */
+  const src = fs.readFileSync(path.join(root, 'server/routes/knowledge.js'), 'utf8');
+  assert.match(src, /缺少文档标题/, 'POST /api/knowledge 没有校验标题');
+
+  const script = fs.readFileSync(path.join(root, 'scripts/authz-matrix-live.mjs'), 'utf8');
+  assert.match(script, /\['knowledge_docs', 'title', '知识文档'\]/,
+    '空记录自检的名单里漏了知识中心 —— 自检有盲区比没自检更糟');
+});

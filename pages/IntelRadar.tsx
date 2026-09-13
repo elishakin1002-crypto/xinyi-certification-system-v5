@@ -372,7 +372,22 @@ const IntelRadar = () => {
           if (latest.lastRunAt) setLastRunAt(latest.lastRunAt);
           setFetchError('');
           setFetchSource('cache');
-          setFetchNotice(`本次联网抓取未返回新增可用情报，已展示最近缓存/历史情报（${latest.signals.length} 条）。`);
+          /*
+            ── 服务端给了具体原因就照实说（2026-09-13）──────────────
+
+            金恩来：「抓取今日情报总是提示没有抓取到任何东西」。
+
+            真因是**情报源一条都没配**（sourceUrls 为空），
+            而服务端返回的其实是一句能照着做的话：
+            「未配置情报源。请点「情报源设置」填入政府/招投标/行业协会官网 URL」。
+
+            但这里不管三七二十一都写成「未返回新增可用情报」——
+            **把可操作的原因换成了无从下手的现象**。
+            人只会以为"今天没新闻"，而实际上这个功能从来没配过。
+          */
+          setFetchNotice(result.error
+            ? `${result.error}\n\n（下面是最近缓存/历史情报 ${latest.signals.length} 条）`
+            : `本次联网抓取未返回新增可用情报，已展示最近缓存/历史情报（${latest.signals.length} 条）。`);
           return;
         }
         setLatestFetchIds([]);

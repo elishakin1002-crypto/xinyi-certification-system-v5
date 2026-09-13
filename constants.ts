@@ -273,8 +273,21 @@ export const ROLE_PERMISSIONS: Record<RoleID, PermissionCode[]> = {
   MANAGER: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL', 'NAV_STRATEGY'],
   // 销售可进交付看进度（客户会问证书什么时候下来），但动作权限里没有编辑类
   SALES: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_KNOWLEDGE', 'NAV_INTEL'],
-  CONSULTANT: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_AUDIT', 'NAV_KNOWLEDGE', 'NAV_INTEL'],
-  FINANCE: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_FINANCE', 'NAV_KNOWLEDGE', 'NAV_INTEL']
+  /*
+    ── 情报雷达只给会用它的人（2026-09-13）──────────────────────
+
+    金恩来：「情报雷达这个功能也只对系统管理员、销售、总经理、助理开放，
+    对其他角色可以隐藏不见」。
+
+    照做：ADMIN（总经理）/ SYS_ADMIN（系统管理员）/ MANAGER（总助）/ SALES（销售）留着，
+    CONSULTANT（咨询顾问）和 FINANCE（财务）去掉。
+
+    business 上也说得通：情报雷达是**找新客户**用的，
+    顾问管交付、财务管钱，都不是这条链上的人 ——
+    给他们看只是多一个永远不点的菜单。
+  */
+  CONSULTANT: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_AUDIT', 'NAV_KNOWLEDGE'],
+  FINANCE: ['NAV_CRM', 'NAV_DELIVERY', 'NAV_FINANCE', 'NAV_KNOWLEDGE']
 };
 
 export const INTEL_REGIONS = ['温州', '苍南', '平阳', '龙港'] as const;
