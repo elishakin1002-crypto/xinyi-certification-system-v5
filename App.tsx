@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import StateSyncNotice from './components/StateSyncNotice';
 import CrashBoundary from './components/CrashBoundary';
@@ -38,6 +38,19 @@ const LoadingScreen = () => (
     正在校验登录状态...
   </div>
 );
+
+/** 账号菜单点进来的「修改密码」。和首次登录强制改用的是同一个表单，只是壳不同 */
+const SelfChangePassword: React.FC<{ user: AuthUser; onChanged: (u: AuthUser) => void }> = ({ user, onChanged }) => {
+  const navigate = useNavigate();
+  return (
+    <ChangePassword
+      user={user}
+      onChanged={onChanged}
+      variant="self"
+      onDone={() => navigate('/dashboard')}
+    />
+  );
+};
 
 /*
   页面级崩溃边界。
@@ -119,7 +132,18 @@ const App = () => {
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/login" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/change-password" element={<Navigate to="/dashboard" replace />} />
+              {/*
+                主动改密码。以前这里是 Navigate 到工作台 ——
+                首次登录强制改完之后，这一页就再也进不去了，
+                「我想自己换个密码」在全系统没有入口（2026-09-13 金恩来指出）。
+                入口在右上角账号菜单里。
+              */}
+              <Route
+                path="/change-password"
+                element={authUser
+                  ? <SelfChangePassword user={authUser} onChanged={setAuthUser} />
+                  : <Navigate to="/dashboard" replace />}
+              />
               <Route path="/dashboard" element={<Dashboard />} />
               {/* 每个模块都必须有路由守卫：侧边栏隐藏入口挡不住直接输网址 */}
               <Route path="/leads" element={<ProtectedRoute permission="NAV_CRM"><Leads /></ProtectedRoute>} />

@@ -1071,6 +1071,8 @@ const DEFAULT_INTEL_REGIONS = ['温州', '苍南', '平阳', '龙港'];
 const DEFAULT_INTEL_INDUSTRIES = ['塑料编织制品制造业', '食包', '药材', '印刷', '食品', '餐饮'];
 const FOCUSED_INTEL_REGIONS = ['龙港', '苍南', '平阳'];
 const FOCUSED_INTEL_INDUSTRIES = ['食包', '印刷', '塑编'];
+
+const { DEFAULT_INTEL_SOURCE_URLS } = require('./intelSources');  // 清单和淘汰记录都在那个文件里
 const REGION_FEATURED_INDUSTRIES = Object.freeze({
   温州: ['泵阀', '低压电器', '汽摩配', '鞋革', '服装', '智能装备'],
   苍南: ['塑料编织', '印刷包装', '食品包装', '纺织制品', '礼品工艺'],
@@ -4260,27 +4262,69 @@ const runIntelFromSources = async ({ regions, industries, limit, sourceUrls }) =
   const selectedRegions = (regions.length ? regions : DEFAULT_INTEL_REGIONS);
   const selectedIndustries = (industries.length ? industries : DEFAULT_INTEL_INDUSTRIES);
 
-  // 直连抓取每个配置源（并行，稳定，无搜索引擎依赖）
-  const fetched = await Promise.all(sourceUrls.slice(0, 12).map(async (url) => {
+  /*
+    门槛从 60 字提到 300 字（为什么，见 server/intelSources.js 里 MIN_SOURCE_TEXT 那段），
+    并且**每个源的结果都记下来往上传** ——
+    源坏了要能一眼看出是哪个源坏了，而不是笼统一句「没抓到」。
+  */
+  const { MIN_SOURCE_TEXT, MAX_SOURCES_PER_RUN } = require('./intelSources');
+  const probes = await Promise.all(sourceUrls.slice(0, MAX_SOURCES_PER_RUN).map(async (url) => {
     const html = await fetchTextWithTimeout(url, { timeoutMs: 9000, headers: { 'User-Agent': USER_AGENT } });
     const text = stripHtmlToText(html).slice(0, 4000);
-    return text.length >= 60 ? { title: url, url, excerpt: text } : null;
+    return { url, chars: text.length, ok: text.length >= MIN_SOURCE_TEXT, excerpt: text, title: url };
   }));
-  const sources = fetched.filter(Boolean);
-  if (sources.length === 0) return { signals: [], empty: true, reason: 'no-source-content' };
+  const sources = probes.filter((p) => p.ok).map(({ title, url, excerpt }) => ({ title, url, excerpt }));
+  const sourceReport = probes.map((p) => ({ url: p.url, chars: p.chars, ok: p.ok }));
+  if (sources.length === 0) return { signals: [], empty: true, reason: 'no-source-content', sourceReport };
 
   const prompt = buildIntelPrompt({ regions: selectedRegions, industries: prioritizeForPrompt(selectedIndustries), today, limit, sources });
-  // 情报提取用快模型 deepseek-v4-flash（有效+快，思考模型太慢）；内层超时兜底，绝不挂死
-  const intelModel = String(process.env.INTEL_LLM_MODEL || 'deepseek-v4-flash');
+  /*
+    ── 15 秒不够，而且超时了还不说（2026-09-13）────────────────────
+
+    生产实跑：11 个源全部抓到正文（1842-4000 字），
+    AI 却一条也没提出来，整个请求耗时 15.5 秒 —— 正好卡在这里的 15000ms。
+    真因就是**这一步超时了**，而超时被翻译成
+    「没有提取到可用行业情报（已执行时效过滤），请缩小范围后重试」——
+    又一次把可操作的原因换成了误导人的现象：范围缩到一个源也照样超时。
+
+    喂进去的是 11 段各 1200 字的正文加提取指令，
+    要模型读完再吐 20 条结构化 JSON，15 秒本来就不够。
+    外层整体超时是 60 秒，这里给到 45 秒仍有余量。
+  */
+  /*
+    ── 这里原来写的是 deepseek-v4-flash，旁边注释是「思考模型太慢」（2026-09-13）──
+
+    注释说对了，选错了：**deepseek-v4-flash 本身就是思考模型**。
+    在生产机上拿真实的提取任务比过（只喂 2 个源的小样本）：
+
+        deepseek-v4-flash   10.2 秒   reasoning 3055 字，正文 1193 字
+        deepseek-chat        2.3 秒   reasoning 0 字，   正文 1141 字
+
+    输出质量没差别，耗时差 4 倍多。真实请求要喂 11 个源、要 20 条结果，
+    于是 v4-flash 连 45 秒都跑不完 —— 这就是金恩来看到的
+    「抓取今日情报总是提示没有抓取到任何东西」的最后一环。
+
+    顺带：v4-flash 那次把 publishedAt 吐成了 null，而下游有个按时效过滤的步骤，
+    没有日期的会被丢掉 —— 就算它跑完了，结果也会被过滤空。
+
+    要换回思考模型的话，记得同时把 INTEL_LLM_TIMEOUT_MS 调到 90 秒以上，
+    并且把外层的 INTEL_FETCH_TIMEOUT_MS（默认 60 秒）一起放大，否则照样是空。
+  */
+  const intelModel = String(process.env.INTEL_LLM_MODEL || 'deepseek-chat');
+  const llmTimeoutMs = Number(process.env.INTEL_LLM_TIMEOUT_MS || 45000);
   let completion = null;
   try {
     completion = await withTimeout(
       requestAI({ requestedModel: intelModel, messages: [{ role: 'user', content: prompt }], jsonMode: false, temperature: 0.2 }),
-      Number(process.env.INTEL_LLM_TIMEOUT_MS || 15000),
+      llmTimeoutMs,
       'INTEL_LLM_TIMEOUT'
     );
   } catch (e) {
-    return { signals: [], empty: true, reason: 'llm-timeout' };
+    return {
+      signals: [], empty: true, reason: 'llm-timeout', sourceReport,
+      // 这句话要一路传到界面上：源都抓到了，是这一步没跟上，和"范围太宽"无关
+      reasonText: `${sources.length} 个情报源都抓到了正文，但 AI 提取这一步超过 ${Math.round(llmTimeoutMs / 1000)} 秒没返回。稍后再试；一直这样就是 AI 服务不通，去「AI 中心」看模型状态。`
+    };
   }
   const list = parseIntelList(completion?.text || '');
 
@@ -4311,17 +4355,44 @@ const runIntelFromSources = async ({ regions, industries, limit, sourceUrls }) =
     if (pool.isEnabled()) { for (const s of signals) await signalRepo.upsert(s); }
   } catch (e) { console.warn('[intel] 写入 PG 失败:', e.message); }
 
-  return { signals, empty: signals.length === 0, modelUsed: completion?.modelUsed || DEFAULT_MODEL };
+  return {
+    signals,
+    empty: signals.length === 0,
+    modelUsed: completion?.modelUsed || DEFAULT_MODEL,
+    sourceReport,
+    // AI 有返回但一条都没解析出来 —— 和超时是两回事，查的地方也不同
+    reasonText: signals.length === 0
+      ? `${sources.length} 个情报源都抓到了正文，AI 也返回了，但没解析出任何一条结构化情报（多半是今天这些页面上确实没有和${selectedRegions.join('、')}／${selectedIndustries.slice(0, 3).join('、')}相关的新内容）。`
+      : ''
+  };
 };
 const prioritizeForPrompt = (arr) => Array.from(new Set(arr)).slice(0, 8);
 
-app.post('/api/intel/fetch', requireSessionRoles(['ADMIN', 'MANAGER'], 'INTEL_FETCH'), async (req, res) => {
+/*
+  ── 三份权限定义要一起改（2026-09-13）────────────────────────
+
+  金恩来要求情报雷达「只对系统管理员、销售、总经理、助理开放」。
+  我当时只改了 constants.ts 里的 NAV_INTEL（菜单能不能看见），
+  没改这里（请求能不能过）——于是系统管理员和销售**看得见菜单、
+  点任何按钮都 403**，正是 CLAUDE.md 里写着的那个最高频 bug。
+
+  抓取：四个角色都能点（销售自己拉今天的情报是正常动作）。
+  配置源：不给销售 —— 情报源是公司级设置，不该被单个销售改掉。
+*/
+const INTEL_VIEW_ROLES = ['ADMIN', 'MANAGER', 'SYS_ADMIN', 'SALES'];
+const INTEL_CONFIG_ROLES = ['ADMIN', 'MANAGER', 'SYS_ADMIN'];
+
+app.post('/api/intel/fetch', requireSessionRoles(INTEL_VIEW_ROLES, 'INTEL_FETCH'), async (req, res) => {
   try {
     const cfg = (readIntelStore() || {}).config || {};
     const regions = normalizeList(req.body?.regions?.length ? req.body.regions : cfg.regions);
     const industries = normalizeList(req.body?.industries?.length ? req.body.industries : cfg.industries);
     const limit = Number(req.body?.limit || cfg.limit || 20);
-    const sourceUrls = normalizeList(req.body?.sourceUrls?.length ? req.body.sourceUrls : cfg.sourceUrls).filter((u) => /^https?:\/\//i.test(u));
+    // 面板填了就用面板的；没填就用内置默认清单（否则这个按钮装好就是坏的）
+    const sourceUrls = normalizeList(
+      req.body?.sourceUrls?.length ? req.body.sourceUrls
+        : (cfg.sourceUrls?.length ? cfg.sourceUrls : DEFAULT_INTEL_SOURCE_URLS)
+    ).filter((u) => /^https?:\/\//i.test(u));
     const timeoutMs = Number(process.env.INTEL_FETCH_TIMEOUT_MS || 60000);
     const today = new Date().toISOString().slice(0, 10);
 
@@ -4340,12 +4411,22 @@ app.post('/api/intel/fetch', requireSessionRoles(['ADMIN', 'MANAGER'], 'INTEL_FE
       );
     }
 
-    const { signals, modelUsed, empty } = await withTimeout(
+    const { signals, modelUsed, empty, sourceReport, reasonText } = await withTimeout(
       runIntelFromSources({ regions, industries, limit, sourceUrls }),
       timeoutMs,
       `INTEL_FETCH_TIMEOUT(${timeoutMs}ms)`
     );
     const droppedStale = 0, droppedUndated = 0, rescuedUndated = 0, droppedGeo = 0, droppedGeoConflict = 0;
+
+    /*
+      抓不到时，要说清「哪几个源没抓到」。
+      以前一律是「没有提取到可用行业情报，请缩小范围后重试」——
+      而真因往往是某个源改版/要登录/是纯前端渲染，缩多少次范围都没用。
+    */
+    const deadSources = (sourceReport || []).filter((s) => !s.ok).map((s) => s.url);
+    const deadHint = deadSources.length
+      ? `\n\n这 ${deadSources.length} 个源这次没取到正文（多半是改版、需登录，或页面内容是脚本动态加载的，直抓看不到）：\n${deadSources.map((u) => `· ${u}`).join('\n')}`
+      : '';
 
     if (empty) {
       const store = readIntelStore();
@@ -4361,7 +4442,8 @@ app.post('/api/intel/fetch', requireSessionRoles(['ADMIN', 'MANAGER'], 'INTEL_FE
             stale: true,
             signals: usableCached,
             source: 'cache',
-            warning: `本次联网检索未提取到可用结构化结果，已回退最近缓存（${store.lastRunAt || '未知时间'}）`,
+            warning: `${reasonText || '本次联网检索未提取到可用结构化结果'}\n\n已回退最近缓存（${store.lastRunAt || '未知时间'}）${deadHint}`,
+            sourceReport,
             droppedStale: Number(droppedStale || 0) + Number(cacheFreshness.droppedStale || 0),
             droppedUndated: Number(droppedUndated || 0) + Number(cacheFreshness.droppedUndated || 0),
             rescuedUndated: Number(rescuedUndated || 0),
@@ -4375,11 +4457,12 @@ app.post('/api/intel/fetch', requireSessionRoles(['ADMIN', 'MANAGER'], 'INTEL_FE
       return sendFail(
         res,
         ERROR_CODES.INTEL_FETCH_ERROR,
-        '本次联网检索没有提取到可用行业情报（已执行时效过滤），请缩小范围后重试。',
+        `${reasonText || '本次联网检索没有提取到可用行业情报（已执行时效过滤）。'}${deadHint}`,
         {
           stale: false,
           signals: [],
           source: 'error',
+          sourceReport,
           droppedStale,
           droppedUndated,
           rescuedUndated,
@@ -4629,21 +4712,21 @@ app.get('/api/review/monthly', requireSessionRoles(['ADMIN', 'SYS_ADMIN', 'MANAG
 });
 
 // 情报源/抓取范围配置（面板可编辑；抓取例程读取此配置）
-app.get('/api/intel/config', requireSessionRoles(['ADMIN', 'MANAGER'], 'INTEL_CONFIG'), (req, res) => {
+app.get('/api/intel/config', requireSessionRoles(INTEL_CONFIG_ROLES, 'INTEL_CONFIG'), (req, res) => {
   const cfg = (readIntelStore() || {}).config || {};
   return sendSuccess(res, {
     config: {
       regions: cfg.regions?.length ? cfg.regions : FOCUSED_INTEL_REGIONS,
       industries: cfg.industries?.length ? cfg.industries : FOCUSED_INTEL_INDUSTRIES,
       keywords: cfg.keywords || ['招标 认证', '抽检 不合格', '出口 欧盟 合规', '新建 扩产'],
-      sourceUrls: cfg.sourceUrls || [],
+      sourceUrls: cfg.sourceUrls?.length ? cfg.sourceUrls : [...DEFAULT_INTEL_SOURCE_URLS],
       limit: cfg.limit || 20,
       updatedAt: cfg.updatedAt || ''
     }
   }, 'success');
 });
 
-app.post('/api/intel/config', requireSessionRoles(['ADMIN', 'MANAGER'], 'INTEL_CONFIG'), (req, res) => {
+app.post('/api/intel/config', requireSessionRoles(INTEL_CONFIG_ROLES, 'INTEL_CONFIG'), (req, res) => {
   try {
     const b = req.body || {};
     const store = readIntelStore() || {};

@@ -7,7 +7,7 @@ import FeedbackModal from './FeedbackModal';
 import MyAiUsage from './MyAiUsage';
 import OnboardingTour from './OnboardingTour';
 import HelpHub from './HelpHub';
-import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare, Compass, MonitorSmartphone, AlertTriangle, X, HelpCircle } from 'lucide-react';
+import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare, Compass, MonitorSmartphone, AlertTriangle, X, HelpCircle, KeyRound } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { authService } from '../services/authService';
 import { dataService } from '../services/dataService';
@@ -162,6 +162,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       '/employees': '员工账号',
       '/auth-audit': '审计日志',
       '/my-devices': '我的登录设备',
+      '/change-password': '修改密码',
     };
     return titles[path] || '信义系统';
   };
@@ -594,6 +595,21 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   >
                     <MonitorSmartphone className="w-4 h-4 shrink-0" />
                     我的登录设备
+                  </button>
+
+                  {/*
+                    主动改密码。2026-09-13 金恩来：「关键是我自己要去修改密码
+                    也没有这个入口。」—— 首次登录强制改的那一页改完就进不去了，
+                    于是全系统没有任何地方能主动换密码。放在退出登录上面，
+                    和「我的登录设备」挨着：都是「管我这个账号本身」。
+                  */}
+                  <button
+                    type="button"
+                    onClick={() => { navigate('/change-password'); setIsAccountMenuOpen(false); }}
+                    className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    <KeyRound className="w-4 h-4 shrink-0" />
+                    修改密码
                   </button>
 
                   <button

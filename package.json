@@ -60,6 +60,7 @@
     "health:auth:gate": "node scripts/health-auth-gate.mjs",
     "health:ai": "node scripts/health-ai-behavior.mjs",
     "state:history": "node scripts/state-history.mjs",
+    "check:intel": "node scripts/check-intel-fetch.mjs",
     "auth:migrate:pg": "node scripts/migrate-auth-to-postgres.mjs",
     "backfill:contract-owner": "node scripts/backfill-contract-owner.mjs",
     "deploy": "bash deploy/deploy.sh",
