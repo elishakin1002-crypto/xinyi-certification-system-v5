@@ -11,6 +11,7 @@ import { IngestionUploader } from '../components/IngestionUploader';
 import { Receivable, Lead, Status, Contract, ContractAttachment, KnowledgeDoc } from '../types';
 import { extractTextFromDocx, extractTextFromPdf, renderPdfPagesAsImages, getLastParseFailure } from '../services/documentParsers';
 import { ServicePicker } from '../components/ServicePicker';
+import { contractService } from '../services/contractService';
 import { CUSTOMER_NAME_PLACEHOLDER } from '../src/modules/customerIdentity';
 import { matchCatalogItems, toServiceLine } from '../src/modules/serviceCatalogMatch';
 import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
@@ -159,21 +160,28 @@ const Contracts = () => {
     window.setTimeout(() => attachmentInputRef.current?.click(), 0);
   };
 
-  const handleAttachmentPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAttachmentPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const contractId = attachmentTargetContractId;
     if (!contractId) return;
-    const attachment: ContractAttachment = {
-      id: `A-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-      name: file.name,
-      size: formatSize(file.size),
-      type: file.name.split('.').pop() || 'file',
-      uploadDate: new Date().toISOString().split('T')[0],
-      url: URL.createObjectURL(file)
-    };
-    const res = addContractAttachment(contractId, attachment);
-    if (!res.ok) alert(res.reason || '附件添加失败');
+    /*
+      ── 真的把文件传上去，不要再造 blob 地址（2026-09-13）──────────
+
+      原来这里是 `url: URL.createObjectURL(file)` ——
+      那是浏览器的临时地址，只在上传的那个标签页里有效，
+      刷新就失效，换个人永远打不开。
+      **生产上 12 份有附件的合同，12 份的 url 全是 blob** ——
+      等于合同原件一份都没存下来，而界面上看起来一切正常。
+
+      服务端早就有真实上传接口（存盘 + 返回 /api/files/...），
+      前端一直没用，走的是只记元数据那条。
+    */
+    try {
+      await contractService.uploadAttachment(contractId, file);
+    } catch (err) {
+      alert(`附件上传失败：${err instanceof Error ? err.message : '未知错误'}\n\n文件没有存下来，请重试。`);
+    }
     setAttachmentTargetContractId(null);
     e.target.value = '';
   };
@@ -432,13 +440,24 @@ const Contracts = () => {
     const isPdf = lowerType === 'pdf' || lowerName.endsWith('.pdf');
     const isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif'].some(t => lowerType.includes(t) || lowerName.includes(t));
     const kind: 'pdf' | 'image' | null = isPdf ? 'pdf' : (isImage ? 'image' : null);
-    let url = file.url;
-    if (!url) {
-      if (isPdf) url = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
-      else if (isImage) url = 'https://via.placeholder.com/1200x800?text=System+Demo+Image';
-      else url = undefined;
-    }
-    if (!kind || !url) return null;
+    /*
+      ── 拿不到文件就说拿不到，不许拿别的东西顶上（2026-09-13）──────
+
+      原来这里在没有 url 时会回落到**外部的示例文件**：
+        w3.org 的 dummy.pdf / via.placeholder.com 的占位图
+
+      后果：人点「预览」，看到一份能打开的 PDF —— 但那不是他的合同。
+      **给人看一份假合同，比直接报错糟得多**：报错他会去查，
+      看到假的他会以为文件好好地在那儿。
+
+      顺带说，那两个地址还是外网的：内网环境根本打不开，
+      而部署自检里的「外部 CDN 引用 0 处」只数构建产物，抓不到这种运行时请求。
+
+      现在拿不到就返回 null，由上层给一句能照着做的提示。
+    */
+    const url = file.url;
+    // blob: 是上传那一刻的临时地址，换个标签页/刷新之后必然失效
+    if (!kind || !url || url.startsWith('blob:')) return null;
     return { kind, url };
   };
   const handlePreviewFile = (e: React.MouseEvent, file: ContractAttachment) => {
@@ -446,7 +465,13 @@ const Contracts = () => {
     e.preventDefault();
     const resolved = resolvePreviewTarget(file);
     if (!resolved) {
-      alert(`【系统提示】\n文件 "${file.name}" 无法在线预览。\n请上传真实文件或使用下载功能。`);
+      const dead = String(file.url || '').startsWith('blob:');
+      alert(dead
+        ? `「${file.name}」这份原件没有真的存下来。\n\n`
+          + `它是旧版本留下的临时地址（只在当初上传的那个标签页里有效），`
+          + `刷新之后就失效了 —— 别人也从来打不开。\n\n`
+          + `请重新上传一次，这次会真的存到服务器上。`
+        : `「${file.name}」这个格式不支持在线预览（只支持 PDF 和图片）。\n\n可以用下载功能打开。`);
       return;
     }
     setPreviewFile({ name: file.name, url: resolved.url, kind: resolved.kind });
@@ -455,21 +480,28 @@ const Contracts = () => {
   const handleDownloadFile = (e: React.MouseEvent, file: ContractAttachment) => { 
       e.stopPropagation(); 
       e.preventDefault(); 
-      if (file.url) { 
-          const a = document.createElement('a'); 
-          a.href = file.url; 
-          a.download = file.name; 
-          document.body.appendChild(a); 
-          a.click(); 
-          document.body.removeChild(a); 
-      } else { 
-          const lowerType = file.type.toLowerCase(); 
-          const lowerName = file.name.toLowerCase(); 
-          if (lowerType === 'pdf' || lowerName.endsWith('.pdf')) { 
-              window.open('https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf', '_blank'); 
-          } else { 
-              setTimeout(() => alert(`【系统提示】\n模拟文件 "${file.name}" 无法下载。\n请上传真实文件以体验完整功能。`), 10); 
-          } 
+      /*
+        下载那条路上有同一个假回落，而且比预览更糟：
+        原来没有 url 且是 PDF 时，直接 window.open 了 w3.org 的 dummy.pdf ——
+        **人会以为自己把合同下载下来了**，拿去发给客户都有可能。
+
+        现在：只有真实地址才下载；blob 是上传那一刻的临时地址，
+        早就失效了，如实说明并让人重新上传。
+      */
+      const url = String(file.url || '');
+      if (url && !url.startsWith('blob:')) {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = file.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+      } else {
+          alert(url.startsWith('blob:')
+            ? `「${file.name}」这份原件没有真的存下来。\n\n`
+              + `它是旧版本留下的临时地址，刷新之后就失效了 —— 别人也从来打不开。\n\n`
+              + `请重新上传一次，这次会真的存到服务器上。`
+            : `「${file.name}」没有对应的文件，下载不了。\n\n请重新上传一次。`);
       } 
   };
 
@@ -657,10 +689,13 @@ const Contracts = () => {
           signDate: new Date().toISOString().split('T')[0]
       }));
       
-      const blobUrl = URL.createObjectURL(file);
-      setFileAttachments(prev => [...prev, {
-          id: `A-${Date.now()}`, name: file.name, size: `${(file.size / 1024 / 1024).toFixed(2)} MB`, type: file.name.split('.').pop() || 'file', uploadDate: new Date().toISOString().split('T')[0], url: blobUrl
-      }]);
+      /* 建合同时还没有合同 id，用通用上传先存盘拿稳定 URL —— 不能再用 blob */
+      try {
+        const stored = await contractService.uploadLooseFile(file);
+        setFileAttachments(prev => [...prev, stored]);
+      } catch (err) {
+        alert(`合同原件没能存下来：${err instanceof Error ? err.message : '未知错误'}\n\n识别照常进行，但这份文件不会被归档，请稍后在合同详情里重新上传。`);
+      }
 
       try {
           let promptParts: any[] = [];
@@ -1416,9 +1451,23 @@ const Contracts = () => {
                                             const res = claimReceivablePaid(contract.id, r.id, note);
                                             alert(res.ok ? '已通知财务核对。到账确认由财务完成。' : (res.reason || '报备失败'));
                                           }}
-                                          className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 whitespace-nowrap"
+                                          className="whitespace-nowrap rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-black text-indigo-700 hover:bg-indigo-100" 
                                         >
-                                          已收款，请核对
+                                          {/*
+                                            文案改成动作，不是陈述（2026-09-13）。
+
+                                            金恩来：「录入一份合同，合同为什么默认已经收款？」
+                                            —— 其实没有。状态图标是黄色时钟（未付），
+                                            这里是一个**按钮**：销售/顾问点它来报备"我收到钱了"，
+                                            通知财务去核对。确认到账始终只有财务能做。
+
+                                            但原来写「已收款，请核对」，读起来是**陈述句**，
+                                            又是淡蓝色小字、紧挨着金额 —— 看着就像系统在说
+                                            "这笔已经收了"。他是最熟系统的人都读反了，
+                                            同事只会更容易读反。
+                                            **按钮的文案要写动作，别写状态。**
+                                          */}
+                                          报备已收款
                                         </button>
                                       )}
                                       <div className="text-right">
@@ -1608,7 +1657,7 @@ const Contracts = () => {
                             label="上传合同文件 · AI 自动识别金额/条款/支付节点"
                             subLabel="支持 PDF, Word, 图片 • 自动识别金额、条款与支付节点"
                             disabled={isUploading || !createContractPerm.allowed}
-                            onSuccess={(result, file) => {
+                            onSuccess={async (result, file) => {
                                 const data = result.data;
                                 if (!data) return;
 
@@ -1637,15 +1686,13 @@ const Contracts = () => {
                                 
                                 // Auto-add attachment
                                 if (file) {
-                                    const blobUrl = URL.createObjectURL(file);
-                                    setFileAttachments(prev => [...prev, {
-                                        id: `A-${Date.now()}`,
-                                        name: file.name,
-                                        size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-                                        type: file.name.split('.').pop() || 'file',
-                                        uploadDate: new Date().toISOString().split('T')[0],
-                                        url: blobUrl
-                                    }]);
+                                    /* 同上：存盘拿稳定 URL，别再造 blob */
+                                    try {
+                                        const stored = await contractService.uploadLooseFile(file);
+                                        setFileAttachments(prev => [...prev, stored]);
+                                    } catch (err) {
+                                        alert(`合同原件没能存下来：${err instanceof Error ? err.message : '未知错误'}\n\n识别结果已填好，但这份文件不会被归档，请稍后在合同详情里重新上传。`);
+                                    }
                                 }
                                 
                                 // Auto-fill form

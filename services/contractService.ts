@@ -83,6 +83,57 @@ export const contractService = {
     return body.data.contract;
   },
 
+  /**
+   * 真正把文件传上去（存盘），而不是只记一条元数据。
+   *
+   * ── 2026-09-13 查出来的事 ──────────────────────────────────────
+   *
+   * 金恩来：「客户管理中可以直接预览合同，但合同管理却不能」。
+   * 顺着查下去发现的是更严重的事：
+   *
+   * **生产上 12 份有附件的合同，附件 url 全是 `blob:http://...`** ——
+   * 那是浏览器的临时地址：只在上传的那个标签页里有效，
+   * 刷新就失效，换台电脑、换个人永远打不开。
+   * 也就是说**上传过的合同原件，一份都没真的存下来**。
+   *
+   * 而服务端**早就有真实的上传接口**（存盘 + 返回 /api/files/...），
+   * 前端一直没用它，走的是只记元数据那条（addAttachment），
+   * 把 blob 地址当成 url 存了进去。
+   *
+   * 又是「有两条路，用错了那条」—— 和两份 pdf.js、两份查重规则同一类。
+   */
+  uploadAttachment: async (
+    contractId: string,
+    file: File
+  ): Promise<{ contract: Contract; attachment: ContractAttachment }> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`/api/contracts/${encodeURIComponent(contractId)}/attachments/upload`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,   // 不要手写 Content-Type，浏览器要自己带 multipart 边界
+    });
+    const body = await parseJson<{ contract: Contract; attachment: ContractAttachment }>(res);
+    return body.data;
+  },
+
+  /**
+   * 建合同时还没有合同 id，用通用上传先把文件存下来，拿到稳定 URL。
+   * 服务端那个接口的注释写得很清楚：就是为「表单保存前先把文件传上来」准备的。
+   */
+  uploadLooseFile: async (file: File): Promise<ContractAttachment> => {
+    const form = new FormData();
+    form.append('files', file);
+    const res = await fetch('/api/uploads/misc', {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    });
+    const body = await parseJson<{ files: ContractAttachment[] }>(res);
+    const one = body.data.files[0];
+    return { id: `A-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`, ...one };
+  },
+
   addAttachment: async (
     contractId: string,
     attachment: ContractAttachment
