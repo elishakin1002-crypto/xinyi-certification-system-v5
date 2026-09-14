@@ -11,6 +11,14 @@ export interface IntelFetchResult {
   signals: MarketSignal[];
   source: 'server' | 'cache';
   error?: string;
+  /*
+    成功返回、但有话要说的情况（抓到了缓存、某几个源没通、AI 没提出东西…）。
+
+    2026-09-14：服务端把诊断写在 message 里，而这里只映射了失败时的 error ——
+    于是「哪几个源没抓到」永远到不了屏幕上，用户看到的还是那句
+    「未返回新增可用情报」。**写了诊断但放在没人读的地方，等于没写。**
+  */
+  notice?: string;
   stale?: boolean;
   droppedStale?: number;
   droppedUndated?: number;
@@ -133,6 +141,7 @@ export const intelService = {
           return {
             ok: true,
             signals,
+            notice: parsed.message && parsed.message !== 'success' ? parsed.message : '',
             source: payload?.source === 'cache' ? 'cache' : 'server',
             stale: Boolean(payload?.stale),
             droppedStale: Number(payload?.droppedStale || 0),

@@ -1062,6 +1062,54 @@ const Dashboard = () => {
   const usesBossBoard = persona === 'boss';
 
   /*
+    ══════════════════════════════════════════════════════════════
+    工作台下半部分：哪个角色该看到哪些板块
+    ══════════════════════════════════════════════════════════════
+
+    2026-09-14 金恩来看顾问工作台时一连串的问题：
+      「顾问角色的今日全域简报这个板块都不用显示了，出现这个只会让工作台显得更乱」
+      「专项联动入口是不是也不该出现在顾问工作台中（而且我也不知道这个入口是做什么用的）」
+      「那个经营趋势，既然是给老板看的，为什么不对顾问隐藏？」
+
+    他问的三个都对，而且是同一个病：
+    **工作台上半部分按角色定制，下半部分对所有角色一视同仁。**
+    于是顾问打开工作台，先看到自己的交付状态（对的），
+    往下一滚全是新签金额、全公司汇总、知识/战役/AI 治理的导航 ——
+    没一件是她今天要做的事。
+
+    版面不是免费的。一个顾问每天要在这里判断「我今天先干哪件」，
+    多一块与她无关的内容，就多一次「这个是不是要我管」的判断成本。
+
+    ── 为什么用白名单而不是「顾问排除几块」 ──────────────────────
+
+    排除法的写法是 `persona !== 'consultant' && <板块/>`，
+    问题是**下次新增一个角色，它会自动继承全部板块** ——
+    而且没人会注意到，因为不报错。
+    白名单反过来：没列进去的默认不显示，新增角色时必须显式想一遍
+    「他该看到什么」。**默认不显示比默认显示安全。**
+  */
+  const DASHBOARD_BLOCKS: Record<string, string[]> = {
+    // 老板要全局：趋势、汇总、导航一个不少
+    boss: ['trend', 'brief', 'reminders', 'proposals', 'links'],
+    // 总助管协调：要汇总和导航，但经营趋势是老板的判断依据，不是她的
+    manager: ['brief', 'reminders', 'proposals', 'links'],
+    // 销售看机会：要汇总（里面有线索商机洞察），不需要经营趋势和管理性导航
+    sales: ['brief', 'reminders', 'proposals'],
+    /*
+      顾问只留两块：
+        reminders  她自己的待办（证书到期、任务超期这类真的会找到她头上）
+        proposals  「待我确认」—— 项目诊断类提案确实要她判断，见 AiProposalQueue
+      去掉 trend（经营金额，不该给交付岗看）、brief（全公司汇总）、
+      links（知识/战役/AI 治理的管理入口 —— 知识中心侧边栏本来就有）。
+    */
+    consultant: ['reminders', 'proposals'],
+    // 财务盯钱：趋势里有回款和逾期，是她的活；全域简报里大半跟她无关
+    finance: ['trend', 'reminders', 'proposals'],
+    sysadmin: ['brief', 'reminders', 'proposals', 'links'],
+  };
+  const showBlock = (key: string) => (DASHBOARD_BLOCKS[persona] || DASHBOARD_BLOCKS.boss).includes(key);
+
+  /*
     系统管理员走完全不同的一块看板。
 
     分支放在**所有 hook 之后**：React 不允许条件性地跳过 hook，
@@ -1104,7 +1152,8 @@ const Dashboard = () => {
         <FinanceDashboard metrics={dashboardMetrics.finance} />
       )}
 
-      {/* D. 经营趋势（新签 / 回款 / 逾期 三维度） */}
+      {/* D. 经营趋势（新签 / 回款 / 逾期 三维度）—— 只给要看钱的角色 */}
+      {showBlock('trend') && (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
           <div>
@@ -1189,6 +1238,7 @@ const Dashboard = () => {
           </div>
         )}
       </div>
+      )}
 
       {/* E. 风险与异常（统计 + 明细合并） */}
       <RiskPanel
@@ -1203,7 +1253,8 @@ const Dashboard = () => {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2 space-y-6">
-          {/* B. AI MORNING BRIEF */}
+          {/* B. 今日全域简报 —— 全公司汇总，交付岗看了只是噪音 */}
+          {showBlock('brief') && (
           <div className="bg-gradient-to-br from-indigo-50 to-white p-6 rounded-2xl shadow-sm border border-indigo-100 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-5">
               <Sparkles className="w-48 h-48 text-indigo-600" />
@@ -1294,6 +1345,7 @@ const Dashboard = () => {
               </div>
             </div>
           </div>
+          )}
 
         </div>
 
@@ -1662,9 +1714,10 @@ const Dashboard = () => {
         AI 提案的价值在于被及时处理，放在每天必看的地方才有用；
         独立页面大概率会变成没人点的入口。
       */}
-      <AiProposalQueue />
+      {showBlock('proposals') && <AiProposalQueue />}
 
-      {/* F. 专项联动入口（导航性质，压缩为一行） */}
+      {/* F. 专项联动入口（导航性质）—— 管理岗才用得上，交付岗侧边栏里本来就有知识中心 */}
+      {showBlock('links') && (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mb-4">
           <div>
@@ -1709,6 +1762,7 @@ const Dashboard = () => {
           })}
         </div>
       </div>
+      )}
     </div>
   );
 };

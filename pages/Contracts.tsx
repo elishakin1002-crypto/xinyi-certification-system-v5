@@ -1,5 +1,6 @@
 import { SampleList } from '../components/SampleRow';
 import { SAMPLE_CONTRACT } from '../src/modules/onboarding/sampleRecords';
+import { guessCompanyFromContractTitle } from '../src/modules/companyFromTitle';
 
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
@@ -1904,7 +1905,26 @@ const Contracts = () => {
                             {!showNewContractCustomer ? (
                               <button
                                 type="button"
-                                onClick={() => { setShowNewContractCustomer(true); setNewContractCustomerName(formData.customerName || ''); }}
+                                onClick={() => {
+                                  setShowNewContractCustomer(true);
+                                  /*
+                                    预填顺序：已填的客户名 → AI 从合同里识别的甲方 → 从合同标题里猜。
+
+                                    最后这条是给**手工录入**那条路补的（2026-09-14 金恩来提）：
+                                    不上传 PDF 时，页面上除了标题没有任何地方有公司名，
+                                    而信义的合同标题本身就带着全称
+                                    （「优福包装科技（浙江）有限公司 咨询服务合同书」）。
+                                    纯字符串处理，不用 AI —— 见 src/modules/companyFromTitle.ts。
+
+                                    猜出来的是**默认值**，人看得见改得动；猜不出就留空让他自己填。
+                                  */
+                                  setNewContractCustomerName(
+                                    formData.customerName
+                                    || aiContractCustomerName
+                                    || guessCompanyFromContractTitle(formData.title)
+                                    || ''
+                                  );
+                                }}
                                 className="mt-2 text-[11px] font-bold text-indigo-600 hover:underline"
                               >
                                 + 找不到？直接新建客户

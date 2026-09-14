@@ -385,8 +385,17 @@ const IntelRadar = () => {
             **把可操作的原因换成了无从下手的现象**。
             人只会以为"今天没新闻"，而实际上这个功能从来没配过。
           */
-          setFetchNotice(result.error
-            ? `${result.error}\n\n（下面是最近缓存/历史情报 ${latest.signals.length} 条）`
+          /*
+            2026-09-14 下午补 notice：服务端**成功返回但没抓到新东西**时，
+            原因写在 message 里（哪几个源没通、AI 那步怎么了），
+            而这里原来只看 error —— 成功路径下 error 是空的，
+            于是永远落到那句笼统的「未返回新增可用情报」。
+            金恩来在本机点抓取看到的就是这个：11 个源里 7 个不通，
+            屏幕上一个字都没提。
+          */
+          const why = result.error || result.notice || '';
+          setFetchNotice(why
+            ? `${why}\n\n（下面是最近缓存/历史情报 ${latest.signals.length} 条）`
             : `本次联网抓取未返回新增可用情报，已展示最近缓存/历史情报（${latest.signals.length} 条）。`);
           return;
         }

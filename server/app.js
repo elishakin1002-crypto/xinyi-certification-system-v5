@@ -4425,7 +4425,7 @@ app.post('/api/intel/fetch', requireSessionRoles(INTEL_VIEW_ROLES, 'INTEL_FETCH'
     */
     const deadSources = (sourceReport || []).filter((s) => !s.ok).map((s) => s.url);
     const deadHint = deadSources.length
-      ? `\n\n这 ${deadSources.length} 个源这次没取到正文（多半是改版、需登录，或页面内容是脚本动态加载的，直抓看不到）：\n${deadSources.map((u) => `· ${u}`).join('\n')}`
+      ? `\n\n这 ${deadSources.length} 个源这次没取到正文：\n${deadSources.map((u) => `· ${u}`).join('\n')}\n（常见原因：这台机器连不上该站点、对方改版、需登录，或页面内容是脚本动态加载的。\n  若生产服务器上抓得到、本机抓不到，那就是本机网络，不是系统问题。）`
       : '';
 
     if (empty) {
@@ -4450,7 +4450,22 @@ app.post('/api/intel/fetch', requireSessionRoles(INTEL_VIEW_ROLES, 'INTEL_FETCH'
             droppedGeo: Number(droppedGeo || 0) + Number(cacheGeoScoped.droppedGeo || 0),
             droppedGeoConflict: Number(droppedGeoConflict || 0) + Number(cacheGeoScoped.droppedGeoConflict || 0)
           },
-          `本次联网检索未提取到可用结构化结果，已回退最近缓存（${store.lastRunAt || '未知时间'}）`
+          /*
+            ── 诊断要放进 message，不能只放 warning（2026-09-14 下午）──
+
+            上午我把「哪几个源没抓到、AI 那步怎么了」写进了 warning 字段，
+            自以为解决了「只说现象不说原因」。
+            结果金恩来在本机点抓取，屏幕上还是那句
+            「本次联网抓取未返回新增可用情报」——
+
+            **因为前端读的是 error/message，从来没读过 warning。**
+            诊断写了，但写在了没人看的地方，等于没写。
+
+            这是同一个毛病的第二次：上次是把可操作的原因换成了无从下手的现象，
+            这次是把原因放进了一个没人读的字段。
+            所以 message 里就要带全，warning 只是冗余备份。
+          */
+          `${reasonText || '本次联网检索未提取到可用结构化结果'}\n\n已回退最近缓存（${store.lastRunAt || '未知时间'}）${deadHint}`
         );
       }
 

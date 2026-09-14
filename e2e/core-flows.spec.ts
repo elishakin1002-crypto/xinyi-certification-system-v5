@@ -150,6 +150,48 @@ test.describe('六条核心流程', () => {
     }
   });
 
+  /*
+    ── 每个角色只看到该看的板块（2026-09-14 金恩来逐条指出）────────
+
+    「顾问角色的今日全域简报这个板块都不用显示了，出现这个只会让工作台显得更乱」
+    「专项联动入口是不是也不该出现在顾问工作台中」
+    「那个经营趋势，既然是给老板看的，为什么不对顾问隐藏？」
+
+    三个都对，病根是同一个：工作台**上半部分按角色定制，下半部分一视同仁**。
+    顾问往下一滚全是新签金额、全公司汇总、管理导航，没一件是她今天要做的。
+
+    这条测试钉的是「该藏的藏了、该留的还在」两头。
+    只钉一头最容易出的事：下次为了清爽把顾问的「待我确认」也藏了 ——
+    而那是真该她判断的（项目诊断类提案），藏了等于把活弄丢。
+  */
+  test('3b 每个角色只看到该看的板块 —— 顾问不看经营数字，老板不缺全局', async ({ page }) => {
+    await login(page);
+    const readBlocks = async (persona: string) => {
+      await page.goto(`/#/dashboard?persona=${persona}`);
+      await page.waitForTimeout(1200);
+      const t = await page.locator('body').innerText();
+      return {
+        经营趋势: t.includes('经营趋势'),
+        今日全域简报: t.includes('今日全域简报'),
+        专项联动入口: t.includes('专项联动入口'),
+        任务提醒箱: t.includes('任务提醒箱'),
+      };
+    };
+
+    const consultant = await readBlocks('consultant');
+    expect(consultant.经营趋势, '顾问不该看到经营趋势（新签/回款金额是老板的判断依据）').toBe(false);
+    expect(consultant.今日全域简报, '顾问不该看到全公司汇总').toBe(false);
+    expect(consultant.专项联动入口, '顾问不该看到管理性导航').toBe(false);
+    expect(consultant.任务提醒箱, '顾问的待办箱被误伤了 —— 那是她自己的活').toBe(true);
+
+    const boss = await readBlocks('boss');
+    expect(boss.经营趋势, '老板的经营趋势没了 —— 藏过头了').toBe(true);
+    expect(boss.今日全域简报, '老板的全域简报没了').toBe(true);
+
+    const finance = await readBlocks('finance');
+    expect(finance.经营趋势, '财务要看回款和逾期，经营趋势不该藏').toBe(true);
+  });
+
   // ── 4. 提醒闭环：看得见 → 点得动 → 办完能消失 ────────────────
   test('4 提醒面板打得开，条目能点，「办完了」能让它消失', async ({ page }) => {
     await login(page);
