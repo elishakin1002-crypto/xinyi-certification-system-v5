@@ -42,7 +42,11 @@ const ConsultantDashboard: React.FC<Props> = ({ metrics }) => (
     sections={[
       {
         key: 'risk',
-        title: '风险与提醒',
+        /*
+          原来叫「风险与提醒」，和下面那块「风险与异常」几乎同名（2026-09-14 金恩来指出）。
+          名字要说清里面是什么：这三张卡讲的是**交付会不会延期**，不是泛泛的「风险」。
+        */
+        title: '交付风险',
         subtitle: '快到期、堆积和进度落后的项目，优先处理这几类。',
         icon: <AlertOctagon className="w-5 h-5 text-amber-600" />,
         cards: metrics.middleCards,

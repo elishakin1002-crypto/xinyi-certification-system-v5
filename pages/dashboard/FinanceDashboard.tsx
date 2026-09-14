@@ -15,7 +15,11 @@ const FinanceDashboard: React.FC<Props> = ({ metrics }) => (
     sections={[
       {
         key: 'abnormal',
-        title: '异常与风险',
+        /*
+          原来叫「异常与风险」——和另一块「风险与异常」同样四个字换个顺序，
+          人根本分不清（2026-09-14 金恩来指出）。改成说清内容的名字。
+        */
+        title: '账目异常',
         subtitle: '数据缺失、未开票和回款进度异常，都会影响账目准确性。',
         icon: <AlertOctagon className="w-5 h-5 text-amber-600" />,
         cards: metrics.middleCards,

@@ -433,7 +433,21 @@ const Audit = () => {
     issueViewModels.forEach(({ issue }) => {
       const createdKey = String(issue.createDate || '').slice(0, 7);
       if (monthMap.has(createdKey)) monthMap.get(createdKey)!.新增 += 1;
-      const closedKey = String(issue.verification?.verifiedAt || (issue.status === 'Closed' ? issue.deadline : '') || '').slice(0, 7);
+      /*
+        ── 算不算「关闭」看**状态**，不看有没有日期（2026-09-14 走查抓到）──
+
+        原来写的是 `issue.verification?.verifiedAt || (status==='Closed' ? deadline : '')`：
+        **只要 verifiedAt 有值就计入关闭**，状态是什么根本没参与判断。
+        于是一条刚登记、状态「待整改」、证据 0 份的记录，
+        趋势里显示成「关闭 1 项」，还配一句「关闭速度已追平或超过新增」。
+
+        这比数字不准更糟：它让人以为整改闭环做得不错，而实际上一条都没闭。
+
+        状态决定算不算关闭，日期只决定算在哪个月。两件事分开。
+      */
+      const closedKey = issue.status === 'Closed'
+        ? String(issue.verification?.verifiedAt || issue.deadline || '').slice(0, 7)
+        : '';
       if (closedKey && monthMap.has(closedKey)) monthMap.get(closedKey)!.关闭 += 1;
       if (issue.status === 'Verifying' && monthMap.has(createdKey)) monthMap.get(createdKey)!.待验证 += 1;
     });

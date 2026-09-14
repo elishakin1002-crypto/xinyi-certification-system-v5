@@ -23,7 +23,11 @@ const SalesDashboard: React.FC<Props> = ({ metrics }) => (
       },
       {
         key: 'today',
-        title: '今日行动清单',
+        /*
+          原来叫「今日行动清单」，和上面的「我今天的活」撞车 ——
+          后者是我的项目任务，这里是该联系的客户，两回事却都叫「今天要做」。
+        */
+        title: '今天该联系谁',
         subtitle: '今天必须推进的三件事，点击进入对应列表。',
         icon: <ListChecks className="w-5 h-5 text-emerald-600" />,
         cards: metrics.bottomCards,

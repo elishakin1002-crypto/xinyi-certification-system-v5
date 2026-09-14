@@ -1626,9 +1626,11 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
 
   const updateMarketSignal = (id: string, updates: Partial<MarketSignal>) => {
     if (!id) return;
+    const current = marketSignals.find(s => s.id === id);
     setMarketSignals(prev => prev.map(s => s.id === id ? { ...s, ...updates, updatedAt: new Date().toISOString() } : s));
     if (signalService.isEnabled()) {
-      signalService.updateSignal(id, updates).catch(e => console.warn('[SignalService] update failed', e));
+      // 整条一起发：这条情报可能只在抓取缓存里、库里还没有，服务端要能据此补建
+      signalService.updateSignal(id, updates, current).catch(e => console.warn('[SignalService] update failed', e));
     }
   };
 

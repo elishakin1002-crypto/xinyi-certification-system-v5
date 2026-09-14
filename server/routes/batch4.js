@@ -51,6 +51,45 @@ const mount = (base, repo, single, plural, filterKeys, afterWrite) => {
 
 const { syncRectificationTask } = require('../services/auditRectification');
 const { requireAction } = require('../authz/middleware');
+/*
+  ── 情报的 PATCH 要能「找不到就补建」（2026-09-14 Codex 走查抓到）──
+
+  症状：在情报雷达里点「标记已分拣」**点了没反应** ——
+  界面上那条仍然显示「待处理」，按钮也还在。
+
+  真因：情报雷达展示的信号来自两处 ——
+    · market_signals 关系表
+    · 情报抓取的缓存（.runtime/intel_store.json）
+  而缓存里那些**不一定落过库**（抓取时写 PG 那一步是 try/catch 只告警，
+  而且回退缓存那条路返回的本来就是老数据）。
+  于是前端 PATCH /api/signals/:id → 通用 mount 里先 getById，查不到 → 404，
+  前端 `.catch` 把它吞成一行 console.warn，接着轮询又把服务端的旧值盖回来。
+
+  **这和当初「合同删了刷新又回来」是同一个形状**：
+  界面上看得见的东西，后端没有它的行，于是任何写操作都静默失效。
+
+  修法：这一条路由排在通用 mount 之前，查不到就用请求里带的整条信号补建。
+  前端因此改成 PATCH 时把整条信号发过来（见 services/signalService.ts）。
+
+  为什么不去修"让缓存和库永远一致"：那是对的方向但工程量大（见对账脚本那条）。
+  这里先保证**人点下去一定有效果** —— 静默失效比慢一点糟得多。
+*/
+router.patch('/api/signals/:id', wrap(async (req, res) => {
+  const id = String(req.params.id || '');
+  const body = payload(req.body, 'signal') || {};
+  const existing = await signalRepo.getById(id);
+  if (existing) {
+    return sendSuccess(res, { signal: await signalRepo.update(id, body) }, 'success');
+  }
+  // 库里没有这条 —— 用请求里带的整条补建。缺标题就拒绝，别建出空壳
+  if (!String(body.title || '').trim()) {
+    return sendFail(res, ERROR_CODES.NOT_FOUND,
+      '这条情报还没入库，而且这次请求里没带够信息补建它。刷新一下再试。', {}, 404);
+  }
+  const signal = await signalRepo.upsert({ ...body, id });
+  return sendSuccess(res, { signal }, 'success');
+}));
+
 mount('signals', signalRepo, 'signal', 'signals', ['kind', 'status', 'urgency', 'ownerUserId']);
 mount('audit-issues', auditRepo, 'issue', 'issues', ['status', 'customerId', 'severity'], syncRectificationTask);
 mount('strategic-tasks', strategicRepo, 'task', 'tasks', ['status', 'priority', 'owner']);

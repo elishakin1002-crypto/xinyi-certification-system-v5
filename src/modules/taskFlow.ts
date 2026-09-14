@@ -55,11 +55,31 @@ export const TASK_STATUS_META: Record<TaskStatus, {
 export const isOpenTask = (t: Pick<ProjectTask, 'status'>) =>
   t.status !== 'Completed' && t.status !== 'Skipped';
 
-/** 已超期。跳过的不算 —— 那是主动的决定，不是欠账 */
+/**
+ * 已超期。跳过的不算 —— 那是主动的决定，不是欠账。
+ *
+ * ── 「今天到期」不算超期（2026-09-14 走查抓到）─────────────────
+ *
+ * 原来写的是 `d < now`：
+ *   截止日 '2026-09-14' 被 new Date() 解析成 2026-09-14T00:00:00Z，
+ *   而 now 是当天任意时刻 —— **只要过了零点，今天到期的任务就是"已超期"**。
+ *
+ * 后果很具体：新建项目时第一个任务的 offsetDays 是 0（截止日=今天），
+ * 于是刚点完「确认立项」，页面上立刻出现「已超期」和
+ * 「有任务卡住的项目 1」。人会以为自己漏做了什么。
+ *
+ * 截止日期是**日**不是**时刻**：说好今天交，今天下班前都不算迟。
+ * 所以比的是「截止日那天的 23:59:59」——过了那一刻才算超期。
+ */
 export const isOverdue = (t: Pick<ProjectTask, 'status' | 'deadline'>, now = Date.now()) => {
   if (!isOpenTask(t)) return false;
-  const d = new Date(String(t.deadline || '')).getTime();
-  return Number.isFinite(d) && d < now;
+  const raw = String(t.deadline || '').trim();
+  if (!raw) return false;
+  const d = new Date(raw).getTime();
+  if (!Number.isFinite(d)) return false;
+  // 只有日期没有时刻时，把截止点推到那天结束；带时刻的按原值比
+  const endOfDueDay = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? d + 24 * 3600 * 1000 - 1 : d;
+  return endOfDueDay < now;
 };
 
 /**

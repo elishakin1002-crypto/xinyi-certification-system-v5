@@ -1109,7 +1109,25 @@ const Dashboard = () => {
   */
   const DASHBOARD_BLOCKS: Record<string, string[]> = {
     // 老板要全局：趋势、汇总、导航一个不少
-    boss: ['trend', 'brief', 'reminders', 'proposals', 'links'],
+    /*
+      'risk' = 「风险与异常」那块明细列表。**只给老板。**
+
+      2026-09-14 金恩来：「风险与提醒、风险与异常，是不是重复内容？」
+      查了所有角色，比他感觉到的还严重 —— 两块的过滤条件是：
+
+        总经理/总助/系统管理员   两边都是 () => true      **完全相同**
+        顾问                   两边都是 type='risk'      只差关键词
+        销售/财务               部分重叠
+
+      而且两边都有「关键词一条没匹配上就退回全量」的兜底，
+      所以**只要关键词没命中，两块显示的就是一模一样的东西**。
+
+      为什么老板留着：他那块上面是四张统计卡，下面是明细 ——
+      「统计 + 明细」成对出现是有意义的。
+      其他角色没有统计卡，那块就只剩一个和「到期与逾期提醒」重复的列表，
+      而后者还能「办完了」。留功能弱的那个没道理。
+    */
+    boss: ['trend', 'brief', 'risk', 'reminders', 'proposals', 'links'],
     // 总助管协调：要汇总和导航，但经营趋势是老板的判断依据，不是她的
     manager: ['brief', 'reminders', 'proposals', 'links'],
     // 销售看机会：要汇总（里面有线索商机洞察），不需要经营趋势和管理性导航
@@ -1260,6 +1278,7 @@ const Dashboard = () => {
       )}
 
       {/* E. 风险与异常（统计 + 明细合并） */}
+      {showBlock('risk') && (
       <RiskPanel
         statCards={usesBossBoard ? bossRiskCards : []}
         alerts={riskAlertItems}
@@ -1269,6 +1288,7 @@ const Dashboard = () => {
           jumpByLink(linked.linkType, linked.linkId);
         }}
       />
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2 space-y-6">

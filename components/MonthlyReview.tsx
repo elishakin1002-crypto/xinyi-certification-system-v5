@@ -55,6 +55,23 @@ export const MonthlyReview: React.FC<Props> = ({ onAdopt }) => {
 
   const [judgement, setJudgement] = useState<MonthlyJudgement | null>(null);
   const [asking, setAsking] = useState(false);
+  /*
+    ── 等待要看得见（2026-09-14 Codex 走查）─────────────────────
+
+    它报「点了没反应：按钮变成不可点击的"正在判断…"，等了约 9 秒页面没变化」。
+    判定下来**不是卡死** —— 超时是 60 秒，它只等了 9 秒就走了。
+
+    但这暴露了真问题：**60 秒里没有任何进度信息**。
+    一个只会转圈、不告诉你要等多久的按钮，
+    等 9 秒放弃是完全合理的反应 —— 换成真人也一样。
+    AI 走的是外部模型，十几二十秒很正常，所以必须把"还要等"说出来。
+  */
+  const [askedSeconds, setAskedSeconds] = useState(0);
+  useEffect(() => {
+    if (!asking) { setAskedSeconds(0); return; }
+    const t = setInterval(() => setAskedSeconds(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [asking]);
   const [aiError, setAiError] = useState('');
   const [adopted, setAdopted] = useState<Record<string, boolean>>({});
 
@@ -253,9 +270,16 @@ export const MonthlyReview: React.FC<Props> = ({ onAdopt }) => {
             }`}
           >
             {asking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-            {asking ? '正在判断…' : judgement ? '重新判断' : '让 AI 读这些数字'}
+            {asking ? `正在判断…${askedSeconds}s` : judgement ? '重新判断' : '让 AI 读这些数字'}
           </button>
         </div>
+
+        {asking && (
+          <p className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-700">
+            正在让模型读这些数字，通常 10-30 秒，最长等 60 秒。
+            {askedSeconds >= 35 && ' 比平时慢，再等等；到 60 秒会自动停下并告诉你原因。'}
+          </p>
+        )}
 
         {aiError && (
           <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{aiError}</p>

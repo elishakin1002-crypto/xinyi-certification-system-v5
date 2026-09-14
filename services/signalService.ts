@@ -30,12 +30,22 @@ export const signalService = {
     return Array.isArray(body.data.signals) ? body.data.signals : [];
   },
 
-  updateSignal: async (id: string, updates: Partial<MarketSignal>): Promise<MarketSignal> => {
+  /*
+    ── PATCH 时要把整条带上（2026-09-14）──────────────────────────
+
+    情报雷达展示的信号有一部分只在抓取缓存里、没落过库。
+    只发 `{status}` 的话，服务端 getById 查不到就 404，
+    前端 catch 一吞、轮询一刷，**点了等于没点**。
+
+    现在服务端「找不到就用请求里的整条补建」，所以这里要把整条发过去。
+    多传几个字段的代价远小于"按钮点了没反应"。
+  */
+  updateSignal: async (id: string, updates: Partial<MarketSignal>, full?: MarketSignal): Promise<MarketSignal> => {
     const res = await fetch(`/api/signals/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ signal: updates }),
+      body: JSON.stringify({ signal: full ? { ...full, ...updates } : updates }),
     });
     const body = await parseJson<{ signal: MarketSignal }>(res);
     return body.data.signal;
