@@ -622,7 +622,26 @@ const Dashboard = () => {
     const money = (n: number) => `¥${Math.round(n).toLocaleString()}`;
     const totalSigned = trendData.reduce((sum, item) => sum + item.signed, 0);
     const totalRevenue = trendData.reduce((sum, item) => sum + item.revenue, 0);
-    const totalOverdue = trendData.reduce((sum, item) => sum + item.overdue, 0);
+    /*
+      ── 「合计」就得是全部，不能只算图上那几个月（2026-09-14）────────
+
+      金恩来让 Codex 走查财务工作台时抓到：
+      同一页上「超期金额 ¥59000 / 5 单」和「逾期未收合计 ¥0」并存，
+      下面还写着「没有逾期款项，回款纪律良好」。
+
+      两个数字各自都"对"，错在名字：
+        超期金额      = 所有已过收款日还没收的
+        逾期未收合计  = **只统计到期日落在图表那 7 个月里的** ← 名字里看不出这个限定
+
+      那 5 笔的到期日比 7 个月更早，于是掉出了图表窗口，合计变成 0。
+      财务看到「回款纪律良好」会真的放心 —— 这比数字不准更糟。
+
+      改成和「超期金额」同一个口径：**同一个名字必须是同一个数。**
+      图表仍按月分布（那是它该干的事），但摘要卡说合计就是真合计。
+    */
+    const totalOverdue = receivables
+      .filter(item => item.status !== 'paid' && String(item.dueDate || '') < today)
+      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
     const collectRate = totalSigned > 0 ? Math.round((totalRevenue / totalSigned) * 100) : 0;
     const delta = latest && prev ? latest.revenue - prev.revenue : 0;
 
@@ -649,7 +668,7 @@ const Dashboard = () => {
         detail: totalOverdue > 0 ? '这部分已过约定收款日，建议本周内逐笔确认。' : '没有逾期款项，回款纪律良好。'
       }
     ];
-  }, [trendData]);
+  }, [trendData, receivables, today]);
 
   const getCardValue = React.useCallback(
     (role: DashboardPersona, cardId: string, fallback: string) => {
@@ -1350,11 +1369,24 @@ const Dashboard = () => {
         </div>
 
         <div className="space-y-6">
-          {/* C. 任务提醒箱（Action） */}
+          {/*
+            C. 到期与逾期提醒（Action）
+
+            ── 名字改过（2026-09-14 金恩来）──────────────────────
+            他说：「任务提醒箱的名字完全没办法关联到"证书到期、回款逾期、
+            任务超期这类提醒"。」
+
+            他是对的。「任务提醒箱」这个名字有两个毛病：
+              · 里面装的不只是任务（证书到期、回款逾期都在这儿）
+              · 「提醒箱」听着像收件箱，而它其实是**要你去处理的事**
+
+            改成「到期与逾期提醒」—— 名字直接说出里面装什么，
+            人不用点开就知道该不该看。
+          */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-6 border-b border-gray-100 bg-gray-50/30">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-bold text-gray-900 flex items-center">任务提醒箱</h3>
+                <h3 className="text-lg font-bold text-gray-900 flex items-center">到期与逾期提醒</h3>
                 <span className="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] rounded-md font-bold animate-pulse">
                   {reminderView === 'aggregated' ? scopedTaskReminders.length : detailReminders.length}
                 </span>

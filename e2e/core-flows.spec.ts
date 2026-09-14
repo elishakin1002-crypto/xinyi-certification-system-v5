@@ -174,7 +174,7 @@ test.describe('六条核心流程', () => {
         经营趋势: t.includes('经营趋势'),
         今日全域简报: t.includes('今日全域简报'),
         专项联动入口: t.includes('专项联动入口'),
-        任务提醒箱: t.includes('任务提醒箱'),
+        到期与逾期提醒: t.includes('到期与逾期提醒'),
       };
     };
 
@@ -182,7 +182,7 @@ test.describe('六条核心流程', () => {
     expect(consultant.经营趋势, '顾问不该看到经营趋势（新签/回款金额是老板的判断依据）').toBe(false);
     expect(consultant.今日全域简报, '顾问不该看到全公司汇总').toBe(false);
     expect(consultant.专项联动入口, '顾问不该看到管理性导航').toBe(false);
-    expect(consultant.任务提醒箱, '顾问的待办箱被误伤了 —— 那是她自己的活').toBe(true);
+    expect(consultant.到期与逾期提醒, '顾问的提醒块被误伤了 —— 证书到期、任务超期是她的活').toBe(true);
 
     const boss = await readBlocks('boss');
     expect(boss.经营趋势, '老板的经营趋势没了 —— 藏过头了').toBe(true);

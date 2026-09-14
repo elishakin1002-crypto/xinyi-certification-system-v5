@@ -78,14 +78,29 @@ const Finance = () => {
     return dueMs < Date.now() ? 'overdue' : 'unpaid';
   };
 
-  const allReceivables = contracts.flatMap(c => c.receivables.map(r => ({
+  const allReceivables = contracts.flatMap(c => c.receivables.map((r, idx) => ({
     ...r,
     displayStatus: resolveReceivableStatus(r),
     paymentClaim: r.paymentClaim,
     contractId: c.id,
     contractTitle: c.title,
     customerName: c.customerName,
-    contractAmount: Number(c.amount || 0)
+    contractAmount: Number(c.amount || 0),
+    /*
+      ── 期数就是它在本合同里排第几，不要从文字里猜（2026-09-14）────
+
+      原来界面上写的是 `第 {r.node.match(/\d+/)?.[0]} 期` ——
+      **从节点名里抓第一串数字当期数**。
+      于是节点叫「甲方收到 ISO14001/ISO45001 认证电子版证书时」的那条，
+      屏幕上显示成「第 14001 期」。金恩来让 Codex 走查时抓到的。
+
+      这是「看起来像 X 就当 X」在这个项目里的第六次
+      （前五次见 CLAUDE.md 二点五）。判据同样成立：
+      这条规则要不要随着别人怎么写节点名而更新？要 —— 所以它早晚会错。
+
+      真正的期数本来就有：应收在合同里的顺序。直接取，不用猜。
+    */
+    periodIndex: idx + 1
   })));
   const matchesReceivableFocus = (receivable: typeof allReceivables[number]) => {
     if (!dashboardFocus?.type) return true;
@@ -369,13 +384,13 @@ const Finance = () => {
                             {/* 样例行：让引导有个能指的对象，不是对着空表讲 */}
 
 
-                            <SampleList items={filteredReceivables} sample={{id: 'sample-receivable', contractId: 'sample-contract', contractNo: 'XY-SAMPLE-001', customerName: '示例包装有限公司', amount: 3000, node: '示例付款节点', contractTitle: '示例服务合同', paymentClaim: undefined, displayStatus: 'unpaid', status: 'unpaid', dueDate: '2026-09-09', contractAmount: 30000} as (typeof filteredReceivables)[number]} render={(r, idx) => (
+                            <SampleList items={filteredReceivables} sample={{id: 'sample-receivable', contractId: 'sample-contract', contractNo: 'XY-SAMPLE-001', customerName: '示例包装有限公司', amount: 3000, node: '示例付款节点', contractTitle: '示例服务合同', paymentClaim: undefined, displayStatus: 'unpaid', status: 'unpaid', dueDate: '2026-09-09', contractAmount: 30000, periodIndex: 1} as (typeof filteredReceivables)[number]} render={(r, idx) => (
                               <tr key={`${r.contractId}-${r.id}-${idx}`} className={`hover:bg-gray-50 transition-colors ${r.displayStatus === 'paid' ? 'bg-gray-50/30' : ''}`}>
                                 <td className={`${tdClass} font-mono text-gray-600 text-sm`}>{r.dueDate || '待定'}</td>
                                 <td className={`${tdClass} font-black text-gray-900 text-base`}>{r.customerName}</td>
                                 <td className={`${tdClass} text-gray-700`}>
                                   <div className="flex items-center">
-                                    <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs border border-gray-200 mr-2 whitespace-nowrap"> 第 {r.node.match(/\d+/) ? r.node.match(/\d+/)?.[0] : '-'} 期 </span>
+                                    <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs border border-gray-200 mr-2 whitespace-nowrap"> 第 {r.periodIndex ?? '-'} 期 </span>
                                     <span className="text-sm font-bold">{r.node}</span>
                                   </div>
                                   {r.rejectionReason && (

@@ -25,7 +25,13 @@ type Props = {
   emphasisId: string;
   /** 中部与下部区块 */
   sections: PersonaSection[];
-  list: { title: string; subtitle: string; icon: React.ReactNode };
+  /*
+    「优先处理列表」。传 false 表示这个角色不需要它 ——
+    2026-09-14 顾问那边就是：它的内容（我逾期的任务）是
+    上面「我今天的活」的**严格子集**，而「我今天的活」还能直接改状态。
+    同一份数据渲染两遍，人要在两个地方找"我今天干什么"。
+  */
+  list: { title: string; subtitle: string; icon: React.ReactNode } | false;
 };
 
 const isAlertCard = (cardId: string) => /overdue|stale|sleeping|abnormal|expiring|due-soon/.test(cardId);
@@ -165,7 +171,8 @@ const PersonaDashboard: React.FC<Props> = ({ metrics, headline, emphasisId, sect
         </div>
       ))}
 
-      {/* 优先处理列表 */}
+      {/* 优先处理列表（角色可以不要它，见上面 list 的说明） */}
+      {list && (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
           <div>
@@ -207,6 +214,7 @@ const PersonaDashboard: React.FC<Props> = ({ metrics, headline, emphasisId, sect
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 };
