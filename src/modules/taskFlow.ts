@@ -56,20 +56,20 @@ export const isOpenTask = (t: Pick<ProjectTask, 'status'>) =>
   t.status !== 'Completed' && t.status !== 'Skipped';
 
 /**
- * 已超期。跳过的不算 —— 那是主动的决定，不是欠账。
+ * 已逾期。跳过的不算 —— 那是主动的决定，不是欠账。
  *
- * ── 「今天到期」不算超期（2026-09-14 走查抓到）─────────────────
+ * ── 「今天到期」不算逾期（2026-09-14 走查抓到）─────────────────
  *
  * 原来写的是 `d < now`：
  *   截止日 '2026-09-14' 被 new Date() 解析成 2026-09-14T00:00:00Z，
- *   而 now 是当天任意时刻 —— **只要过了零点，今天到期的任务就是"已超期"**。
+ *   而 now 是当天任意时刻 —— **只要过了零点，今天到期的任务就是"已逾期"**。
  *
  * 后果很具体：新建项目时第一个任务的 offsetDays 是 0（截止日=今天），
- * 于是刚点完「确认立项」，页面上立刻出现「已超期」和
+ * 于是刚点完「确认立项」，页面上立刻出现「已逾期」和
  * 「有任务卡住的项目 1」。人会以为自己漏做了什么。
  *
  * 截止日期是**日**不是**时刻**：说好今天交，今天下班前都不算迟。
- * 所以比的是「截止日那天的 23:59:59」——过了那一刻才算超期。
+ * 所以比的是「截止日那天的 23:59:59」——过了那一刻才算逾期。
  */
 export const isOverdue = (t: Pick<ProjectTask, 'status' | 'deadline'>, now = Date.now()) => {
   if (!isOpenTask(t)) return false;
@@ -141,7 +141,7 @@ export const knockOnDelays = (
     .filter(Boolean) as { task: ProjectTask; daysLate: number }[];
 };
 
-/** 按「该先处理谁」排：超期最久的在最前，然后按截止日期 */
+/** 按「该先处理谁」排：逾期最久的在最前，然后按截止日期 */
 export const byUrgency = (a: ProjectTask, b: ProjectTask) => {
   const rank = (t: ProjectTask) => (t.status === 'InProgress' ? 0 : 1);
   const da = new Date(String(a.deadline || '9999-12-31')).getTime();

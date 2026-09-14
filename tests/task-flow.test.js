@@ -144,7 +144,7 @@ test('「我的任务」是跨项目的一页，而且挂进了导航', () => {
   */
   const src = read('pages/MyTasks.tsx');
   assert.match(src, /projects \|\| \[\]\)\.forEach/, '不是跨项目聚合');
-  ['已超期', '今天到期', '本周内'].forEach(k =>
+  ['已逾期', '今天到期', '本周内'].forEach(k =>
     assert.ok(src.includes(k), `没有「${k}」这一档 —— 按时间分组才知道先干哪件`));
   assert.match(src, /showLater/, '「以后」的没有收起来 —— 一次给 60 条人会关掉页面');
 

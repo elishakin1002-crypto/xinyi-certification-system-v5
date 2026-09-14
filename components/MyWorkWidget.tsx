@@ -80,7 +80,7 @@ export const MyWorkWidget: React.FC = () => {
         {overdueCount > 0 && (
           <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-black text-red-700">
             <AlertTriangle className="h-3 w-3" />
-            {overdueCount} 条已超期
+            {overdueCount} 条已逾期
           </span>
         )}
         <button
@@ -126,7 +126,7 @@ export const MyWorkWidget: React.FC = () => {
                     {project.name}
                     <span className="mx-1 text-gray-300">·</span>
                     <span className={overdue ? 'text-red-600' : ''}>
-                      {task.deadline || '没定日期'}{overdue && ' 已超期'}
+                      {task.deadline || '没定日期'}{overdue && ' 已逾期'}
                     </span>
                   </p>
                 </div>

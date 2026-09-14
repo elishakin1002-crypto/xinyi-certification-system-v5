@@ -94,7 +94,26 @@ const parseEnvelope = (raw: any) => {
 
 export const intelService = {
   fetchDailySignals: async (config: IntelFetchConfig): Promise<IntelFetchResult> => {
-    const timeoutMs = Number(import.meta.env.VITE_INTEL_FETCH_TIMEOUT_MS || 30000);
+  /*
+    ── 前端超时必须比后端长（2026-09-14 第四次返工才找到的真因）────────
+
+    这里原来是 **30 秒**，而后端那一侧：
+        外层 INTEL_FETCH_TIMEOUT_MS  60 秒
+        AI   INTEL_LLM_TIMEOUT_MS    45 秒
+    生产实测一次成功抓取要 **35.7 秒**。
+
+    **于是前端 30 秒就放弃了，而后端还在正常干活。**
+    用户看到「抓取失败 / 未返回新增可用情报」，
+    但服务器那边其实几秒后就成功返回了 20 条 —— 白抓一次，还花了 AI 的钱。
+
+    这就是金恩来连着三轮说「情报雷达还是无法正常抓取」的真因，
+    而我三轮都没找到 —— 因为**我的自检脚本直接调接口，没有这 30 秒限制**，
+    于是它每次都"通过"。自检绕过了真实路径上的一道关卡，等于没检。
+
+    规矩：**调用方的超时必须大于被调用方的超时**，否则前者永远看不到后者的结论。
+    75 秒 = 后端外层 60 秒 + 网络和渲染的余量。
+  */
+    const timeoutMs = Number(import.meta.env.VITE_INTEL_FETCH_TIMEOUT_MS || 75000);
     const candidates = buildApiBaseCandidates();
     try {
       let lastError = '抓取失败';

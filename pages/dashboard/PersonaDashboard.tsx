@@ -85,7 +85,7 @@ const PersonaDashboard: React.FC<Props> = ({ metrics, headline, emphasisId, sect
                     type="button"
                     onClick={() => openDashboardRoute(navigate, card.route)}
                     title={card.hint || card.title}
-                    className={`text-left p-5 rounded-2xl shadow-lg flex items-center text-white transition-transform active:scale-[0.98] bg-gradient-to-br ${
+                    className={`min-w-0 w-full text-left p-5 rounded-2xl shadow-lg flex items-center text-white transition-transform active:scale-[0.98] bg-gradient-to-br ${
                       alert ? 'from-rose-500 to-red-600' : 'from-indigo-600 to-blue-700'
                     }`}
                   >
@@ -104,7 +104,7 @@ const PersonaDashboard: React.FC<Props> = ({ metrics, headline, emphasisId, sect
                   type="button"
                   onClick={() => openDashboardRoute(navigate, card.route)}
                   title={card.hint || card.title}
-                  className={`text-left bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group transition-colors ${tone.hover}`}
+                  className={`min-w-0 w-full text-left bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group transition-colors ${tone.hover}`}
                 >
                   <div className={`p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform ${tone.icon}`}>
                     {cardIcon(card.id)}

@@ -39,7 +39,7 @@ const ManagerDashboard: React.FC<Props> = ({ metrics }) => (
       title: '我要盯的进度',
       subtitle: '谁手上活太多、哪个项目要延期、这周谁没记日志。金额的事在合同和回款页看。'
     }}
-    /* 强调「已超期任务」：其余三项是提前量，只有这一项是已经发生的事 */
+    /* 强调「已逾期任务」：其余三项是提前量，只有这一项是已经发生的事 */
     emphasisId="mgr-overdue-task"
     sections={[
       {

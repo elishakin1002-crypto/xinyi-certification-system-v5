@@ -10,7 +10,7 @@ type Props = {
 const FinanceDashboard: React.FC<Props> = ({ metrics }) => (
   <PersonaDashboard
     metrics={metrics}
-    headline={{ title: '现金流', subtitle: '本月应收、已收与超期金额对照，超期已单独标红。' }}
+    headline={{ title: '现金流', subtitle: '本月应收、已收与逾期金额对照，逾期已单独标红。' }}
     emphasisId="fin-overdue"
     sections={[
       {

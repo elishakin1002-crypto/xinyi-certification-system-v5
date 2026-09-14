@@ -107,8 +107,8 @@ const PERSONA_PLAN: Record<DashboardPersona, PersonaPlan> = {
     taskDefaultView: 'detail',
     chartCollapsed: true,
     aiDefaultOpen: { opportunity: false, risk: true, intel: false },
-    taskKeywords: ['指派', '延期', '超期', '节点', '进度', '催办', '日志'],
-    alertKeywords: ['延期', '超期', '未指派', '风险', '停滞']
+    taskKeywords: ['指派', '延期', '逾期', '节点', '进度', '催办', '日志'],
+    alertKeywords: ['延期', '逾期', '未指派', '风险', '停滞']
   },
   sales: {
     taskDefaultView: 'aggregated',
@@ -122,14 +122,14 @@ const PERSONA_PLAN: Record<DashboardPersona, PersonaPlan> = {
     chartCollapsed: true,
     aiDefaultOpen: { opportunity: false, risk: true, intel: false },
     taskKeywords: ['交付', '资料', '提交', '审核', '节点', '任务', '催办', '确认', '整改', '到期'],
-    alertKeywords: ['交付', '资料缺失', '催办', '延期', '风险', '超期', '待确认']
+    alertKeywords: ['交付', '资料缺失', '催办', '延期', '风险', '逾期', '待确认']
   },
   finance: {
     taskDefaultView: 'aggregated',
     chartCollapsed: false,
     aiDefaultOpen: { opportunity: false, risk: false, intel: false },
     taskKeywords: ['到款', '回款', '开票', '结算', '催款', '应收', '实收'],
-    alertKeywords: ['回款异常', '结算异常', '超期', '逾期', '金额缺失', '无法完结', '应收']
+    alertKeywords: ['回款异常', '结算异常', '逾期', '逾期', '金额缺失', '无法完结', '应收']
   },
   /*
     系统管理员**不走这套业务工作台**，下面这份配置只是为了满足类型完整性。
@@ -626,17 +626,17 @@ const Dashboard = () => {
       ── 「合计」就得是全部，不能只算图上那几个月（2026-09-14）────────
 
       金恩来让 Codex 走查财务工作台时抓到：
-      同一页上「超期金额 ¥59000 / 5 单」和「逾期未收合计 ¥0」并存，
+      同一页上「逾期金额 ¥59000 / 5 单」和「逾期未收合计 ¥0」并存，
       下面还写着「没有逾期款项，回款纪律良好」。
 
       两个数字各自都"对"，错在名字：
-        超期金额      = 所有已过收款日还没收的
+        逾期金额      = 所有已过收款日还没收的
         逾期未收合计  = **只统计到期日落在图表那 7 个月里的** ← 名字里看不出这个限定
 
       那 5 笔的到期日比 7 个月更早，于是掉出了图表窗口，合计变成 0。
       财务看到「回款纪律良好」会真的放心 —— 这比数字不准更糟。
 
-      改成和「超期金额」同一个口径：**同一个名字必须是同一个数。**
+      改成和「逾期金额」同一个口径：**同一个名字必须是同一个数。**
       图表仍按月分布（那是它该干的事），但摘要卡说合计就是真合计。
     */
     const totalOverdue = receivables
@@ -1134,7 +1134,7 @@ const Dashboard = () => {
     sales: ['brief', 'reminders', 'proposals'],
     /*
       顾问只留两块：
-        reminders  她自己的待办（证书到期、任务超期这类真的会找到她头上）
+        reminders  她自己的待办（证书到期、任务逾期这类真的会找到她头上）
         proposals  「待我确认」—— 项目诊断类提案确实要她判断，见 AiProposalQueue
       去掉 trend（经营金额，不该给交付岗看）、brief（全公司汇总）、
       links（知识/战役/AI 治理的管理入口 —— 知识中心侧边栏本来就有）。
@@ -1394,7 +1394,7 @@ const Dashboard = () => {
 
             ── 名字改过（2026-09-14 金恩来）──────────────────────
             他说：「任务提醒箱的名字完全没办法关联到"证书到期、回款逾期、
-            任务超期这类提醒"。」
+            任务逾期这类提醒"。」
 
             他是对的。「任务提醒箱」这个名字有两个毛病：
               · 里面装的不只是任务（证书到期、回款逾期都在这儿）
@@ -1736,7 +1736,7 @@ const Dashboard = () => {
                 <div className="py-6">
                   <EmptyState
                     title="没有待办，可以歇会儿"
-                    hint="证书快到期、回款逾期、任务超期时，提醒会自动出现在这里 —— 不用你去别处翻。"
+                    hint="证书快到期、回款逾期、任务逾期时，提醒会自动出现在这里 —— 不用你去别处翻。"
                   />
                 </div>
               )}

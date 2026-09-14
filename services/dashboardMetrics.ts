@@ -1,7 +1,7 @@
 import { Contract, Customer, Lead, Project, ProjectTask, ProjectWorkLog, RoleID, Settlement, Status, UserProfile } from '../types';
 import { APP_ROUTES } from '../src/routes';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
-import { isOpenTask } from '../src/modules/taskFlow';
+import { isOpenTask, isOverdue } from '../src/modules/taskFlow';
 
 export type DashboardRoleView = 'boss' | 'manager' | 'sales' | 'consultant' | 'finance';
 
@@ -268,7 +268,7 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
   const owners = Array.from(new Set(activeProjects.map(p => String(p.manager || '').trim()).filter(Boolean)));
   const avgInProgress = owners.length > 0 ? activeProjects.length / owners.length : 0;
   const openTasks = openTasksOf(inputs.projects);
-  const delayedTasks = openTasks.filter(t => diffDays(t.deadline, now) < 0);
+  const delayedTasks = openTasks.filter(t => isOverdue(t, now.getTime()));   // 判逾期只用 taskFlow.isOverdue 一份
   const weekStart = new Date(now);
   weekStart.setDate(now.getDate() - 6);
   /*
@@ -297,7 +297,7 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
       .slice(0, 3)
       .map(c => ({
         id: `risk-contract-${c.id}`,
-        title: `${c.customerName} 回款超期`,
+        title: `${c.customerName} 回款逾期`,
         subtitle: `${money(contractUnpaidOverdueAmount(c, now))} · 合同 ${c.contractNo || c.title}`,
         route: `${APP_ROUTES.FINANCE}?status=overdue&contractId=${encodeURIComponent(c.id)}`
       })),
@@ -316,13 +316,13 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
     topCards: [
       { id: 'boss-month-contract', title: '本月新增合同金额', value: money(monthContractAmount), route: `${APP_ROUTES.CONTRACTS}?month=this` },
       { id: 'boss-month-paid', title: '本月已回款金额', value: money(monthPaid), route: `${APP_ROUTES.FINANCE}?month=this&view=paid` },
-      { id: 'boss-overdue-amt', title: '回款风险金额（超期）', value: money(overdueAmount), route: `${APP_ROUTES.FINANCE}?status=overdue` },
+      { id: 'boss-overdue-amt', title: '回款风险金额（逾期）', value: money(overdueAmount), route: `${APP_ROUTES.FINANCE}?status=overdue` },
       { id: 'boss-conv', title: '销售转化率（线索→营收项目）', value: rate(monthLeadRevenueProjects.length, monthLeads.length), route: `${APP_ROUTES.LEADS}?filter=conversion` }
     ],
     middleCards: [
       { id: 'boss-near-overdue', title: '即将逾期合同', value: String(nearOverdueContracts), route: `${APP_ROUTES.CONTRACTS}?due=7d` },
       { id: 'boss-high-risk-project', title: '高风险项目', value: String(highRiskProjects), route: `${APP_ROUTES.PROJECTS}?risk=high` },
-      { id: 'boss-overdue-receivable', title: '应收超期清单', value: String(overdueReceivableCount), route: `${APP_ROUTES.FINANCE}?status=overdue` },
+      { id: 'boss-overdue-receivable', title: '应收逾期清单', value: String(overdueReceivableCount), route: `${APP_ROUTES.FINANCE}?status=overdue` },
       { id: 'boss-customer-churn', title: '客户流失预警', value: String(churnCustomers), route: `${APP_ROUTES.CUSTOMERS}?filter=churn` }
     ],
     bottomCards: [
@@ -366,7 +366,7 @@ const buildManagerMetrics = (inputs: Inputs): RoleDashboardMetrics => {
   const unassigned = activeProjects.filter(p => !String(p.manager || '').trim());
 
   const openTasks = openTasksOf(inputs.projects);
-  const overdueTasks = openTasks.filter(t => diffDays(t.deadline, now) < 0);
+  const overdueTasks = openTasks.filter(t => isOverdue(t, now.getTime()));   // 同上：一份实现
   const dueSoonTasks = openTasks.filter(t => {
     const d = diffDays(t.deadline, now);
     return d >= 0 && d <= 3;
@@ -409,11 +409,11 @@ const buildManagerMetrics = (inputs: Inputs): RoleDashboardMetrics => {
       route: `${APP_ROUTES.PROJECTS}?projectId=${encodeURIComponent(p.id)}`
     })),
     ...activeProjects
-      .filter(p => (p.tasks || []).some(t => t.status !== 'Completed' && diffDays(t.deadline, now) < 0))
+      .filter(p => (p.tasks || []).some(t => isOverdue(t, now.getTime())))
       .slice(0, 4)
       .map(p => ({
         id: `mgr-overdue-${p.id}`,
-        title: `${p.name} 有任务已超期`,
+        title: `${p.name} 有任务已逾期`,
         subtitle: `负责人：${String(p.manager || '未指派')}`,
         route: `${APP_ROUTES.PROJECTS}?filter=delay&projectId=${encodeURIComponent(p.id)}`
       })),
@@ -423,7 +423,7 @@ const buildManagerMetrics = (inputs: Inputs): RoleDashboardMetrics => {
     topCards: [
       { id: 'mgr-unassigned', title: '待指派负责人', value: String(unassigned.length),
         hint: '没人认领的项目不会自己往前走', route: `${APP_ROUTES.PROJECTS}?filter=unassigned` },
-      { id: 'mgr-overdue-task', title: '已超期任务', value: String(overdueTasks.length),
+      { id: 'mgr-overdue-task', title: '已逾期任务', value: String(overdueTasks.length),
         hint: '过了截止日还没完成的', route: `${APP_ROUTES.PROJECTS}?filter=delay` },
       { id: 'mgr-due-soon', title: '三天内到期', value: String(dueSoonTasks.length),
         hint: '现在提醒还来得及', route: `${APP_ROUTES.PROJECTS}?filter=duesoon` },
@@ -562,7 +562,17 @@ const buildConsultantMetrics = (inputs: Inputs): RoleDashboardMetrics => {
     但 Skipped 必须排除，理由和上面一样：跳过是主动决定，不是欠账。
   */
   const myOpenTasks = myTaskPairs.filter(({ task }) => isOpenTask(task));
-  const myOverdueTasks = myOpenTasks.filter(({ task }) => diffDays(task.deadline, now) < 0);
+  /*
+    用 taskFlow.isOverdue，不要自己拿 diffDays 再判一遍（2026-09-14）。
+
+    这里原来写的是 `diffDays(task.deadline, now) < 0`，
+    而 taskFlow.isOverdue 的规则是「截止日当天结束才算逾期」——
+    两者在「今天到期」上结论相反。
+    于是工作台数出 5 条逾期，点进项目管理一条都看不到。
+
+    全系统判逾期只留 taskFlow.isOverdue 这一份。
+  */
+  const myOverdueTasks = myOpenTasks.filter(({ task }) => isOverdue(task, now.getTime()));
   const myDueSoonTasks = myOpenTasks.filter(({ task }) => diffDays(task.deadline, now) >= 0 && diffDays(task.deadline, now) <= 7);
   const thisWeekStart = new Date(now);
   thisWeekStart.setDate(now.getDate() - 6);
@@ -657,7 +667,7 @@ const buildFinanceMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMet
 
   const listItems: DashboardListItem[] = overdueItems.slice(0, 8).map((item, idx) => ({
     id: `finance-overdue-${item.contractId}-${idx}`,
-    title: `${item.customerName} 超期应收`,
+    title: `${item.customerName} 逾期应收`,
     subtitle: `${money(item.amount)} · 到期 ${item.dueDate || '未知'}`,
     route: `${APP_ROUTES.FINANCE}?status=overdue&contractId=${encodeURIComponent(item.contractId)}`
   }));
@@ -666,7 +676,7 @@ const buildFinanceMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMet
     topCards: [
       { id: 'fin-month-rec', title: '本月应收', value: money(monthReceivable), route: `${APP_ROUTES.FINANCE}?month=this&view=receivable` },
       { id: 'fin-month-paid', title: '本月已收', value: money(monthPaid), route: `${APP_ROUTES.FINANCE}?month=this&view=paid` },
-      { id: 'fin-overdue', title: '超期金额', value: money(overdueAmount), hint: `${overdueItems.length} 单`, route: `${APP_ROUTES.FINANCE}?status=overdue` },
+      { id: 'fin-overdue', title: '逾期金额', value: money(overdueAmount), hint: `${overdueItems.length} 单`, route: `${APP_ROUTES.FINANCE}?status=overdue` },
       { id: 'fin-next30', title: '未来30天预计回款', value: money(expected30), route: `${APP_ROUTES.FINANCE}?range=30d` }
     ],
     middleCards: [

@@ -5,7 +5,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { TaskSkipButton } from '../components/TaskSkipButton';
 import { TaskStatusControl } from '../components/TaskStatusControl';
-import { canBePrerequisite, knockOnDelays } from '../src/modules/taskFlow';
+import { canBePrerequisite, knockOnDelays, isOverdue } from '../src/modules/taskFlow';
 import { ProjectCompleteChecklist } from '../components/ProjectCompleteChecklist';
 import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog, TaskSkipReason, TASK_SKIP_REASON_LABEL, ServiceItem} from '../types';
 import { SERVICE_CATALOG, SERVICE_CATEGORIES, SERVICE_CATEGORY_DELIVERY_MODE, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY } from '../constants';
@@ -298,13 +298,32 @@ const Projects = () => {
    * 还没了结的任务。
    *
    * ── 已跳过的不算（2026-09-08 修）─────────────────────────────
-   * 原来只排除 Completed，于是**已跳过的任务照样被算成「超期」** ——
+   * 原来只排除 Completed，于是**已跳过的任务照样被算成「逾期」** ——
    * 而跳过是人主动交代过原因的决定，不是没做完。
-   * 生产上「超期未完成任务 22」里就掺着这些，
+   * 生产上「逾期未完成任务 22」里就掺着这些，
    * 一个掺了水的数字，看的人很快就不再信它。
    */
   const isOpenTask = (task: ProjectTask) => task.status !== 'Completed' && task.status !== 'Skipped';
-  const isOverdueTask = (task: ProjectTask) => isOpenTask(task) && new Date(String(task.deadline || '')).getTime() < Date.now();
+  /*
+    ── 判「逾期」只能有一份实现（2026-09-14）──────────────────────
+
+    这里原来自己写了一份：`new Date(deadline).getTime() < Date.now()`。
+    而 src/modules/taskFlow.ts 里也有一份 isOverdue，
+    services/dashboardMetrics.ts 里还有第三份（diffDays(...) < 0）。
+
+    三份在「今天到期算不算逾期」上**结论不同** ——
+    taskFlow 说不算（截止日当天结束才算），另外两份说算。
+    金恩来 2026-09-14 看到的就是这个：
+    工作台写「逾期任务 5」，点进项目管理却一条都看不到，
+    而同一页的「逾期未完成任务」显示 0。
+
+    更要命的是**这个不一致是我当天造成的**：上午修了 taskFlow.isOverdue
+    （「今天到期不算逾期」），却没去查「同样的东西还有几处」——
+    而 CLAUDE.md 第六章第 2 条写的第一个问题就是这个。
+
+    收口到 taskFlow.isOverdue 一份。
+  */
+  const isOverdueTask = (task: ProjectTask) => isOverdue(task);
   const isDueSoonTask = (task: ProjectTask) => {
     const diff = Math.ceil((new Date(String(task.deadline || '')).getTime() - Date.now()) / (24 * 3600 * 1000));
     return isOpenTask(task) && diff >= 0 && diff <= 7;
@@ -449,7 +468,22 @@ const Projects = () => {
   /** 刚建完的一句说明 —— 告诉人东西在哪，而不是让他自己找 */
   const [createdNotice, setCreatedNotice] = useState('');
   const [creating, setCreating] = useState(false);
-  const projectStatusFilters = [...STATUS_FILTERS, {value: 'Stuck' as const, label: '有任务卡住的项目'}, {value: 'Overdue' as const, label: '超期未完成任务'}];
+  /*
+    ── 名字要和它数的东西对上（2026-09-14 金恩来指出）──────────────
+
+    这一项原来叫「逾期未完成任务」，但它的筛选条件是
+        p.status !== Completed && p.tasks.some(isOverdueTask)
+    —— **数的是项目，不是任务**。
+
+    于是页面上会同时出现：
+      工作台「逾期任务数 5」（数任务）
+      项目管理「逾期未完成任务 0」（其实是"有逾期任务的项目数"）
+    两个都叫"任务"，数字却对不上，人只会觉得这系统不靠谱。
+
+    改名叫「有逾期任务的项目」—— 和旁边的「有任务卡住的项目」同一个句式，
+    一眼看出这一列数的是项目。
+  */
+  const projectStatusFilters = [...STATUS_FILTERS, {value: 'Stuck' as const, label: '有任务卡住的项目'}, {value: 'Overdue' as const, label: '有逾期任务的项目'}];
   const selectOverview = (status: typeof filterStatus) => { setFilterStatus(status); setSearchTerm(''); setDashboardFocus(null); setDashboardFocusLabel(''); };
   const matchesOverviewStatus = (p: Project) => {
     if (filterStatus === 'Active') return p.status === Status.Active;
@@ -494,7 +528,7 @@ const Projects = () => {
       口径必须和列表完全一致，副标题就是这么承诺的。修之前有三处不一致：
         ① 四张卡片内部就不统一 —— 前三张按「交付项目」算，红色那张按「交付+跟进」算；
         ② 四张都不跟随眼前的类别筛选（useMemo 依赖里连 modeScope 都没有）；
-        ③ 结果是咨询顾问视角下出现「0 个进行中项目、共 0 个项目」却「3 个超期未完成任务」，
+        ③ 结果是咨询顾问视角下出现「0 个进行中项目、共 0 个项目」却「3 个逾期未完成任务」，
            那 3 个任务在跟进项目里，而列表正筛着交付项目 —— 点卡片也找不到对应项目。
       现在四张卡片同源：先按「与我相关 / 全公司」，再按「交付 / 跟进」，
       只有状态和搜索不跟（那两个跟了卡片就没意义了，筛"进行中"时"已完成"会变 0）。
@@ -1126,7 +1160,7 @@ const Projects = () => {
                     />
                   )}
                   <span className="text-xs font-bold text-gray-800 max-w-[220px] truncate">{next.title}</span>
-                  {isOverdueTask(next) && <Badge tone="red">已超期</Badge>}
+                  {isOverdueTask(next) && <Badge tone="red">已逾期</Badge>}
                 </div>
               );
             })()}
@@ -2579,12 +2613,12 @@ const Projects = () => {
           tone="amber"
           selected={filterStatus === 'Stuck'}
           onClick={() => selectOverview('Stuck')}
-          title="进行中项目里存在超期任务的"
+          title="进行中项目里存在逾期任务的"
         />
         <StatCard
           icon={<Clock className="w-6 h-6" />}
           value={overviewStats.overdueTasks}
-          label="超期未完成任务"
+          label="逾期未完成任务"
           emphasis="danger"
           selected={filterStatus === 'Overdue'}
           onClick={() => selectOverview('Overdue')}
@@ -2631,7 +2665,7 @@ const Projects = () => {
             ・{categoryFilters.find(o => o.value === modeScope)?.label}
             ・{projectStatusFilters.find(o => o.value === filterStatus)?.label}
           </span>
-          <span className="font-bold text-gray-700">{filterStatus === 'Overdue' ? `共 ${filteredProjects.reduce((n, p) => n + (p.tasks || []).filter(isOverdueTask).length, 0)} 项超期任务 · 涉及 ${filteredProjects.length} 个项目` : `共 ${filteredProjects.length} 个项目`}</span>
+          <span className="font-bold text-gray-700">{filterStatus === 'Overdue' ? `共 ${filteredProjects.reduce((n, p) => n + (p.tasks || []).filter(isOverdueTask).length, 0)} 项逾期任务 · 涉及 ${filteredProjects.length} 个项目` : `共 ${filteredProjects.length} 个项目`}</span>
         </div>
 
         {/*
@@ -2680,12 +2714,12 @@ const Projects = () => {
       </div>
 
       {filterStatus === 'Overdue' ? <div data-testid="overdue-task-results" className="rounded-2xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-100">
-        <h2 className="px-4 py-3 font-bold text-gray-900">超期未完成任务</h2>
+        <h2 className="px-4 py-3 font-bold text-gray-900">逾期未完成任务</h2>
         {filteredProjects.flatMap(project => (project.tasks || []).filter(isOverdueTask).map(task => <button key={project.id + ':' + task.id} type="button" onClick={() => { selectOverview('All'); setExpandedProject(project.id); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center justify-between gap-4">
           <div><p className="font-bold text-gray-900">{task.title}</p><p className="mt-1 text-xs text-gray-500">{project.name} · 负责人：{task.owner || project.manager}</p></div>
           <div className="shrink-0 text-xs text-red-600">截止 {task.deadline}<span className="block mt-1 text-blue-600">查看所属项目 →</span></div>
         </button>))}
-        {filteredProjects.length === 0 && <p className="p-6 text-sm text-gray-500">当前范围没有超期未完成任务。</p>}
+        {filteredProjects.length === 0 && <p className="p-6 text-sm text-gray-500">当前范围没有逾期未完成任务。</p>}
       </div> : (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         {/* Mobile Card View */}
@@ -2812,7 +2846,7 @@ const Projects = () => {
                                     <div className="text-sm font-bold text-gray-800 line-clamp-1">{next.title}</div>
                                     <div className="mt-1 flex items-center gap-2">
                                       {overdue
-                                        ? <Badge tone="red">已超期</Badge>
+                                        ? <Badge tone="red">已逾期</Badge>
                                         : <span className="text-[11px] font-mono text-gray-400">{next.deadline || '无期限'}</span>}
                                     </div>
                                   </div>

@@ -572,7 +572,7 @@ const Audit = () => {
 
     const gap = trendTotals.新增 - trendTotals.关闭;
     const topTopic = topicStats[0];
-    return `近 6 个月累计新增 ${trendTotals.新增} 项、关闭 ${trendTotals.关闭} 项、待验证 ${trendTotals.待验证} 项，当前月关闭 ${latestTrendPoint.关闭} 项。${gap > 0 ? '整体仍存在闭环积压，建议优先追踪待验证和超期项。' : '整体闭环节奏良好，可转向沉淀 SOP 和复用案例。'}${topTopic ? `目前最集中的问题类型是“${topTopic.topic}”，可优先做专项预防。` : ''}`;
+    return `近 6 个月累计新增 ${trendTotals.新增} 项、关闭 ${trendTotals.关闭} 项、待验证 ${trendTotals.待验证} 项，当前月关闭 ${latestTrendPoint.关闭} 项。${gap > 0 ? '整体仍存在闭环积压，建议优先追踪待验证和逾期项。' : '整体闭环节奏良好，可转向沉淀 SOP 和复用案例。'}${topTopic ? `目前最集中的问题类型是“${topTopic.topic}”，可优先做专项预防。` : ''}`;
   }, [latestTrendPoint, hasRealTrendData, trendTotals, topicStats]);
 
   const currentTopic = useMemo(() => resolveIssueTopic(formData.findings), [formData.findings]);
@@ -1422,7 +1422,7 @@ const Audit = () => {
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
           <div>
             <h3 className="font-black text-gray-900 flex items-center"><FileText className="w-4 h-4 mr-2 text-blue-600" /> 行业维度</h3>
-            <p className="text-xs text-gray-500 mt-1">识别哪个行业更容易出重大问题或超期整改。</p>
+            <p className="text-xs text-gray-500 mt-1">识别哪个行业更容易出重大问题或逾期整改。</p>
           </div>
           <div className="space-y-3 mt-4">
             {industryStats.map(item => (
@@ -1434,7 +1434,7 @@ const Audit = () => {
                 <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
                   <span className="px-2 py-1 rounded-full border border-red-100 bg-red-50 text-red-700">重大 {item.major}</span>
                   <span className="px-2 py-1 rounded-full border border-amber-100 bg-amber-50 text-amber-700">未闭环 {item.open}</span>
-                  <span className="px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600">超期 {item.overdue}</span>
+                  <span className="px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600">逾期 {item.overdue}</span>
                 </div>
               </div>
             ))}

@@ -174,6 +174,20 @@ const IntelRadar = () => {
   const [fetchSource, setFetchSource] = useState<'server' | 'cache' | null>(null);
   const [fetchError, setFetchError] = useState<string>('');
   const [fetchNotice, setFetchNotice] = useState<string>('');
+  /*
+    ── 服务端给的原因单独存一份，不跟着分支走（2026-09-14 第三次返工）──
+
+    fetchToday 里有**五条分支**（缓存有数据/缓存为空/彻底失败/零结果/正常成功），
+    每条都自己写一句提示文案。我前两次都是"挑一条补上"，
+    结果金恩来点下去看到的还是那句笼统的话 —— 因为他那次走的是第五条。
+
+    **一个原因要经过五条路才能到屏幕上，补一条等于没补。**
+
+    改成：拿到响应就把服务端的 message 存进这里，渲染时统一带上。
+    各分支照旧写自己那句"发生了什么"，而"为什么"只由这一处负责。
+    这就是 CLAUDE.md 二点五第 3 条：不是每次发现再补，是让它不可能漏。
+  */
+  const [serverReason, setServerReason] = useState<string>('');
   const [lastRunAt, setLastRunAt] = useState<string>('');
   const [latestFetchIds, setLatestFetchIds] = useState<string[]>([]);
   const [latestOnly, setLatestOnly] = useState<boolean>(false);
@@ -230,7 +244,11 @@ const IntelRadar = () => {
   const hasHistoricalFallback = visibleSignals.length > 0 && latestFetchIds.length === 0;
   const showBlockingFetchError = Boolean(fetchError) && (likelyBackendIssue || visibleSignals.length === 0);
   const showingHistoricalOnly = hasHistoricalFallback && (Boolean(fetchError) || fetchSource === 'cache');
-  const historicalFallbackNotice = fetchNotice || '本次联网抓取未返回新增可用情报，当前展示最近缓存/历史情报。';
+  const historicalFallbackNotice = [
+    fetchNotice || '本次联网抓取未返回新增可用情报，当前展示最近缓存/历史情报。',
+    // 服务端说了原因就一定带上，不管上面那句是哪条分支写的
+    serverReason && !String(fetchNotice || '').includes(serverReason) ? serverReason : ''
+  ].filter(Boolean).join('\n\n');
 
   const checkBackend = async () => {
     const targets = [
@@ -337,10 +355,14 @@ const IntelRadar = () => {
   const fetchToday = async () => {
     setIsFetching(true);
     setFetchError('');
-    setFetchNotice('正在抓取今日情报，请稍候...');
+    // 说清要等多久 —— 一次真实抓取 30-40 秒，不说的话人 10 秒就以为卡死了
+    setFetchNotice('正在抓取今日情报……要联网抓 11 个源再让 AI 归纳，通常 30-40 秒，最长等 75 秒。');
+    setServerReason('');
     try {
       const result = await intelService.fetchDailySignals({ regions, industries, limit: Number(cfgLimit) || 20 });
       setFetchSource(result.source || 'server');
+      // 原因只在这一处采集 —— 下面五条分支谁也不用记得带上它
+      setServerReason(result.error || result.notice || '');
       if (!result.ok) {
         if (result.signals.length > 0) {
           upsertMarketSignals(result.signals);
@@ -357,7 +379,22 @@ const IntelRadar = () => {
             ? `；已过滤跨区域 ${Number(result.droppedGeo || 0)} 条（冲突 ${Number(result.droppedGeoConflict || 0)} 条）`
             : '';
           const rescuedTip = (result.rescuedUndated || 0) > 0 ? `；其中 ${Number(result.rescuedUndated || 0)} 条为“日期待核验”补位` : '';
-          setFetchNotice((result.error || `本次联网抓取失败，已回退缓存（${result.signals.length} 条）。`) + dropTip + geoTip + rescuedTip);
+          /*
+            ── 三条分支都要拿原因，不能只补一条（2026-09-14 下午，第三次栽在这）──
+
+            服务端把「哪几个源没通、AI 那步怎么了」写进了 message。
+            前端有三条设置提示的路径：
+              ① 这一条（缓存里有数据）    ← 原来只看 result.error，而成功路径下 error 是空的
+              ② 缓存为空、回退历史        ← 上午补过
+              ③ 彻底失败                  ← 本来就用 error
+
+            我上午只补了 ②，于是金恩来点下去看到的还是那句笼统的
+            「本次联网抓取未返回新增可用情报」—— 他因此以为根本没修。
+
+            **一个原因要经过三条路才能到屏幕上，补一条等于没补。**
+            这就是 CLAUDE.md 第六章第 2 条说的「同样的东西还有几处」。
+          */
+          setFetchNotice((result.error || result.notice || `本次联网抓取失败，已回退缓存（${result.signals.length} 条）。`) + dropTip + geoTip + rescuedTip);
           return;
         }
         const latest = await intelService.fetchLatestSignals();
@@ -640,8 +677,9 @@ const IntelRadar = () => {
             </div>
           </div>
         )}
+        {/* whitespace-pre-line：原因里带换行（一行一个没通的源），不加这个会挤成一坨看不清 */}
         {!showBlockingFetchError && (fetchNotice || (fetchError && hasHistoricalFallback)) && (
-          <div className="bg-blue-50 border border-blue-100 text-blue-800 rounded-2xl p-4 text-sm font-bold">
+          <div className="bg-blue-50 border border-blue-100 text-blue-800 rounded-2xl p-4 text-sm font-bold whitespace-pre-line">
             {historicalFallbackNotice}
           </div>
         )}

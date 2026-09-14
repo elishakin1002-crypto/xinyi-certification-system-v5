@@ -387,7 +387,7 @@ const Contracts = () => {
       return;
     }
     // 不再用 confirm 直接建：负责人和交期是立项必须由人定的两件事，
-    // 写死「待指派」和固定日期会产出无主且一出生就超期的项目。
+    // 写死「待指派」和固定日期会产出无主且一出生就逾期的项目。
     setProjectDraft({
       contract,
       ownerUserId: currentUser.id,

@@ -95,6 +95,14 @@ const expectNoCrash = async (page: Page, where: string) => {
 
 test.describe('六条核心流程', () => {
 
+  test('工作台统计卡在 984px 宽度不会横向溢出', async ({ page }) => {
+    await page.setViewportSize({ width: 984, height: 720 });
+    await login(page);
+    await page.goto('/#/dashboard?persona=manager');
+    const overflow = await page.locator('body').evaluate(el => el.scrollWidth > el.clientWidth);
+    expect(overflow, '总助工作台统计卡把页面撑出横向滚动').toBe(false);
+  });
+
   // ── 1. 登录 → 工作台 ──────────────────────────────────────────
   test('1 登录之后能进工作台，而且工作台不是空白', async ({ page }) => {
     await login(page);

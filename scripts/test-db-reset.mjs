@@ -54,4 +54,30 @@ const main = async () => {
   }
 };
 
-main().catch((e) => { console.error('清理测试库失败：', e.message); process.exit(1); });
+/*
+  ── 报错要说清「下一步查什么」（2026-09-14）──────────────────────
+
+  原来只打一句「清理测试库失败：<原始报错>」。
+  Codex 撞上之后就卡在那里了 —— 它看不出该去查 Docker、查迁移、
+  还是查有没有别的进程正在跑测试。
+
+  这条正是项目自己的规矩：**给用户的文案要说清后果，不要只说不行。**
+  这里的"用户"是下一个接手的人（或 AI），三条最常见的原因直接列出来。
+*/
+main().catch((e) => {
+  const msg = String(e?.message || e);
+  console.error('\n❌ 清理测试库失败：' + msg + '\n');
+  console.error('按这个顺序查（三条覆盖了至今遇到的全部情况）：');
+  console.error('  1. 数据库没起来 → docker start xinyi-dev-db，等 5 秒再试');
+  if (/lock|deadlock|timeout|being accessed/i.test(msg)) {
+    console.error('  2. ★ 报错里带着「锁」字：**有别的进程正在跑测试**');
+    console.error('       同一个测试库不能被两个 npm test / playwright 同时清空。');
+    console.error('       等对方跑完，或 lsof -nP -iTCP:3001 -sTCP:LISTEN 看谁在占。');
+  } else {
+    console.error('  2. 有别的进程正在跑测试（同一个测试库不能被两个进程同时清空）→ 等它跑完');
+  }
+  console.error('  3. 测试库结构落后于代码 → 跑一次：');
+  console.error('       XINYI_DB_URL=<测试库地址> node scripts/migrate.mjs');
+  console.error('       （测试库地址 = .env.local 里的 DATABASE_URL 把库名换成 xinyi_test）\n');
+  process.exit(1);
+});

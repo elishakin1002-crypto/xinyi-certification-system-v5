@@ -30,7 +30,7 @@ import { isOpenTask, isOverdue, byUrgency, blockingPrerequisites } from '../src/
  *
  * 按项目分组，人还是得自己在几个项目之间判断先做哪个 ——
  * 而这个判断的依据本来就是时间。所以直接按时间排好：
- * 超期的 / 今天到期的 / 这周的 / 以后的。
+ * 逾期的 / 今天到期的 / 这周的 / 以后的。
  * 打开就知道先干哪件，不用再想一遍。
  *
  * ── 为什么默认不显示「以后」的 ────────────────────────────────
@@ -159,7 +159,7 @@ const MyTasks: React.FC = () => {
             <span className="text-gray-300">·</span>
             <span className={overdue ? 'text-red-600' : ''}>
               {task.deadline || '没定日期'}
-              {overdue && ' 已超期'}
+              {overdue && ' 已逾期'}
             </span>
             {scope !== 'mine' && task.owner && (
               <>
@@ -210,7 +210,7 @@ const MyTasks: React.FC = () => {
         */}
         <p className="mt-1 text-sm text-gray-500">
           <span className="font-bold text-gray-700">按「时间」看：</span>
-          所有项目里写着你名字的活，抄成一张清单按日子排好。超期的在最上面，先处理它们。
+          所有项目里写着你名字的活，抄成一张清单按日子排好。逾期的在最上面，先处理它们。
           想看某一单的全貌，去
           <button
             type="button"
@@ -227,7 +227,7 @@ const MyTasks: React.FC = () => {
       </div>
 
       <StatGrid className="mb-6">
-        <StatCard icon={<AlertTriangle className="h-6 w-6" />} value={buckets.overdue.length} label="已超期" emphasis={buckets.overdue.length > 0 ? 'danger' : undefined} title="过了截止日期还没做完的" />
+        <StatCard icon={<AlertTriangle className="h-6 w-6" />} value={buckets.overdue.length} label="已逾期" emphasis={buckets.overdue.length > 0 ? 'danger' : undefined} title="过了截止日期还没做完的" />
         <StatCard icon={<CalendarDays className="h-6 w-6" />} value={buckets.today.length} label="今天到期" tone="amber" />
         <StatCard icon={<ListTodo className="h-6 w-6" />} value={buckets.week.length} label="本周内" tone="blue" />
         <StatCard icon={<Inbox className="h-6 w-6" />} value={doingCount} label="我正在做" tone="emerald" title="标了「进行中」的。堆太多说明同时开的头太多" />
@@ -274,7 +274,7 @@ const MyTasks: React.FC = () => {
         </div>
       ) : (
         <>
-          {section('已超期', '过了日子还没做完 —— 先处理这里', buckets.overdue, 'bg-red-50 text-red-800', <AlertTriangle className="h-4 w-4" />)}
+          {section('已逾期', '过了日子还没做完 —— 先处理这里', buckets.overdue, 'bg-red-50 text-red-800', <AlertTriangle className="h-4 w-4" />)}
           {section('今天到期', '今天之内要有结果', buckets.today, 'bg-amber-50 text-amber-800', <CalendarDays className="h-4 w-4" />)}
           {section('本周内', '这周要安排上', buckets.week, 'bg-blue-50 text-blue-800', <ListTodo className="h-4 w-4" />)}
 
