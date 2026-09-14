@@ -54,8 +54,38 @@ const knowledgeRepo = {
     const r = await query(text, values);
     return r.rows[0] ? fromRow(r.rows[0]) : null;
   },
-  remove: async (id) => {
-    await query('DELETE FROM knowledge_docs WHERE id = $1', [String(id || '')]);
+  remove: async (id, actor = {}) => {
+    /*
+      墓碑必须和删除在**同一个事务**里。
+
+      分开写的话，删成功而墓碑没记上，这条记录下次整份写回就又回来了 ——
+      比不删还糟，因为人已经以为删掉了。
+    */
+    const pool = require('../db/pool');
+    const { recordDeletion } = require('../services/tombstones');
+    await pool.withTransaction(async (client) => {
+      await client.query('DELETE FROM knowledge_docs WHERE id = $1', [String(id || '')]);
+      await recordDeletion((t, v) => client.query(t, v), {
+        entityType: 'knowledge',
+        entityId: id,
+        deletedBy: actor.userId,
+        deletedByName: actor.userName,
+        reason: actor.reason
+      });
+    });
+
+    /*
+      提醒规则 4：挂在这份文档上的提醒跟着走。
+
+      不带走的话会变成「点开什么也没有、又消不掉」的死条目 ——
+      正是提醒栏被塞满的成因之一。
+      每日任务里也有一遍孤儿清理兜底，但那是明天的事；
+      人删完文档不该还要等到明天才看不见它的提醒。
+    */
+    try {
+      const { cascadeOnDelete } = require('../services/reminderLifecycle');
+      await cascadeOnDelete(pool, 'knowledge', id);
+    } catch { /* 清提醒失败不该让删文档也失败 */ }
     return { ok: true };
   },
   upsertWith: async (runner, obj) => {

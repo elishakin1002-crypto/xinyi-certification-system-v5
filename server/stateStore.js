@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { protectedKeys, mergeRows, conflict } = require('./services/stateMerge');
 
 const legacyFileStorePath = path.resolve(__dirname, './state_store.json');
@@ -323,9 +324,35 @@ const upsertStateBatchPostgres = async (datasets, meta) => {
     for (const [key] of guarded) {
       await client.query(`LOCK TABLE ${PROJECTED[key].table} IN SHARE ROW EXCLUSIVE MODE`);
     }
+    const { filterDeleted } = require('./services/tombstones');
+
     for (const entry of entries) {
       const [datasetKey] = entry;
       let datasetValue = entry[1];
+
+      /*
+        ── 按墓碑过滤（2026-09-14）─────────────────────────────────
+
+        金恩来：「我希望合同删了又回来是真的解决了。」
+
+        病根是这里：前端整份写回，而它手上那份数组可能还带着
+        服务端已经删掉的记录 —— 写回去，它就活了。
+        没有任何报错：删除接口返回 200，列表上也确实没了，
+        刷新之后才发现它又在。
+
+        所以在落库之前先过一遍墓碑：被删过的 id 直接剔掉。
+        前端写回什么都无所谓了 —— **删掉的东西在架构上回不来**。
+
+        剔掉了要记日志。悄悄剔除和悄悄写回一样糟：
+        真出问题时，至少要能在日志里看见"这里剔了几条、哪几条"。
+      */
+      const filtered = await filterDeleted((t, v) => client.query(t, v), datasetKey, datasetValue);
+      if (filtered.removed.length) {
+        console.log(`[状态库] ${datasetKey} 写回时剔掉 ${filtered.removed.length} 条已删除记录：${filtered.removed.join(', ')}`);
+        datasetValue = filtered.value;
+        entry[1] = filtered.value;
+      }
+
       if (protectedKeys.has(datasetKey) && meta.baseDatasets) {
         const conf = PROJECTED[datasetKey];
         const current = await client.query(`SELECT * FROM ${conf.table}`);
@@ -360,21 +387,44 @@ const upsertStateBatchPostgres = async (datasets, meta) => {
         ]
       );
 
-      await client.query(
-        `
-          INSERT INTO app_state_history (
-            dataset_key, dataset_value, source, actor_user_id, client_id, app_version
-          ) VALUES ($1, $2::jsonb, $3, $4, $5, $6);
-        `,
-        [
-          datasetKey,
-          JSON.stringify(datasetValue ?? null),
-          meta.source || 'frontend',
-          meta.actorUserId || '',
-          meta.clientId || '',
-          meta.appVersion || ''
-        ]
+      /*
+        ── 内容没变就不写历史（2026-09-14）──────────────────────────
+
+        金恩来：「数据库的备份怎么会有 4002 份这么多？这完全不合理啊！」
+        他是对的。查下来不是"存了 4002 次备份"，是**同一份内容存了几百遍**：
+          leads_v8          382 版，去重后 43 种，191 MB
+          market_signals_v1 313 版，去重后 **2** 种，94 MB
+        前端是「整份读、整份写回」的模式，不管有没有改动都写一次，
+        这里就照单全收地存一份全量快照。约 88% 是逐字节相同的副本。
+
+        所以写之前先比哈希。注意比的是**同一个 dataset_key 的上一版**，
+        不是全表去重 —— 内容 A→B→A 是真实的三次变更，中间那次回退要留着。
+      */
+      const payload = JSON.stringify(datasetValue ?? null);
+      const contentHash = crypto.createHash('md5').update(payload).digest('hex');
+      const { rows: [prev] } = await client.query(
+        'SELECT content_hash FROM app_state_history WHERE dataset_key = $1 ORDER BY id DESC LIMIT 1',
+        [datasetKey]
       );
+
+      if (prev?.content_hash !== contentHash) {
+        await client.query(
+          `
+            INSERT INTO app_state_history (
+              dataset_key, dataset_value, source, actor_user_id, client_id, app_version, content_hash
+            ) VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7);
+          `,
+          [
+            datasetKey,
+            payload,
+            meta.source || 'frontend',
+            meta.actorUserId || '',
+            meta.clientId || '',
+            meta.appVersion || '',
+            contentHash
+          ]
+        );
+      }
       written += 1;
     }
     await client.query('COMMIT');

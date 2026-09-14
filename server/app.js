@@ -5530,6 +5530,32 @@ const startServer = async () => {
     console.log(`\n🚀 后端服务已启动！\n👉 API 地址: http://localhost:${port}\n👉 AI Provider: ${providerInfo}\n👉 StateStore: ${stateMode} (${stateReason})\n👉 AuthStore: ${authMode} (${authReason})\n👉 请新开一个终端运行前端页面。`);
     scheduleIntelJob();
     scheduleErrorDigest();
+
+    /*
+      状态快照历史的每日清理。
+
+      原来有个手动脚本（npm run state:history）能清，但**从来没人跑过** ——
+      于是攒到 4002 版 146MB，其中约 88% 是逐字节相同的副本。
+      「有个脚本可以清」和「它每天自己清」是两回事，前者等于没有。
+      这个项目已经栽过一次（npm run checkup 也是有但没人跑，做成了头重脚轻）。
+    */
+    try {
+      const dbPool = require('./db/pool');
+      if (dbPool.isEnabled()) {
+        const { scheduleStateHistoryPrune } = require('./services/stateHistoryRetention');
+        scheduleStateHistoryPrune(dbPool);
+
+        /*
+          提醒的生命周期维护。放服务端而不是前端的理由：
+          前端只有人打开页面才跑，而「这条提醒该不该退场」
+          不该取决于今天有没有人登录。
+        */
+        const { scheduleReminderLifecycle } = require('./services/reminderLifecycle');
+        scheduleReminderLifecycle(dbPool);
+      }
+    } catch (e) {
+      console.warn('[定时任务] 没能启用（不影响业务）:', e.message);
+    }
   });
 };
 

@@ -17,8 +17,36 @@ const parseBool = (v) => (v === undefined ? undefined : ['1', 'true', 'yes'].inc
 const payload = (b) => (b?.reminder && typeof b.reminder === 'object' ? b.reminder : (b || {}));
 
 router.get('/api/reminders', wrap(async (req, res) => {
-  const reminders = await reminderRepo.list({ linkType: req.query.linkType, linkId: req.query.linkId, isRead: parseBool(req.query.isRead) });
+  /*
+    默认只返回待办。要看归档的（「上个月那条到期提醒发过没有？」）
+    显式传 ?status=archived 或 ?includeArchived=1。
+
+    2026-09-14 之前这里不分状态，把七个月前的过期条目和今天的一起端出来 ——
+    生产上 228 条里 205 条是过期的，人看一眼就再也不看了。
+  */
+  const reminders = await reminderRepo.list({
+    linkType: req.query.linkType,
+    linkId: req.query.linkId,
+    isRead: parseBool(req.query.isRead),
+    status: req.query.status || 'open',
+    includeArchived: parseBool(req.query.includeArchived) === true
+  });
   sendSuccess(res, { reminders }, 'success');
+}));
+
+/*
+  规则 2：办完了。
+
+  和「标为已读」分开是关键 —— 已读只是"我看见了"，
+  看见了不等于事情做了。原来只有已读，所以 228 条一条都没人标：
+  标它既不代表做完，也不让它消失，标了没有任何意义。
+*/
+router.post('/api/reminders/:id/resolve',
+  requireAction('REMINDER_WRITE', { resource: (req) => ({ type: 'reminder', id: req.params?.id || '' }) }),
+  wrap(async (req, res) => {
+  const reminder = await reminderRepo.resolve(req.params.id);
+  if (!reminder) return sendFail(res, ERROR_CODES.NOT_FOUND, '这条提醒已经不在了（可能刚被别人处理掉）', {}, 404);
+  sendSuccess(res, { reminder }, 'success');
 }));
 
 router.post('/api/reminders',

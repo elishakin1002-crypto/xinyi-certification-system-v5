@@ -184,6 +184,8 @@ export interface AppContextType {
   */
   markRemindersRead: (ids: string[]) => void;
   markAllRemindersRead: () => void;
+  /** 办完了 —— 和「已读」是两回事，只有这个能让提醒离开待办栏 */
+  resolveReminders: (ids: string[]) => void;
   addKnowledgeDoc: (doc: KnowledgeDoc) => Promise<{ ok: boolean; reason?: string; duplicateId?: string }>;
   updateCustomer: (id: string, updates: Partial<Customer>) => void;
   
@@ -4786,6 +4788,31 @@ ${receivableLines}
     if (!mine.size) return;
     setReminders(prev => prev.map(r => (mine.has(r.id) ? { ...r, isRead: true } : r)));
   };
+
+  /*
+    ── 办完了（2026-09-14）────────────────────────────────────
+
+    金恩来：「提醒越挂越多也是个问题，你应该有成熟的设计的。」
+    生产实测比"多"严重：228 条提醒，**0 条被读过**，205 条已过期，
+    最早的是七个月前 —— 提醒栏已经彻底失效。
+
+    根因不是生成得多，是**没有退出机制**：原来只有 isRead 一个布尔，
+    而「我看见了」和「这件事办完了」是两回事。标已读既不代表做了，
+    也不让它消失，所以没人标 —— 这是设计的问题，不是同事偷懒。
+
+    办完之后从本地列表里拿掉（服务端标 status='done'，不是物理删除，
+    要查「那条催款提醒当时多久才处理」还查得到）。
+  */
+  const resolveReminders = (ids: string[]) => {
+    if (!ids.length) return;
+    const target = new Set(ids);
+    setReminders(prev => prev.filter(r => !target.has(r.id)));
+    if (reminderService.isEnabled()) {
+      ids.forEach(id => {
+        reminderService.resolveReminder(id).catch(e => console.warn('[ReminderService] resolve failed', e));
+      });
+    }
+  };
   const addKnowledgeDoc = async (doc: any) => appendKnowledgeDoc(doc);
   const updateCustomer = (id: string, u: any) => {
     const previousCustomers = customers;
@@ -4830,7 +4857,7 @@ ${receivableLines}
       upsertMarketSignals, updateMarketSignal, convertSignalToFollowUpProject, convertIntelProjectToLead, bindFollowUpProjectToCustomer,
       strategicInsight, isAnalyzingStrategy, strategicTasks, runDeepAnalysis, generateStrategicTasksFromInsight, addStrategicTask, updateStrategicTaskStatus, deleteStrategicTask,
       runSystemScans, generateAuditPlan, updateCertificateAuditStatus,
-      toggleReceivableStatus, addReminder, scheduleRenewalFollowUp, dismissReminder, markRemindersRead, markAllRemindersRead,
+      toggleReceivableStatus, addReminder, scheduleRenewalFollowUp, dismissReminder, markRemindersRead, markAllRemindersRead, resolveReminders,
       addKnowledgeDoc, updateCustomer,
       aiDecisionLogs, runProjectDiagnosis, completeProject, reopenProject, updateProjectCost,
       importRecords, importExcel // 暴露新功能

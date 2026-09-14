@@ -32,8 +32,17 @@ test('按对象聚合，不按条罗列', () => {
   const src = read('components/Layout.tsx');
   assert.match(src, /const bellGroups = useMemo/, '没有用聚合，会变成逐条罗列');
   assert.match(src, /aggregatedReminders/, '没有用已有的 aggregatedReminders 聚合结果');
-  assert.match(src, /\.slice\(0, 12\)/,
-    '没有截断 —— 滚动条越长越像「这事我处理不完」，反而让人不点');
+  /*
+    2026-09-14：原来这里钉的是字面量 `.slice(0, 12)`。
+    做提醒分级（今天要做 / 之后）时上限提成了 BELL_LIMIT 常量，
+    这条就红了 —— **红得对，但钉错了地方**：它钉的是"怎么写的"，
+    而要守的是"有没有截断"。改成钉意图，顺带把截断后的告知也钉上。
+  */
+  assert.match(src, /const BELL_LIMIT = \d+/,
+    '没有截断上限 —— 滚动条越长越像「这事我处理不完」，反而让人不点');
+  assert.match(src, /\.slice\(0, BELL_LIMIT\)/, '定义了上限却没有真的用它截断');
+  assert.match(src, /还有 \{bellBuckets\.hidden\} 项没显示/,
+    '截断了没告诉人还剩多少 —— 悄悄吞掉比不截断更糟');
 });
 
 test('点进去自动标已读', () => {

@@ -92,7 +92,18 @@ router.patch('/api/knowledge/:id',
 router.delete('/api/knowledge/:id',
   requireAction('KNOWLEDGE_WRITE', { resource: (req) => ({ type: 'knowledge', id: req.params?.id || '' }) }),
   wrap(async (req, res) => {
-  await knowledgeRepo.remove(req.params.id);
+  /*
+    把操作人带下去写进墓碑。
+
+    这个项目的第一条铁律是「谁做的这条链不能断」，
+    而在墓碑出现之前，**删除是全系统唯一没有留痕的动作** ——
+    东西没了，没人知道是谁删的、什么时候删的。
+  */
+  await knowledgeRepo.remove(req.params.id, {
+    userId: req.authUser?.id || '',
+    userName: req.authUser?.name || '',
+    reason: String(req.body?.reason || req.query?.reason || '')
+  });
   sendSuccess(res, { ok: true }, 'success');
 }));
 

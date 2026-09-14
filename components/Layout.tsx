@@ -110,6 +110,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     aggregatedReminders,
     markRemindersRead,
     markAllRemindersRead,
+    resolveReminders,
     previewPersona,
     setPreviewPersona,
     writeFailure,
@@ -350,19 +351,54 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     截到 12 组 —— 再多人也不会往下翻，而且滚动条越长越像"这事我处理不完"，
     反而让人干脆不点。要看全部走底部那个入口。
   */
-  const bellGroups = useMemo(() => {
+  const BELL_LIMIT = 12;
+  /*
+    ── 规则 5「分级」（2026-09-14）────────────────────────────
+
+    金恩来：「提醒越挂越多也是个问题。」
+    生产实测 228 条、0 条已读、205 条过期 —— 全挤在一个列表里，
+    人看一眼就再也不看了，真正要紧的那条跟着一起被埋掉。
+
+    所以分两段：**今天必须做**（已逾期 or 今天到期）和**之后的**。
+    「今天必须做」那段要短 —— 短到人愿意一条条看完，这个功能才算活着。
+    一个一眼看不完的待办列表，和没有待办列表是一样的。
+  */
+  const bellBuckets = useMemo(() => {
     const rank: Record<string, number> = { high: 3, medium: 2, low: 1 };
-    return [...aggregatedReminders]
-      .sort((a, b) => {
-        const aUnread = a.samples.some(s => !s.isRead) ? 1 : 0;
-        const bUnread = b.samples.some(s => !s.isRead) ? 1 : 0;
-        if (aUnread !== bUnread) return bUnread - aUnread;
-        const sev = (rank[b.severity] || 0) - (rank[a.severity] || 0);
-        if (sev !== 0) return sev;
-        return String(b.latestDate || '').localeCompare(String(a.latestDate || ''));
-      })
-      .slice(0, 12);
+    const today = new Date().toISOString().slice(0, 10);
+    const sorted = [...aggregatedReminders].sort((a, b) => {
+      const aUnread = a.samples.some(s => !s.isRead) ? 1 : 0;
+      const bUnread = b.samples.some(s => !s.isRead) ? 1 : 0;
+      if (aUnread !== bUnread) return bUnread - aUnread;
+      const sev = (rank[b.severity] || 0) - (rank[a.severity] || 0);
+      if (sev !== 0) return sev;
+      return String(b.latestDate || '').localeCompare(String(a.latestDate || ''));
+    });
+
+    // 没有日期的当成「今天必须做」——宁可多催一条，不能把没日期的悄悄藏起来
+    const isDueNow = (g: AggregatedReminder) => !g.latestDate || String(g.latestDate) <= today;
+    const now = sorted.filter(isDueNow);
+    const later = sorted.filter(g => !isDueNow(g));
+
+    /*
+      规则 6「有上限」：两段合起来截到 12 组。
+      截掉的条数要**显示出来**，不能悄悄吞掉 ——
+      人不知道后面还有多少，就没法判断要不要点进去看全部。
+    */
+    const shownNow = now.slice(0, BELL_LIMIT);
+    const shownLater = later.slice(0, Math.max(0, BELL_LIMIT - shownNow.length));
+    return {
+      now: shownNow,
+      later: shownLater,
+      hidden: (now.length - shownNow.length) + (later.length - shownLater.length),
+      total: sorted.length
+    };
   }, [aggregatedReminders]);
+
+  const bellGroups = useMemo(
+    () => [...bellBuckets.now, ...bellBuckets.later],
+    [bellBuckets]
+  );
 
   const severityStyle: Record<string, { dot: string; text: string; label: string }> = {
     high: { dot: 'bg-red-500', text: 'text-red-600', label: '紧急' },
@@ -391,6 +427,67 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     if (!route) return;
     // 带上 id，目标页面可以据此高亮/滚动到那一条
     navigate(`${route}?focus=${encodeURIComponent(group.linkId)}`);
+  };
+
+  /**
+   * 一段提醒（「今天要做」/「之后」）。
+   *
+   * 每条右边有个「办完了」—— 这是规则 2 的入口，也是整改里最关键的一个按钮。
+   * 原来只有「标为已读」，而标已读既不代表事情做了、也不让它消失，
+   * 所以生产上 228 条提醒**一条都没人标**。那不是同事偷懒，是设计没给出口。
+   */
+  const renderBellSection = (label: string, groups: AggregatedReminder[], urgent: boolean) => {
+    if (!groups.length) return null;
+    return (
+      <div>
+        <div className={`px-4 py-1.5 text-[10px] font-black tracking-wider ${urgent ? 'text-red-500 bg-red-50/60' : 'text-gray-400 bg-gray-50/60'}`}>
+          {label} · {groups.length}
+        </div>
+        {groups.map(group => {
+          const style = severityStyle[group.severity] || severityStyle.low;
+          const unread = group.samples.filter(s => !s.isRead).length;
+          return (
+            <div
+              key={group.id}
+              className={`flex items-start gap-1 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors ${unread > 0 ? '' : 'opacity-55'}`}
+            >
+              <button
+                type="button"
+                onClick={() => handleOpenReminderGroup(group)}
+                className="flex-1 min-w-0 text-left px-4 py-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${style.dot}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-sm font-bold text-gray-900 truncate">
+                        {group.projectName || group.customerName || group.mainScene}
+                      </p>
+                      <span className="text-[10px] text-gray-400 shrink-0">{group.latestDate}</span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{group.mainScene}</p>
+                    {group.count > 1 && (
+                      <p className={`text-[10px] mt-1 font-bold ${style.text}`}>
+                        {/* 同一个对象上挂着好几条时才提示条数，否则「共 1 项」是噪音 */}
+                        {style.label} · 共 {group.count} 项{unread > 0 ? `，${unread} 条未读` : ''}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </button>
+              <button
+                type="button"
+                title="这件事已经处理完了，从待办里去掉（还能在归档里查到）"
+                onClick={(e) => { e.stopPropagation(); resolveReminders(group.samples.map(s => s.id)); }}
+                className="shrink-0 self-center mr-3 px-2 py-1 rounded-lg text-[11px] font-bold text-emerald-600 hover:bg-emerald-50"
+              >
+                办完了
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   const renderBellPanel = () => (
@@ -430,37 +527,21 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <p className="text-sm font-bold text-gray-400">暂时没有需要你处理的事</p>
               <p className="text-[11px] text-gray-300 mt-1">有逾期、待验收或风险时会出现在这里</p>
             </div>
-          ) : bellGroups.map(group => {
-            const style = severityStyle[group.severity] || severityStyle.low;
-            const unread = group.samples.filter(s => !s.isRead).length;
-            return (
-              <button
-                key={group.id}
-                type="button"
-                onClick={() => handleOpenReminderGroup(group)}
-                className={`w-full text-left px-4 py-3 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors ${unread > 0 ? '' : 'opacity-55'}`}
-              >
-                <div className="flex items-start gap-2.5">
-                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${style.dot}`} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-sm font-bold text-gray-900 truncate">
-                        {group.projectName || group.customerName || group.mainScene}
-                      </p>
-                      <span className="text-[10px] text-gray-400 shrink-0">{group.latestDate}</span>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{group.mainScene}</p>
-                    {group.count > 1 && (
-                      <p className={`text-[10px] mt-1 font-bold ${style.text}`}>
-                        {/* 同一个对象上挂着好几条时才提示条数，否则「共 1 项」是噪音 */}
-                        {style.label} · 共 {group.count} 项{unread > 0 ? `，${unread} 条未读` : ''}
-                      </p>
-                    )}
-                  </div>
+          ) : (
+            <>
+              {renderBellSection('今天要做', bellBuckets.now, true)}
+              {renderBellSection('之后', bellBuckets.later, false)}
+              {bellBuckets.hidden > 0 && (
+                /*
+                  规则 6：截掉的必须说出来。
+                  悄悄吞掉的话，人不知道后面还有多少，也就没法判断要不要点进去看全部。
+                */
+                <div className="px-4 py-2.5 text-[11px] font-bold text-gray-400 bg-gray-50/60 text-center">
+                  还有 {bellBuckets.hidden} 项没显示（共 {bellBuckets.total} 项）
                 </div>
-              </button>
-            );
-          })}
+              )}
+            </>
+          )}
         </div>
 
         <button

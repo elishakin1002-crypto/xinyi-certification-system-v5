@@ -51,4 +51,21 @@ export const reminderService = {
     const res = await fetch(`/api/reminders/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include' });
     await parseJson<{ ok: boolean }>(res);
   },
+
+  /*
+    「办完了」——和「已读」是两回事，这一点是这次改动的核心。
+
+      已读 = 我看见了（看一眼就算）
+      办完 = 这件事处理完了（该收的款收了、该整改的改了）
+
+    生产上 228 条提醒**一条都没人标已读**，原因就在这里：
+    标了既不代表事情做了，也不让它从待办里消失，标它没有任何意义。
+    只有「办完」才让它离开待办栏，人才有动力去点。
+  */
+  resolveReminder: async (id: string): Promise<void> => {
+    const res = await fetch(`/api/reminders/${encodeURIComponent(id)}/resolve`, {
+      method: 'POST', credentials: 'include'
+    });
+    await parseJson<{ reminder: Reminder }>(res);
+  },
 };
