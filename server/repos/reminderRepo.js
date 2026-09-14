@@ -38,13 +38,35 @@ const reminderRepo = {
    * 在这之前列表把七个月前的过期提醒和今天的一起端出来，
    * 人看一眼就再也不看了。要看归档的，显式传 status。
    */
-  list: async ({ linkType, linkId, isRead, status = 'open', includeArchived = false } = {}) => {
+  list: async ({ linkType, linkId, isRead, status = 'open', includeArchived = false, horizonDays } = {}) => {
     const where = [];
     const params = [];
     if (linkType) { params.push(linkType); where.push(`link_type = $${params.length}`); }
     if (linkId) { params.push(linkId); where.push(`link_id = $${params.length}`); }
     if (isRead !== undefined) { params.push(Boolean(isRead)); where.push(`is_read = $${params.length}`); }
     if (!includeArchived && status) { params.push(String(status)); where.push(`coalesce(status,'open') = $${params.length}`); }
+
+    /*
+      ── 还没到时候的，先别拿出来（2026-09-14 下午，金恩来截图指出）──
+
+      上午做「生命周期」时我只做了一半：过期的归档掉。
+      漏掉的另一半是 **还没到日子的也不该占着待办栏**。
+
+      他的截图里，待办栏顶上挂着 2029-01-09 的「证书到期提醒（剩余30天）」——
+      **三年后的事，今天就在催**。生产上 23 条待办里有 21 条是这样的。
+
+      reminder_date 的含义本来就是「这条提醒该在哪天响」，
+      所以只取「已经该响的」+「近 horizonDays 天内要响的」。
+      更远的原样存着，到日子自然浮上来 —— 这就是别的系统里的 snooze。
+
+      14 天是默认值：够提前准备（催款、约客户），又不至于把两周后的事
+      堆在今天的清单里。
+    */
+    const horizon = Number.isFinite(Number(horizonDays)) ? Number(horizonDays) : 14;
+    if (!includeArchived && horizon >= 0) {
+      params.push(horizon);
+      where.push(`(reminder_date IS NULL OR reminder_date <= CURRENT_DATE + ($${params.length} || ' days')::interval)`);
+    }
     const sql = `SELECT * FROM reminders ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY reminder_date DESC NULLS LAST, created_at DESC`;
     const r = await query(sql, params);
     return r.rows.map(fromRow);

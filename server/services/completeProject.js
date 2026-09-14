@@ -311,19 +311,53 @@ const completeProject = async (projectId, opts = {}) => {
   // ---- 生成提醒 ----
   const reminderIds = [];
   const remindersToAdd = [];
+  /*
+    ── 没有到期日就别编一个（2026-09-14 下午，金恩来截图揪出来的）─────
+
+    原来这里是：
+        const expiryStr = certs[0]?.expiryDate
+          || new Date(now + 365 * 3 天)      ← **客户没录证书，就当三年后到期**
+
+    然后按这个凭空造的日子生成 90/60/30 三条提醒。
+    他截图里那条「证书到期提醒（剩余30天）· 2029-01-09」就是这么来的 ——
+    **一个根本不存在的到期日，催了三条，而且立刻挂进待办栏**。
+    生产上 23 条待办里有 21 条是这类。
+
+    凭空造数据比不造更糟：人看见「剩余30天」会当真去准备，
+    而那个日期没有任何依据。所以没有到期日就**不生成到期提醒**，
+    改成提醒人「去把到期日补上」—— 那才是这时候真正该做的事。
+
+    另外三条 90/60/30 本身是对的（分三次催是业务需要），
+    它们不再挤在一起是因为 reminderRepo.list 现在按生效日期取，
+    到日子才浮上来。
+  */
+  const certAudience = ['SALES', 'MANAGER', 'ADMIN'];   // 续期是复购，归销售线
   if (isCertProject) {
     const certs = (targetCustomer.certificates || []).filter((c) => c.expiryDate).sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
-    const expiryStr = certs[0]?.expiryDate || new Date(now.getTime() + 365 * 3 * 24 * 3600 * 1000).toISOString().split('T')[0];
-    [90, 60, 30].forEach((days, idx) => {
-      const remindDate = new Date(new Date(expiryStr).getTime() - days * 24 * 3600 * 1000);
-      const id = `REM-${eventId}-EXP-${idx}`;
+    const expiryStr = certs[0]?.expiryDate;
+    if (expiryStr) {
+      [90, 60, 30].forEach((days, idx) => {
+        const remindDate = new Date(new Date(expiryStr).getTime() - days * 24 * 3600 * 1000);
+        const id = `REM-${eventId}-EXP-${idx}`;
+        reminderIds.push(id);
+        remindersToAdd.push({ id, title: `客户【${targetCustomer.name}】证书到期提醒（剩余${days}天）`, content: `关联项目：${project.name}。证书到期日 ${expiryStr}，建议提前跟进续证事宜。`, date: remindDate.toISOString().split('T')[0], type: 'expire', isRead: false, linkId: targetCustomerId, linkType: 'customer', forRole: certAudience });
+      });
+    } else {
+      const id = `REM-${eventId}-EXP-MISSING`;
       reminderIds.push(id);
-      remindersToAdd.push({ id, title: `客户【${targetCustomer.name}】证书到期提醒（剩余${days}天）`, content: `关联项目：${project.name}。建议提前跟进续证事宜。`, date: remindDate.toISOString().split('T')[0], type: 'expire', isRead: false, linkId: targetCustomerId, linkType: 'customer' });
-    });
+      remindersToAdd.push({
+        id,
+        title: `客户【${targetCustomer.name}】缺证书到期日`,
+        content: `关联项目：${project.name} 已完成，但客户档案里没有证书到期日。补上之后系统才能在到期前 90/60/30 天提醒续期。`,
+        date: new Date(now.getTime() + 3 * 24 * 3600 * 1000).toISOString().split('T')[0],
+        type: 'task', isRead: false, linkId: targetCustomerId, linkType: 'customer',
+        forRole: ['CONSULTANT', 'MANAGER']   // 顾问手上有证书原件，补录是他的活
+      });
+    }
   } else {
     const id = `REM-${eventId}-UPSELL`;
     reminderIds.push(id);
-    remindersToAdd.push({ id, title: `客户【${targetCustomer.name}】复购提示`, content: `关联项目：${project.name}。建议评估二次转化机会（当前推断机会：${nextOpportunity}）。`, date: new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString().split('T')[0], type: 'opportunity', isRead: false, linkId: targetCustomerId, linkType: 'customer' });
+    remindersToAdd.push({ id, title: `客户【${targetCustomer.name}】复购提示`, content: `关联项目：${project.name}。建议评估二次转化机会（当前推断机会：${nextOpportunity}）。`, date: new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString().split('T')[0], type: 'opportunity', isRead: false, linkId: targetCustomerId, linkType: 'customer', forRole: certAudience });
   }
 
   const customerPatch = {

@@ -111,6 +111,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     markRemindersRead,
     markAllRemindersRead,
     resolveReminders,
+    upcomingLaterCount,
     previewPersona,
     setPreviewPersona,
     writeFailure,
@@ -506,8 +507,22 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-50">
           <div>
             <p className="text-sm font-bold text-gray-900">待办提醒</p>
+            {/*
+              ── 两个数字要对得上（2026-09-14 金恩来截图指出）────────────
+
+              他看到的是：铃铛角标写「23」，面板里只列出 9 条。
+              「其他内容在哪里？」—— 合理的疑问，而且是我的表述有问题：
+              角标数的是**提醒条数**，面板列的是**按客户/项目聚合后的件数**。
+              同一个客户挂着 3 条提醒，聚合成 1 件。
+
+              两个口径都有用（条数反映工作量，件数反映要决策几次），
+              但摆在一起不说清楚，人第一反应一定是「丢了 14 条」。
+              所以这里把换算写出来。
+            */}
             <p className="text-[11px] text-gray-400 mt-0.5">
-              {unreadReminders.length > 0 ? `${unreadReminders.length} 条未读` : '没有未读提醒'}
+              {unreadReminders.length > 0
+                ? `${unreadReminders.length} 条未读，归成 ${bellBuckets.total} 件事`
+                : '没有未读提醒'}
             </p>
           </div>
           {unreadReminders.length > 0 && (
@@ -524,8 +539,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="max-h-[24rem] overflow-y-auto">
           {bellGroups.length === 0 ? (
             <div className="px-4 py-10 text-center">
-              <p className="text-sm font-bold text-gray-400">暂时没有需要你处理的事</p>
-              <p className="text-[11px] text-gray-300 mt-1">有逾期、待验收或风险时会出现在这里</p>
+              <p className="text-sm font-bold text-gray-400">近期没有需要你处理的事</p>
+              {/*
+                空面板 + 角标消失，看着像"提醒功能又没了"。
+                生产实测 23 条待办全是两周之后才该响的 ——
+                0 是对的，但要说出「更远的还有几件」，人才知道系统在正常工作。
+              */}
+              <p className="text-[11px] text-gray-300 mt-1">
+                {upcomingLaterCount > 0
+                  ? `还有 ${upcomingLaterCount} 件排在两周以后，到日子会自动出现`
+                  : '有逾期、待验收或风险时会出现在这里'}
+              </p>
             </div>
           ) : (
             <>

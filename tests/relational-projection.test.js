@@ -30,7 +30,16 @@ const pool = require('../server/db/pool');
 const { projectToRelational, PROJECTED } = require('../server/services/relationalProjection');
 const { workLogRepo } = require('../server/repos/batch5Repos');
 
-test.beforeEach(async () => { await truncateTestDb(); });
+test.beforeEach(async () => {
+  await truncateTestDb();
+  /*
+    先建父记录 —— 2026-09-14 库里加了外键，
+    工作日志必须挂在真实存在的项目上（以前造的是孤儿数据，
+    能跑通只是因为当时数据库不管）。
+  */
+  await pool.query("insert into customers (id,name) values ('C-FK','投影测试客户') on conflict (id) do nothing");
+  await pool.query("insert into projects (id,name,customer_id) values ('P-1','投影测试项目1','C-FK'),('P-2','投影测试项目2','C-FK'),('P-9','投影测试项目9','C-FK') on conflict (id) do nothing");
+});
 
 test('工时不能走「元→分」那套缩放', async () => {
   /*

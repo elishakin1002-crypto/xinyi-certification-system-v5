@@ -74,7 +74,7 @@ const asRole = async (base, role) => {
 };
 
 test('主链路：线索 → 客户 → 合同 → 项目 → 完成任务，每个交接点都接得上', async () => {
-  const { child, baseUrl } = await startServerProcess(env('chain-main'));
+  const { child, baseUrl } = await startServerProcess(env('chain-main'), { seedCustomers: ['C-GATE-1'] });
   try {
     const sales = await asRole(baseUrl, 'SALES');
     const cons = await asRole(baseUrl, 'CONSULTANT');
@@ -156,7 +156,7 @@ test('主链路：线索 → 客户 → 合同 → 项目 → 完成任务，每
 });
 
 test('客户资料在各板块间一致：改了客户名，合同和项目上跟着对得上', async () => {
-  const { child, baseUrl } = await startServerProcess(env('chain-consistency'));
+  const { child, baseUrl } = await startServerProcess(env('chain-consistency'), { seedCustomers: ['C-GATE-1'] });
   try {
     const sales = await asRole(baseUrl, 'SALES');
     const admin = sales.adminCookie;
@@ -205,7 +205,7 @@ test('老板一个人能走完交付链路：建合同 → 按合同建项目 �
     （PROJECT_CREATE / PROJECT_ASSIGN_OWNER / CONTRACT_CREATE …），
     少配一个的表现是「老板点了没反应」，而他不会去看是哪个动作码缺了。
   */
-  const { child, baseUrl } = await startServerProcess(env('chain-boss'));
+  const { child, baseUrl } = await startServerProcess(env('chain-boss'), { seedCustomers: ['C-GATE-1'] });
   try {
     const boss = await loginAs(baseUrl, 'admin@xinyi-iso.local', ADMIN_PW);
     const cons = await asRole(baseUrl, 'CONSULTANT');
@@ -262,7 +262,7 @@ test('任务没交代就完不了项目——「不强制完成，但强制交�
     后果不是数字难看，是项目管理失去意义：
     进度永远 100、延误率永远 100%，没有任何指标能告诉你哪个项目真卡住了。
   */
-  const { child, baseUrl } = await startServerProcess(env('chain-complete-gate'));
+  const { child, baseUrl } = await startServerProcess(env('chain-complete-gate'), { seedCustomers: ['C-GATE-1'] });
   try {
     const boss = await loginAs(baseUrl, 'admin@xinyi-iso.local', ADMIN_PW);
 

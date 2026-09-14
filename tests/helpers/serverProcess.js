@@ -36,9 +36,27 @@ const waitUntilReady = async (baseUrl, timeoutMs = 12000, shouldStop = null) => 
   throw new Error(`Server readiness timeout: ${baseUrl}`);
 };
 
-const startServerProcess = async (envOverrides = {}) => {
+/**
+ * 起一个测试服务进程。
+ *
+ * @param envOverrides 额外的环境变量
+ * @param opts.seedCustomers 先种几个客户（id 数组）。
+ *
+ *   ── 为什么需要 seedCustomers（2026-09-14）──────────────────
+ *   库里加了外键之后，合同和项目的 customer_id 必须指向真实存在的客户。
+ *   在这之前很多测试直接写 `customerId: 'C-PROJ-1'` 造孤儿数据 ——
+ *   能跑通只是因为当时数据库不管。
+ *
+ *   不在 truncate 里统一种：那会让「列表应该是空的」这类断言全部失效
+ *   （试过，一下红了四条）。**让每个用例显式说自己要什么**，
+ *   既不污染别人，也一眼看得出这个用例依赖哪些前置数据。
+ */
+const startServerProcess = async (envOverrides = {}, opts = {}) => {
   // 每个用例一个干净的库，见 testDb.js 的说明
   await require('./testDb').truncateTestDb();
+  if (Array.isArray(opts.seedCustomers) && opts.seedCustomers.length) {
+    await require('./testDb').seedCustomers(opts.seedCustomers);
+  }
   const port = await getFreePort();
   const env = {
     ...process.env,

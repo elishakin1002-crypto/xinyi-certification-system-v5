@@ -85,7 +85,7 @@ const ok = (r, what, expect = 200) =>
   assert.equal(r.res.status, expect, `${what} 失败（HTTP ${r.res.status}）：${JSON.stringify(r.body)}`);
 
 test('销售的一天：建线索 → 跟进认领 → 转客户 → 建合同', async () => {
-  const { child, baseUrl } = await startServerProcess(authEnv('role-sales'));
+  const { child, baseUrl } = await startServerProcess(authEnv('role-sales'), { seedCustomers: ['C-ROLE-1', 'C-ROLE-2'] });
   try {
     const { cookie, user } = await asRole(baseUrl, 'SALES');
 
@@ -128,7 +128,7 @@ test('销售的一天：建线索 → 跟进认领 → 转客户 → 建合同',
 });
 
 test('顾问的一天：看项目 → 建任务 → 完成任务 → 写知识', async () => {
-  const { child, baseUrl } = await startServerProcess(authEnv('role-consultant'));
+  const { child, baseUrl } = await startServerProcess(authEnv('role-consultant'), { seedCustomers: ['C-ROLE-1', 'C-ROLE-2'] });
   try {
     const admin = await loginAs(baseUrl, 'admin@xinyi-iso.local', ADMIN_PW);
     const { cookie, user } = await asRole(baseUrl, 'CONSULTANT');
@@ -169,7 +169,7 @@ test('顾问的一天：看项目 → 建任务 → 完成任务 → 写知识',
 });
 
 test('财务的一天：看合同金额 → 确认回款', async () => {
-  const { child, baseUrl } = await startServerProcess(authEnv('role-finance'));
+  const { child, baseUrl } = await startServerProcess(authEnv('role-finance'), { seedCustomers: ['C-ROLE-1', 'C-ROLE-2'] });
   try {
     const admin = await loginAs(baseUrl, 'admin@xinyi-iso.local', ADMIN_PW);
     const { cookie } = await asRole(baseUrl, 'FINANCE');
@@ -192,7 +192,7 @@ test('财务的一天：看合同金额 → 确认回款', async () => {
 });
 
 test('顾问看不到合同金额——这是刻意的，不是 bug', async () => {
-  const { child, baseUrl } = await startServerProcess(authEnv('role-boundary'));
+  const { child, baseUrl } = await startServerProcess(authEnv('role-boundary'), { seedCustomers: ['C-ROLE-1', 'C-ROLE-2'] });
   try {
     const { user } = await asRole(baseUrl, 'CONSULTANT');
     const { loadCapabilities } = require('../server/authz/authorize');

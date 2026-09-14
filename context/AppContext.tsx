@@ -79,6 +79,8 @@ export interface AppContextType {
 
   visibleReminders: Reminder[];
   aggregatedReminders: AggregatedReminder[];
+  /** 归我、但还没到日子的有几条 —— 用来解释「近期没有」不等于「功能坏了」 */
+  upcomingLaterCount: number;
   dashboardMetrics: DashboardMetricsBundle;
   
   // 任务模版
@@ -1077,17 +1079,79 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     return merged;
   };
 
+  /*
+    ── 没写收件人的提醒，默认给谁（2026-09-14 下午）─────────────────
+
+    金恩来：「要注意提醒要同时照顾好不同角色提醒的内容不同。」
+
+    原来这里最后一行是 `return true` —— **没标角色的提醒，所有人都看得见**。
+    生产上 23 条待办里 21 条的 for_role 是空数组，
+    于是财务、顾问、销售打开铃铛看到的是同一堆东西，
+    里面大半跟自己没关系。「提醒种类太多」的感受就是这么来的。
+
+    但不能一刀切改成 `return false`：那会让这些提醒对谁都不可见，
+    等于悄悄删掉。所以按**提醒类型推导默认受众** ——
+    这是有依据的推导，不是猜：
+
+      expire / opportunity  证书到期、复购  → 销售线（销售 / 总助 / 总经理）
+      payment               回款、应收      → 财务 + 总经理
+      risk / task           逾期、整改、缺件 → 顾问 + 总助 + 总经理
+
+    兜底给总经理和系统管理员，而不是给所有人：
+    **有人看得见**是底线，**每个人只看该自己管的**是目标。
+  */
+  const DEFAULT_REMINDER_AUDIENCE: Record<string, RoleID[]> = {
+    expire: ['SALES', 'MANAGER', 'ADMIN'],
+    opportunity: ['SALES', 'MANAGER', 'ADMIN'],
+    payment: ['FINANCE', 'ADMIN'],
+    risk: ['CONSULTANT', 'MANAGER', 'ADMIN'],
+    task: ['CONSULTANT', 'MANAGER', 'ADMIN'],
+  };
+  const FALLBACK_REMINDER_AUDIENCE: RoleID[] = ['ADMIN', 'SYS_ADMIN'];
+
+  /*
+    还没到日子的不显示 —— 和服务端 reminderRepo.list 的 horizon 是同一条规则。
+    两边都要有：服务端管接口返回，这里管前端本地生成的那些
+    （AUTO-* 那一批是在浏览器里算出来的，根本不经过接口）。
+  */
+  const REMINDER_HORIZON_DAYS = 14;
+  const withinHorizon = (r: Reminder) => {
+    if (!r.date) return true;
+    const t = new Date(r.date).getTime();
+    if (!Number.isFinite(t)) return true;
+    return t <= Date.now() + REMINDER_HORIZON_DAYS * 24 * 3600 * 1000;
+  };
+
   const isReminderVisible = (r: Reminder) => {
+    if (!withinHorizon(r)) return false;
     if (r.forUserIds && r.forUserIds.length > 0) {
       return r.forUserIds.includes(effectiveUserId);
     }
     if (r.forRole && r.forRole.length > 0) {
       return r.forRole.includes(activeRole);
     }
-    return true;
+    const audience = DEFAULT_REMINDER_AUDIENCE[String(r.type || '')] || FALLBACK_REMINDER_AUDIENCE;
+    return audience.includes(activeRole);
   };
 
   const visibleReminders = reminders.filter(isReminderVisible);
+
+  /*
+    「还早、暂时收起来的」有几条。
+
+    光把它们藏起来会让人以为功能坏了 —— 生产上实测，23 条待办
+    **全部**是 14 天之后才该响的，一过滤铃铛就是 0。
+    0 是对的（确实没有今天要做的事），但空荡荡的面板配上角标消失，
+    看着就像"提醒又没了"。所以要能说出「近期没有，更远的还有 N 件」。
+
+    这里不看 horizon，只看角色 —— 数的是"本来归我，只是还没到日子"的。
+  */
+  const upcomingLaterCount = reminders.filter((r) => {
+    if (withinHorizon(r)) return false;
+    if (r.forUserIds?.length) return r.forUserIds.includes(effectiveUserId);
+    if (r.forRole?.length) return r.forRole.includes(activeRole);
+    return (DEFAULT_REMINDER_AUDIENCE[String(r.type || '')] || FALLBACK_REMINDER_AUDIENCE).includes(activeRole);
+  }).length;
 
   const parseDateKey = (dateStr?: string) => {
     if (!dateStr) return 0;
@@ -4846,7 +4910,7 @@ ${receivableLines}
       leads, customers, contracts, projects, settlements, reminders, auditIssues, knowledgeDocs, vendors, marketSignals, projectWorkLogs,
       currentUser: normalizedCurrentUser, userProfiles, isAuthRequired: authRequired, switchUser, updateUserProfile, addUserProfile, deleteUserProfile,
       activeRole, setActiveRole, activePersona, availablePersonas, resolveDashboardPersona,
-      previewPersona, setPreviewPersona, isTourActive: isTourActive || isModuleGuideActive, setIsTourActive, setIsModuleGuideActive, writeFailure, dismissWriteFailure, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
+      previewPersona, setPreviewPersona, isTourActive: isTourActive || isModuleGuideActive, setIsTourActive, setIsModuleGuideActive, writeFailure, dismissWriteFailure, userPermissions, hasPermission, checkActionPermission, visibleReminders, aggregatedReminders, upcomingLaterCount, dashboardMetrics, taskTemplates, addTaskTemplate, updateTaskTemplate, deleteTaskTemplate, archiveTaskTemplate, cloneTaskTemplate,
       addProject, assignProjectManager, updateProjectTask, deleteProjectTask, addProjectTask, applyTemplateToProject, addProjectServiceItem, updateProjectServiceItem, deleteProjectServiceItem, addProjectWorkLog, updateProjectWorkLog, deleteProjectWorkLog,
       addLead, updateLead, addLeadFollowUp,
       addCustomer, addCustomerFollowUp,

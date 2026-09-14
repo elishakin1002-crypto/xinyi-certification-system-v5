@@ -27,6 +27,20 @@ test('contract API preserves current Contract shape for create, update, and atta
     assert.equal(empty.res.status, 200);
     assert.deepEqual(empty.body.data.contracts, []);
 
+    /*
+      先把客户建出来 —— 2026-09-14 加了外键之后，
+      合同的 customer_id 必须指向真实存在的客户。
+
+      在这之前这个测试造的是**孤儿合同**（指向一个不存在的客户 id），
+      能跑通只是因为当时数据库不管。
+      现在它 400 了，是外键在正常工作，不是产品坏了。
+    */
+    await jsonFetch(`${baseUrl}/api/customers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer: { id: 'C-API-1', name: '合同 API 测试公司' } })
+    });
+
     const create = await jsonFetch(`${baseUrl}/api/contracts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

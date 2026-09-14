@@ -74,10 +74,40 @@ const TYPE_BY_KEY = Object.fromEntries(Object.entries(MIRRORED).map(([t, k]) => 
  * 事务接口（/api/projects/transaction 等）一次会写项目、客户、提醒等多种数据，
  * 只刷「路由主类型」那一种不够——客户写进了 PG，镜像里却还是旧的。
  */
+/*
+  ── 回写顺序必须先父后子（2026-09-14 外键上线后当场照出来的）────
+
+  原来这里是**按调用方传进来的顺序**回写。
+  「同时保存合同 + 新客户」这个真实场景里，datasets 的 key 顺序
+  是 contracts_v8 在前、customers_v8 在后 —— 于是先写合同，
+  而它指向的客户这一刻还不存在。
+
+  在加外键之前，这么写不报错（库里多一条指向空气的合同，没人知道）；
+  加了外键之后它会直接失败 —— 也就是说**这个 bug 一直都在**，
+  只是以前的症状是"悄悄产生脏数据"，现在变成"保存失败"。
+  后者刺眼，但前者更贵。
+
+  所以这里显式定一个顺序：客户 → 线索 → 合同 → 项目 → 其余。
+  不靠调用方记得传对顺序 —— 那又是"要人记住规矩"，早晚有人记错。
+*/
+const MIRROR_ORDER = ['customer', 'lead', 'contract', 'project', 'reminder', 'settlement'];
+
 const refreshMirrorsByKeys = async (datasetKeys = [], repos = {}, meta = {}) => {
-  for (const key of datasetKeys) {
-    const type = TYPE_BY_KEY[key];
-    if (type && repos[type]) await refreshMirror(type, repos[type], meta);
+  const wanted = new Set(
+    datasetKeys.map((key) => TYPE_BY_KEY[key]).filter(Boolean)
+  );
+  // 先按固定顺序把认识的写完
+  for (const type of MIRROR_ORDER) {
+    if (wanted.has(type) && repos[type]) {
+      await refreshMirror(type, repos[type], meta);
+      wanted.delete(type);
+    }
+  }
+  // 剩下没排进顺序表的（新加的类型），按原顺序兜底，但要提醒补进 MIRROR_ORDER
+  for (const type of wanted) {
+    if (!repos[type]) continue;
+    console.warn(`[datasetMirror] ${type} 不在 MIRROR_ORDER 里，按兜底顺序回写。新增类型请补进顺序表，否则外键可能报错`);
+    await refreshMirror(type, repos[type], meta);
   }
 };
 

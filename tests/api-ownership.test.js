@@ -82,7 +82,7 @@ test('无主线索被销售修改时自动认领到他名下', async () => {
   const { child, baseUrl } = await startServerProcess({
     STATE_STORE_PATH: emptyStatePath('xinyi-ownership-claim'),
     ...authEnv('claim'),
-  });
+  }, { seedCustomers: ['C-OWN-1', 'C-OWN-2'] });
   try {
     const { cookie, user } = await loginAsSales(baseUrl);
 
@@ -114,7 +114,7 @@ test('已有主的线索，别人改不会把归属抢走', async () => {
   const { child, baseUrl } = await startServerProcess({
     STATE_STORE_PATH: emptyStatePath('xinyi-ownership-nosteal'),
     ...authEnv('nosteal'),
-  });
+  }, { seedCustomers: ['C-OWN-1', 'C-OWN-2'] });
   try {
     const { cookie } = await loginAsSales(baseUrl);
     const created = await post(`${baseUrl}/api/leads`, {
@@ -147,7 +147,7 @@ test('指派接口能把合同归属写进去，并且拒绝空负责人', async
   const { child, baseUrl } = await startServerProcess({
     STATE_STORE_PATH: emptyStatePath('xinyi-ownership-assign'),
     ...authEnv('assign'),
-  });
+  }, { seedCustomers: ['C-OWN-1', 'C-OWN-2'] });
   try {
     const cookie = await loginAs(baseUrl, 'admin@xinyi-iso.local', ADMIN_PW);
     const created = await post(`${baseUrl}/api/contracts`, {
@@ -178,7 +178,7 @@ test('归属变更会记进 Action Ledger', async () => {
   const { child, baseUrl } = await startServerProcess({
     STATE_STORE_PATH: emptyStatePath('xinyi-ownership-ledger'),
     ...authEnv('ledger'),
-  });
+  }, { seedCustomers: ['C-OWN-1', 'C-OWN-2'] });
   try {
     const cookie = await loginAs(baseUrl, 'admin@xinyi-iso.local', ADMIN_PW);
     const created = await post(`${baseUrl}/api/projects`, {

@@ -8,6 +8,7 @@ const { settlementRepo } = require('../repos/settlementRepo');
 const { confirmReceivable } = require('../services/confirmReceivable');
 const { upsertDatasets, extractDatasets } = require('../services/txUpsert');
 const { sendSuccess, sendFail, ERROR_CODES } = require('../utils/apiResponse');
+const { explainDbError } = require('../utils/dbErrors');
 const { requireAction } = require('../authz/middleware');
 const { refreshMirror, refreshMirrorsByKeys } = require('../services/datasetMirror');
 const { makeAssignOwnerRoute, resourceOf } = require('../authz/ownership');
@@ -64,7 +65,17 @@ const contractResource = async (req) => resourceOf('contract', (await contractRe
 
 const wrap = (fn) => async (req, res) => {
   try { await fn(req, res); }
-  catch (e) { sendFail(res, ERROR_CODES.SERVER_ERROR, e?.message || 'batch3 error', {}, 500); }
+  catch (e) {
+    /*
+      数据库约束报错要翻成人话，不能一律 500。
+      500 在界面上等于「系统崩了」，同事只会截图来问；
+      而真相往往是一句话能说清的（「这个客户不存在，先去建一下」）。
+      认不出来的才走原来的 500 —— 见 server/utils/dbErrors.js。
+    */
+    const known = explainDbError(e);
+    if (known) return sendFail(res, ERROR_CODES.PARAM_ERROR, known.message, {}, known.status);
+    sendFail(res, ERROR_CODES.SERVER_ERROR, e?.message || 'batch3 error', {}, 500);
+  }
 };
 const getContractPayload = (b = {}) => (b?.contract && typeof b.contract === 'object' ? b.contract : (b || {}));
 

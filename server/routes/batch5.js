@@ -18,13 +18,24 @@ const express = require('express');
 const pool = require('../db/pool');
 const { workLogRepo, taskTemplateRepo } = require('../repos/batch5Repos');
 const { sendSuccess, sendFail, ERROR_CODES } = require('../utils/apiResponse');
+const { explainDbError } = require('../utils/dbErrors');
 
 const router = express.Router();
 router.use((req, res, next) => (pool.isEnabled() ? next() : next('router')));
 
 const wrap = (fn) => async (req, res) => {
   try { await fn(req, res); }
-  catch (e) { sendFail(res, ERROR_CODES.SERVER_ERROR, e?.message || 'batch5 error', {}, 500); }
+  catch (e) {
+    /*
+      数据库约束报错要翻成人话，不能一律 500。
+      500 在界面上等于「系统崩了」，同事只会截图来问；
+      而真相往往是一句话能说清的（「这个客户不存在，先去建一下」）。
+      认不出来的才走原来的 500 —— 见 server/utils/dbErrors.js。
+    */
+    const known = explainDbError(e);
+    if (known) return sendFail(res, ERROR_CODES.PARAM_ERROR, known.message, {}, known.status);
+    sendFail(res, ERROR_CODES.SERVER_ERROR, e?.message || 'batch5 error', {}, 500);
+  }
 };
 const payload = (b, key) => (b?.[key] && typeof b[key] === 'object' ? b[key] : (b || {}));
 

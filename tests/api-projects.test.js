@@ -20,7 +20,7 @@ const jsonFetch = async (url, options = {}) => {
 test('project API preserves current Project shape for create, update, and task mutations', async () => {
   const { child, baseUrl } = await startServerProcess({
     STATE_STORE_PATH: emptyStatePath('xinyi-projects-api')
-  });
+  }, { seedCustomers: ['C-PROJ-1', 'C-P-TXN-1'] });
 
   try {
     const empty = await jsonFetch(`${baseUrl}/api/projects`);
@@ -166,7 +166,7 @@ test('project API preserves current Project shape for create, update, and task m
 test('project API returns 404 for missing project or task mutations', async () => {
   const { child, baseUrl } = await startServerProcess({
     STATE_STORE_PATH: emptyStatePath('xinyi-projects-api-missing')
-  });
+  }, { seedCustomers: ['C-PROJ-1', 'C-P-TXN-1'] });
 
   try {
     const update = await jsonFetch(`${baseUrl}/api/projects/P-NOT-FOUND`, {
@@ -207,7 +207,7 @@ test('project API returns 404 for missing project or task mutations', async () =
 test('project transaction API writes linked project datasets together', async () => {
   const { child, baseUrl } = await startServerProcess({
     STATE_STORE_PATH: emptyStatePath('xinyi-projects-transaction-api')
-  });
+  }, { seedCustomers: ['C-PROJ-1', 'C-P-TXN-1'] });
 
   try {
     const project = {
@@ -315,7 +315,7 @@ test('project transaction API writes linked project datasets together', async ()
 test('project transaction API rejects missing projects dataset or mismatched projectId', async () => {
   const { child, baseUrl } = await startServerProcess({
     STATE_STORE_PATH: emptyStatePath('xinyi-projects-transaction-api-invalid')
-  });
+  }, { seedCustomers: ['C-PROJ-1', 'C-P-TXN-1'] });
 
   try {
     const missingProjects = await jsonFetch(`${baseUrl}/api/projects/transaction`, {

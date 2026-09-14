@@ -98,6 +98,24 @@ export const OnboardingTour: React.FC<{
 
   useEffect(() => {
     if (forceOpen) { setOpen(true); setI(0); return; }
+    /*
+      ── 自动化测试里要能显式关掉（2026-09-14）────────────────────
+
+      引导会铺一层全屏遮罩。对新同事这是对的，
+      但 e2e 每次都是全新的 localStorage，于是**每条用例一进来就被遮罩挡住**，
+      后面所有点击全部超时。
+
+      我第一反应是去猜那个「看过了」的 key（onboard_seen_用户id_角色），
+      猜错了两次 —— 这正是这个项目里反复出错的「按形状/结构猜」。
+      所以改成显式开关：测试环境自己说「别弹」，不用去猜内部实现。
+
+      只认 localStorage 这一个来源，生产上没人会去设它；
+      真要设了，最坏后果也只是不弹引导，帮助入口还在右上角。
+    */
+    try {
+      if (typeof window !== 'undefined'
+        && window.localStorage.getItem('xinyi_disable_onboarding') === '1') return;
+    } catch { /* 读不到就当没设 */ }
     // 预览别人的引导只在手动「重看」时出现，不主动弹
     if (isPreviewing) return;
     if (!tour || !currentUser?.id) return;

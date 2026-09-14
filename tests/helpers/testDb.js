@@ -125,12 +125,39 @@ const truncateTestDb = async () => {
     for (const t of TRIGGER_GUARDED) {
       if (tables.includes(t)) await client.query(`ALTER TABLE ${t} ENABLE TRIGGER USER`);
     }
+
   } finally {
     await client.end();
   }
 };
 
 module.exports.truncateTestDb = truncateTestDb;
+
+/**
+ * 种几个客户，给需要「合同/项目必须挂在真实客户上」的用例用。
+ *
+ * 只在用例显式要求时调用 —— 统一种进去会让「列表应该是空的」全部失效。
+ */
+const seedCustomers = async (ids = []) => {
+  const url = resolveTestDbUrl();
+  if (!url || !ids.length) return;
+  pgLib = pgLib || require('pg');
+  const client = new pgLib.Client({ connectionString: url });
+  await client.connect();
+  try {
+    for (const id of ids) {
+      await client.query(
+        "insert into customers (id, name) values ($1, $2) on conflict (id) do nothing",
+        [String(id), `测试前置客户 ${id}`]
+      );
+    }
+  } finally {
+    await client.end();
+  }
+};
+
+module.exports.seedCustomers = seedCustomers;
+
 
 /*
   ⚠️ 跑多个测试文件时必须加 --test-concurrency=1。
