@@ -226,25 +226,27 @@ test('前端「移除附件」按钮要在 —— 不然重传完一堆死的混
   assert.match(page, /contractService\.removeAttachment\(/, '按钮没有真的调删除接口');
 });
 
-test('权限巡检不许删真实数据 —— DELETE 用假 id', () => {
+test('权限巡检不许删真实数据 —— 它只碰自己造的样本', () => {
   /*
-    2026-09-13 全面自检时抓到的：`npm run checkup:authz` 自动发现所有路由，
-    包括 `router.delete('/api/knowledge/:id')`，然后拿**真实 id** 去调 ——
+    2026-09-13 抓到的：`npm run checkup:authz` 自动发现所有路由，
+    包括 `router.delete('/api/knowledge/:id')`，拿**真实 id** 去调 ——
     每跑一次，每个有权限的角色就真删掉一条真实记录。
+    实测跑一次，知识中心从 8 篇变 6 篇。
 
-    实测：跑一次巡检，知识中心从 8 篇变 6 篇。
-    **我的巡检工具自己在破坏数据**，而这正是本机总和生产对不上的原因之一。
+    当时的修法是 DELETE 换成假 id（ZZZ-NOT-EXIST）。数据是保住了，
+    但 2026-09-14 金恩来指出这个设计不合理：
+    「有权限 + 假 id → 404」只证明没被 403，**没验证删除真的能用**；
+    而且 PATCH/PUT 还在拿真实记录发 `{}`，正式运营后那是拿真合同做实验。
 
-    修法不需要真 id：判定只看「是不是 403」——
-      有权限 + 假 id → 404（非 403）→ 判「放行」✅
-      没权限 + 假 id → 403          → 判「拒绝」✅
-    两种都判得准，而且一条真记录都不会少。
+    所以改成他说的：**巡检自己建一条，再对着它测删除。**
+    细节和闸门在 tests/authz-script-sandbox.test.js 里逐条钉着，
+    这里只守住最外层那句话：不许再退回「拿真实 id 去调」。
   */
   const src = fs.readFileSync(path.join(root, 'scripts/authz-matrix-live.mjs'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  assert.match(src, /=== 'DELETE'[\s\S]{0,120}ZZZ-NOT-EXIST/,
-    'DELETE 又用真实 id 了 —— 巡检会把真记录删掉');
-  assert.match(src, /fillParams\(ep\.url, ids, ep\.method\)/, 'fillParams 没收到 method，判断不了是不是 DELETE');
+  assert.match(src, /const assertOnlyTouchesSandbox = /, '样本箱闸门没了');
+  assert.match(src, /assertOnlyTouchesSandbox\(url, ep\.method, injected\)/, '闸门没挂在发请求之前');
+  assert.match(src, /巡检动了真实数据 —— 这是事故/, '跑完没有给真实表点名对账');
 });
 
 test('建知识文档要校验标题 —— 空 body 不许建出空壳', () => {
