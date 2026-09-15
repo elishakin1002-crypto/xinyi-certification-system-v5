@@ -376,10 +376,31 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       return String(b.latestDate || '').localeCompare(String(a.latestDate || ''));
     });
 
-    // 没有日期的当成「今天必须做」——宁可多催一条，不能把没日期的悄悄藏起来
-    const isDueNow = (g: AggregatedReminder) => !g.latestDate || String(g.latestDate) <= today;
-    const now = sorted.filter(isDueNow);
-    const later = sorted.filter(g => !isDueNow(g));
+    /*
+      ── 没填日期的单独一档，不冒充「今天要做」（2026-09-15 改）────────
+
+      原来写的是「没有日期的当成今天必须做 —— 宁可多催一条」。
+      出发点是对的（不能把它悄悄藏起来），但放错了篮子：
+
+      **「今天要做」是人早上唯一会认真看完的那一屏。**
+      一旦混进没有日期、因而永远不会消失的条目，这一屏就再也清不空；
+      清不空的清单，人很快就整屏忽略 —— 而真正紧急的那条也在里面。
+      这和「一个永远消不掉的红色数字会让人不再信任所有红色」是同一条。
+
+      成熟做法一致（Todoist / Asana / Things）：「今天」只放真到期的，
+      没日期的进「收件箱／待安排」。
+
+      而且这样才和系统里另外两处口径一致 ——
+      没填截止日的任务不算逾期、没填到期日的应收不算逾期
+      （src/modules/glossary.ts）：**没约定就没有迟到**。
+      没填日期是资料缺失，该去补，不是今天的活。
+
+      金恩来 2026-09-15 确认按这个来。
+    */
+    const hasDate = (g: AggregatedReminder) => Boolean(String(g.latestDate || '').trim());
+    const now = sorted.filter(g => hasDate(g) && String(g.latestDate) <= today);
+    const later = sorted.filter(g => hasDate(g) && String(g.latestDate) > today);
+    const undated = sorted.filter(g => !hasDate(g));
 
     /*
       规则 6「有上限」：两段合起来截到 12 组。
@@ -388,16 +409,21 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     */
     const shownNow = now.slice(0, BELL_LIMIT);
     const shownLater = later.slice(0, Math.max(0, BELL_LIMIT - shownNow.length));
+    // 待安排那档给固定的小额度：它是提醒人去补日期，不是今天的活，不该挤掉前两段
+    const shownUndated = undated.slice(0, 3);
     return {
       now: shownNow,
       later: shownLater,
-      hidden: (now.length - shownNow.length) + (later.length - shownLater.length),
+      undated: shownUndated,
+      undatedTotal: undated.length,
+      hidden: (now.length - shownNow.length) + (later.length - shownLater.length)
+        + (undated.length - shownUndated.length),
       total: sorted.length
     };
   }, [aggregatedReminders]);
 
   const bellGroups = useMemo(
-    () => [...bellBuckets.now, ...bellBuckets.later],
+    () => [...bellBuckets.now, ...bellBuckets.later, ...bellBuckets.undated],
     [bellBuckets]
   );
 
@@ -555,6 +581,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <>
               {renderBellSection('今天要做', bellBuckets.now, true)}
               {renderBellSection('之后', bellBuckets.later, false)}
+              {/*
+                「待安排」放最后，标题里带条数 —— 它不是今天的活，
+                但也不能悄悄消失：没填日期说明这条提醒建的时候漏了信息，
+                点进去补一个日期，它就会自己回到上面两档里。
+              */}
+              {renderBellSection(`待安排（${bellBuckets.undatedTotal} 条没有日期）`, bellBuckets.undated, false)}
               {bellBuckets.hidden > 0 && (
                 /*
                   规则 6：截掉的必须说出来。

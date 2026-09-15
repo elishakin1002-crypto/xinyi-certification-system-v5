@@ -6,7 +6,7 @@ import { useApp } from '../context/AppContext';
 import { TaskSkipButton } from '../components/TaskSkipButton';
 import { TaskStatusControl } from '../components/TaskStatusControl';
 import { canBePrerequisite, knockOnDelays, isOverdue } from '../src/modules/taskFlow';
-import { isMyProject } from '../src/modules/ownership';
+import { isMyProject, isUnownedProject } from '../src/modules/ownership';
 import { ProjectCompleteChecklist } from '../components/ProjectCompleteChecklist';
 import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog, TaskSkipReason, TASK_SKIP_REASON_LABEL, ServiceItem} from '../types';
 import { SERVICE_CATALOG, SERVICE_CATEGORIES, SERVICE_CATEGORY_DELIVERY_MODE, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY } from '../constants';
@@ -15,8 +15,7 @@ import {
   CheckCircle, ChevronDown, ChevronRight, DollarSign, Bell, 
   X, Wallet, PlayCircle, Sparkles, ShieldCheck, ArrowRight,
   ListTodo, Trash2, LayoutGrid, Timer, CheckCircle2, MoreHorizontal,
-  Brain, RefreshCw, Zap
-} from 'lucide-react';
+  Brain, RefreshCw, Zap, HelpCircle } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { resolveProjectCapabilities } from '../src/utils/projectCapabilities';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
@@ -331,6 +330,60 @@ const Projects = () => {
     const diff = Math.ceil((new Date(String(task.deadline || '')).getTime() - Date.now()) / (24 * 3600 * 1000));
     return isOpenTask(task) && diff >= 0 && diff <= 7;
   };
+  /*
+    ── 这一页的四张卡全部数「项目」（2026-09-15 重做）──────────────
+
+    金恩来：「项目管理的卡片，目的是提高咨询师的生产效率……
+              不要为了好看而显示，要为了好用提效而设计。」
+
+    定一条能一次消掉整类混乱的规矩：**这一页列的是项目，所以每张卡都数项目。**
+    任务粒度的数字归「我的任务」和工作台 —— 在这之前，
+    第四张卡数任务却叫「…的项目」，和第三张挨在一起，谁也说不清差在哪。
+
+    四张卡对应咨询师心里的四个问题，顺序就是他早上问自己的顺序：
+      1. 我手上几个在跑？        进行中项目
+      2. 这周必须动哪几个？      7 天内要交        ← 还来得及的那一档
+      3. 哪几个已经出事了？      有逾期任务的项目
+      4. 哪几个会悄悄烂掉？      待补信息          ← 不逾期、不报错、没人想起
+
+    换掉的是「已结项」和「逾期任务条数」：
+    前者是回头看的数字，今天不驱动任何动作（它还在「状态」下拉里）；
+    后者和第三张是同一个筛选，只是换了个粒度。
+  */
+
+  /** 未来 7 天内（含今天）要交的项目：项目交期临近，或名下有任务临近 */
+  const isDueSoonProject = (p: Project) => {
+    if (p.status !== Status.Active) return false;
+    const days = (d?: string) => {
+      const raw = String(d || '').trim();
+      if (!raw) return Number.NaN;              // 没填日期不算临近（没约定就没有迟到）
+      const ms = new Date(raw).getTime();
+      if (!Number.isFinite(ms)) return Number.NaN;
+      return Math.ceil((ms - Date.now()) / (24 * 3600 * 1000));
+    };
+    const soon = (n: number) => Number.isFinite(n) && n >= 0 && n <= 7;
+    if (soon(days(p.deadline))) return true;
+    return (p.tasks || []).some(t => isOpenTask(t) && soon(days(t.deadline)));
+  };
+
+  /*
+    还缺关键信息、推不动也结不了账的项目。三种都会安安静静地烂掉：
+    没负责人（谁都看不到它）、一条任务都没排（永远不会逾期）、
+    交付类却没金额（收不到钱，也算不进营收）。
+    口径写在 src/modules/glossary.ts 的 TERM_PROJECT.needsSetup。
+  */
+  const setupGaps = (p: Project): string[] => {
+    if (p.status !== Status.Active) return [];
+    const gaps: string[] = [];
+    if (isUnownedProject(p as any)) gaps.push('缺负责人');
+    if (!(p.tasks || []).length) gaps.push('还没排任务');
+    if (resolveProjectCapabilities(p).projectMode === 'delivery' && Number(p.projectAmount || 0) <= 0) {
+      gaps.push('缺金额');
+    }
+    return gaps;
+  };
+  const needsSetup = (p: Project) => setupGaps(p).length > 0;
+
   const isRevenueProject = (project: Project) => {
     const capability = resolveProjectCapabilities(project);
     if (capability.projectMode !== 'delivery') return false;
@@ -467,7 +520,7 @@ const Projects = () => {
     return () => window.clearTimeout(t);
   }, [undoComplete]);
 
-  const [filterStatus, setFilterStatus] = useState<'Active' | 'Completed' | 'All' | 'Stuck' | 'Overdue'>('All');
+  const [filterStatus, setFilterStatus] = useState<'Active' | 'Completed' | 'All' | 'DueSoon' | 'Overdue' | 'NeedsSetup'>('All');
   /** 刚建完的一句说明 —— 告诉人东西在哪，而不是让他自己找 */
   const [createdNotice, setCreatedNotice] = useState('');
   const [creating, setCreating] = useState(false);
@@ -491,13 +544,20 @@ const Projects = () => {
     （!Completed && 有逾期任务）在项目只有两种状态时完全等价，
     留着就是两个选项选出同一份清单。见下方两张统计卡处的说明。
   */
-  const projectStatusFilters = [...STATUS_FILTERS, {value: 'Overdue' as const, label: TERM_PROJECT.withOverdueTask}];
+  const projectStatusFilters = [
+    ...STATUS_FILTERS,                                                   // 全部 / 进行中 / 已结项
+    { value: 'DueSoon' as const, label: TERM_PROJECT.dueSoon },
+    { value: 'Overdue' as const, label: TERM_PROJECT.withOverdueTask },
+    { value: 'NeedsSetup' as const, label: TERM_PROJECT.needsSetup },
+  ];
   const selectOverview = (status: typeof filterStatus) => { setFilterStatus(status); setSearchTerm(''); setDashboardFocus(null); setDashboardFocusLabel(''); };
   const matchesOverviewStatus = (p: Project) => {
     if (filterStatus === 'Active') return p.status === Status.Active;
     if (filterStatus === 'Completed') return p.status === Status.Completed;
-    if (filterStatus === 'Stuck') return p.status === Status.Active && (p.tasks || []).some(isOverdueTask);
-    if (filterStatus === 'Overdue') return p.status !== Status.Completed && (p.tasks || []).some(isOverdueTask);
+    if (filterStatus === 'DueSoon') return isDueSoonProject(p);
+    // 只看进行中的：已结项项目里的残留任务是结项收尾没做干净，不是今天的活
+    if (filterStatus === 'Overdue') return p.status === Status.Active && (p.tasks || []).some(isOverdueTask);
+    if (filterStatus === 'NeedsSetup') return needsSetup(p);
     return true;
   };
 
@@ -545,13 +605,16 @@ const Projects = () => {
       .filter(p => viewScope === 'all' || isMineProject(p))
       .filter(p => matchesModeScope(p));
     const active = base.filter(p => p.status === Status.Active);
+    /*
+      四个数字全部是**项目个数**，而且每个都能在下面的列表里被同名筛选选出来 ——
+      卡片说 3，点进去就必须是 3 行。这一页之前正是在这里出的问题：
+      标签写「…的项目」而数字数的是任务。
+    */
     return {
       active: active.length,
-      completed: base.filter(p => p.status === Status.Completed).length,
-      stuck: active.filter(p => (p.tasks || []).some(t => isOverdueTask(t))).length,
-      overdueTasks: base
-        .filter(p => p.status !== Status.Completed)
-        .reduce((sum, p) => sum + (p.tasks || []).filter(t => isOverdueTask(t)).length, 0)
+      dueSoon: active.filter(isDueSoonProject).length,
+      withOverdue: active.filter(p => (p.tasks || []).some(t => isOverdueTask(t))).length,
+      needsSetup: active.filter(needsSetup).length
     };
   }, [projects, viewScope, modeScope, currentUser.id, currentUser.name]);
 
@@ -2594,7 +2657,10 @@ const Projects = () => {
         </div>
       )}
 
-      {/* 概览卡片：数字随「与我相关 / 全公司」变，点击直接切到对应筛选 */}
+      {/*
+        概览卡片：数字随「与我相关 / 全公司」变，点击直接切到对应筛选。
+        四张全部数「项目」—— 理由见上面 isDueSoonProject 附近的说明。
+      */}
       <StatGrid className="mb-6">
         <StatCard
           icon={<Briefcase className="w-6 h-6" />}
@@ -2603,71 +2669,34 @@ const Projects = () => {
           tone="blue"
           selected={filterStatus === 'Active'}
           onClick={() => selectOverview('Active')}
-          title="点击只看进行中的项目"
+          title="我手上还在跑的项目。点击只看进行中的"
         />
-        <StatCard
-          icon={<CheckCircle className="w-6 h-6" />}
-          value={overviewStats.completed}
-          label={TERM_PROJECT.completed}
-          tone="emerald"
-          selected={filterStatus === 'Completed'}
-          onClick={() => selectOverview('Completed')}
-          title="点击只看已完成的项目"
-        />
-        {/*
-          ── 第三、四张卡讲同一件事的两个粒度（2026-09-15 重做）──────────
-
-          原来是这样的：
-            第三张「有任务卡住的项目」 值=项目数  筛选 Stuck   = Active && 有逾期任务
-            第四张「有逾期任务的项目」 值=任务数  筛选 Overdue = !Completed && 有逾期任务
-          项目状态只有 Active / Completed，所以 `!== Completed` 就等于 `=== Active`
-          —— **两个筛选条件完全一样**，点哪张卡进的都是同一份清单，
-          却显示两个不同的数字、挂着两个不同的名字，还都叫「…的项目」
-          （其中一个数的却是任务）。
-
-          金恩来先问过「是不是重复内容」，后来又说「字段要和实际功能挂钩，
-          不能词不达意」—— 这一处两条都占了。
-
-          改法不是改名了事，是承认它们本来就是一件事的两个粒度：
-            有逾期任务的项目 N 个，一共 M 条逾期任务
-          所以两张卡指向**同一个筛选**，名字各自说清自己数的是什么。
-          「状态」下拉里的 Stuck 选项一并去掉 —— 它和 Overdue 选出来一样。
-        */}
-        <StatCard
-          icon={<AlertTriangle className="w-6 h-6" />}
-          value={overviewStats.stuck}
-          label={TERM_PROJECT.withOverdueTask}
-          tone="amber"
-          selected={filterStatus === 'Overdue'}
-          onClick={() => selectOverview('Overdue')}
-          title={`${TERM_PROJECT.withOverdueTask}：进行中、且名下有任务过了截止日的项目个数`}
-        />
-        {/*
-          ── 标签数项目、数字数任务（2026-09-15 修）────────────────────
-
-          这张卡原来写着「有逾期任务的项目」，而 value 是
-          `overviewStats.overdueTasks` —— 逾期**任务的条数**。
-          旁边第三张「有任务卡住的项目」数的是**项目个数**。
-          两张挨着的卡都叫「…的项目」，一张数任务一张数项目。
-
-          金恩来 2026-09-15：「字段要和实际功能挂钩，不能词不达意。」
-          这就是最典型的一处，而且「有逾期任务的项目」这个词
-          就写在 src/modules/glossary.ts 里，口径是
-          `Active && tasks.some(isOverdue)` —— 卡片没按自己的口径算。
-
-          选「改标签」不是「改数字」：点这张卡之后进的是
-          filterStatus='Overdue' 的清单，底下那行写的是
-          「共 N 项逾期任务 · 涉及 M 个项目」—— 人真正要处理的是任务。
-          所以数字保持任务数，把名字改对。
-        */}
         <StatCard
           icon={<Clock className="w-6 h-6" />}
-          value={overviewStats.overdueTasks}
-          label={TERM_TASK.overdue}
+          value={overviewStats.dueSoon}
+          label={TERM_PROJECT.dueSoon}
+          tone="amber"
+          selected={filterStatus === 'DueSoon'}
+          onClick={() => selectOverview('DueSoon')}
+          title="七天内交期到、或名下有任务七天内到期的项目 —— 这一档还来得及"
+        />
+        <StatCard
+          icon={<AlertTriangle className="w-6 h-6" />}
+          value={overviewStats.withOverdue}
+          label={TERM_PROJECT.withOverdueTask}
           emphasis="danger"
           selected={filterStatus === 'Overdue'}
           onClick={() => selectOverview('Overdue')}
-          title={`${TERM_TASK.overdue}：未完结项目下已过截止日期的任务总数（点开看是哪几个项目）`}
+          title="进行中、且名下有任务过了截止日的项目。点开看具体卡在哪一条"
+        />
+        <StatCard
+          icon={<HelpCircle className="w-6 h-6" />}
+          value={overviewStats.needsSetup}
+          label={TERM_PROJECT.needsSetup}
+          tone="indigo"
+          selected={filterStatus === 'NeedsSetup'}
+          onClick={() => selectOverview('NeedsSetup')}
+          title="缺负责人／还没排任务／交付类缺金额 —— 这些项目不会逾期也不会报错，会安静地烂掉"
         />
       </StatGrid>
 
@@ -2880,6 +2909,19 @@ const Projects = () => {
                             </td>
                             <td className={tdClass}>
                               {(() => {
+                                /*
+                                  缺信息的先说缺什么（2026-09-15 加）。
+
+                                  「待补信息」那张卡点进来，人得知道每一行到底缺哪一样 ——
+                                  否则卡片说有 3 个，列表给 3 行，他还得一个个点开找。
+                                  缺负责人／没排任务／缺金额，直接写在这一列上。
+                                */
+                                const gaps = setupGaps(project);
+                                if (gaps.length) return (
+                                  <div className="flex flex-wrap gap-1">
+                                    {gaps.map(g => <Badge key={g} tone="amber">{g}</Badge>)}
+                                  </div>
+                                );
                                 const next = getNextTask(project);
                                 if (!next) return <span className="text-xs text-gray-400">{
                                   !(project.tasks || []).length ? '尚未安排任务' :

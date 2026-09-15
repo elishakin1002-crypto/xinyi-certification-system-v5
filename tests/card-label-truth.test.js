@@ -77,28 +77,65 @@ test('数项目个数的卡片不许叫「任务」', () => {
     + offenders.map(c => `value=${c.value}  label=${c.label}`).join('\n  '));
 });
 
-test('「有逾期任务的项目」和「逾期任务」指向同一个筛选 —— 它们本来就是一件事', () => {
+test('项目管理的每张卡都数项目，且各有各的筛选', () => {
   /*
-    两张卡的筛选条件原本是 Stuck（Active && 有逾期任务）和
-    Overdue（!Completed && 有逾期任务）—— 在项目只有两种状态时完全等价。
-    留着两个选项 = 两个入口选出同一份清单，正是金恩来问过的「重复内容」。
+    2026-09-15 定的规矩（金恩来：「不要为了好看而显示，
+    要为了好用提效而设计」）：
 
-    现在它们是一件事的两个粒度：N 个项目、共 M 条逾期任务。
+      **这一页列的是项目，所以每张卡都数项目。**
+
+    任务粒度的数字归「我的任务」和工作台。这一条一次消掉整类混乱 ——
+    在这之前第三、四张卡一个数项目一个数任务，却都叫「…的项目」，
+    而且背后是同一个筛选条件（项目只有 Active/Completed 两种状态，
+    `!== Completed` 就等于 `=== Active`），点哪张都是同一份清单。
+
+    守三件事：
+      1. 标签只能来自 TERM_PROJECT（数任务的词进不来）
+      2. 四张卡的筛选互不相同（不许两张卡是同一份清单）
+      3. 数字必须是「项目个数」（filter(...).length），不许 reduce 累加任务
   */
   const src = projects();
   const cards = statCards(src);
-  const byTerm = (t) => cards.find(c => c.label.includes(t));
-  const projCard = byTerm('TERM_PROJECT.withOverdueTask');
-  const taskCard = byTerm('TERM_TASK.overdue');
-  assert.ok(projCard, '没有「有逾期任务的项目」这张卡了');
-  assert.ok(taskCard, '没有「逾期任务」这张卡了');
-  assert.equal(projCard.onClick, taskCard.onClick,
-    `两张卡指向了不同的筛选（${projCard.onClick} vs ${taskCard.onClick}）—— 它们描述的是同一份清单`);
+  assert.equal(cards.length, 4, `项目管理应该是 4 张统计卡，现在抓到 ${cards.length} 张`);
 
-  assert.ok(!/label="有任务卡住的项目"/.test(src),
-    '「有任务卡住的项目」又回来了 —— 它和「有逾期任务的项目」是同一个条件');
-  assert.ok(!/value:\s*'Stuck'/.test(src),
-    '状态下拉里又出现了 Stuck 选项 —— 它和 Overdue 选出来的是同一份清单');
+  for (const c of cards) {
+    assert.match(c.label, /^TERM_PROJECT\./,
+      `卡片标签「${c.label}」没走 TERM_PROJECT —— 这一页只数项目，`
+      + '数任务的数字请放到「我的任务」或工作台');
+  }
+
+  const filters = cards.map(c => (c.onClick.match(/selectOverview\('([^']+)'\)/) || [])[1]);
+  assert.ok(filters.every(Boolean), '有卡片没有接到 selectOverview');
+  assert.equal(new Set(filters).size, filters.length,
+    `有两张卡指向同一个筛选（${filters.join(', ')}）—— 那它们是同一份清单，只该留一张`);
+
+  // overviewStats 里每个字段都必须是项目个数
+  const stats = src.slice(src.indexOf('const overviewStats'), src.indexOf('const filteredProjects'));
+  assert.ok(!/reduce\(\(sum[\s\S]*?tasks[\s\S]*?length/.test(stats),
+    'overviewStats 里有把任务条数累加起来的写法 —— 这一页的卡片只数项目');
+  for (const c of cards) {
+    const field = (c.value.match(/overviewStats\.(\w+)/) || [])[1];
+    assert.ok(field, `卡片 ${c.label} 的值不是从 overviewStats 来的`);
+    assert.match(stats, new RegExp(`${field}:[^\n]*\\.length`),
+      `overviewStats.${field} 不是「项目个数」（没有 .length）—— 卡片说 N，点进去必须是 N 行`);
+  }
+});
+
+test('卡片点进去的筛选，列表必须真的支持', () => {
+  /*
+    防的是「卡片点了没反应」：selectOverview 传了一个
+    matchesOverviewStatus 里没处理的值，于是点了等于没点、
+    还把选中态高亮了 —— 又一个不报错的失效。
+  */
+  const src = projects();
+  const filters = statCards(src)
+    .map(c => (c.onClick.match(/selectOverview\('([^']+)'\)/) || [])[1])
+    .filter(Boolean);
+  const matcher = src.slice(src.indexOf('const matchesOverviewStatus'), src.indexOf('const matchesModeScope'));
+  for (const f of filters) {
+    assert.ok(matcher.includes(`'${f}'`),
+      `卡片会把筛选切到 '${f}'，但 matchesOverviewStatus 里没有这一档 —— 点了会没反应`);
+  }
 });
 
 test('任务状态白名单必须跟着共享枚举走，不许服务端自己列', () => {
