@@ -6,6 +6,7 @@ import { useApp } from '../context/AppContext';
 import { TaskSkipButton } from '../components/TaskSkipButton';
 import { TaskStatusControl } from '../components/TaskStatusControl';
 import { canBePrerequisite, knockOnDelays, isOverdue } from '../src/modules/taskFlow';
+import { isUnownedProject } from '../src/modules/ownership';
 import { ProjectCompleteChecklist } from '../components/ProjectCompleteChecklist';
 import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog, TaskSkipReason, TASK_SKIP_REASON_LABEL, ServiceItem} from '../types';
 import { SERVICE_CATALOG, SERVICE_CATEGORIES, SERVICE_CATEGORY_DELIVERY_MODE, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY } from '../constants';
@@ -294,7 +295,21 @@ const Projects = () => {
     if (ownerId && ownerId === currentUser.id) return true;
     if (project.manager === currentUser.name) return true;
     if ((project.serviceItems || []).some(si => String((si as any).ownerUserId || '') === currentUser.id || String(si.owner || '') === currentUser.name)) return true;
-    return (project.tasks || []).some(task => String(task.owner || '') === currentUser.name);
+    if ((project.tasks || []).some(task => String(task.owner || '') === currentUser.name)) return true;
+    /*
+      ── 无主项目对所有人可见（2026-09-15 加）──────────────────────
+
+      金恩来用合同识别建了合同+项目，合同管理「与我相关」里有，
+      项目管理「与我相关」里没有 —— 因为那个项目 manager='待指派'、
+      ownerUserId 空、任务 owner 也全是'待指派'，上面四条判据全不成立。
+      **不属于任何人 = 对每个人都隐藏**，包括刚刚亲手建它的人。
+
+      产出无主项目的口子已经在 AppContext.buildProjectFromInput 堵上了
+      （兜底到当前操作人）。这里是第二道：生产库里可能还有历史无主项目，
+      它们必须被看见 —— 无主是**需要有人认领的异常**，
+      藏起来的后果是一个没人做的项目安安静静地烂掉。
+    */
+    return isUnownedProject(project);
   };
   /**
    * 还没了结的任务。

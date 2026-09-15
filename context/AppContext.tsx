@@ -2,6 +2,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { detectStandards, buildPdcaTitle } from '../src/modules/knowledge/standards';
 import { judgeDuplicate } from '../src/modules/customerIdentity';
+import { isUnownedName } from '../src/modules/ownership';
 import { Lead, Customer, Contract, ContractAttachment, Project, Settlement, Reminder, AuditIssue, Status, KnowledgeDoc, Vendor, ProjectTask, ServiceItem, RoleID, DashboardPersona, TaskTemplate, UserProfile, PermissionCode, FollowUpRecord, AuditNode, StrategicTask, Receivable, CertificateDetail, ProjectCategory, AIDecisionLog, AIAction, ActionCode, AIAllowedAction, AggregatedReminder, ReminderSeverity, ImportRecord, MarketSignal, ProjectWorkLog } from '../types';
 import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG, ROLE_TO_PERSONA, PERSONA_TO_ROLE } from '../constants';
 import { dataService } from '../services/dataService';
@@ -2299,9 +2300,42 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
   };
 
   // --- 项目操作逻辑 ---
+  /**
+   * 「没有归属人」的几种写法 —— 它们等价，都表示这个项目不属于任何人。
+   *
+   * 原来只挡 '待定' 一个词，于是合同识别传的 '待指派' 一路畅通，
+   * 建出来的项目 manager='待指派'、ownerUserId 空、任务 owner 也全是'待指派'。
+   * 这正是 CLAUDE.md 二点五第 1 条说的「按形状猜」：
+   * 判空写成枚举几个已知的词，别人新写一个词就漏。
+   */
   const buildProjectFromInput = (p: AddProjectInput): Project | null => {
-    // 强制校验：必须有负责人
-    if (!p.manager || p.manager === '待定') {
+    /*
+      ── 绝不产出「无主项目」（2026-09-15 修）────────────────────────
+
+      金恩来用合同识别一次建了合同+客户+项目，结果：
+        合同管理「与我相关」里有「嘉力」  ← contract.owner = 黄佳佳
+        项目管理「与我相关」里没有        ← project.manager = '待指派'
+      他的原话：「怎么弄到现在连基本功能的联动都有问题？」
+
+      真因不是项目没建出来（两处存储里都有），是**它不属于任何人** ——
+      isMineProject() 的三条判据（我是负责人 / 我负责某个服务项 /
+      有任务在我名下）全都落空，于是**全公司每个人的默认视图都看不到它**，
+      包括刚刚亲手建它的人。
+
+      这里不能再"拒绝创建"了事：自动路径（合同识别、战略转项目）没有人
+      可以问，拒绝的后果是合同建好了、项目静默地没建，比无主更糟。
+      所以兜底到**触发这个动作的人**：是他录的合同，先归他，之后再转派。
+      这也和 CLAUDE.md 第 1 条一致 —— 「谁做的」这条链不能断。
+    */
+    const manager = isUnownedName(p.manager)
+      ? String(normalizedCurrentUser?.name || '').trim()
+      : String(p.manager).trim();
+    const ownerUserId = isUnownedName(p.manager)
+      ? String(normalizedCurrentUser?.id || '').trim()
+      : String(p.ownerUserId || '').trim();
+
+    // 连当前用户都没有（理论上登录后不会发生），才真的拒绝 —— 无主项目谁都看不见
+    if (!manager) {
       console.warn('拒绝创建无负责人项目');
       return null;
     }
@@ -2336,7 +2370,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
                 status: 'Pending',
                 priority: t.priority as any,
                 category: t.category as any,
-                owner: p.manager!
+                owner: manager
             }));
         }
     } 
@@ -2351,7 +2385,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
                 status: 'Pending',
                 priority: t.priority as any,
                 category: t.category as any,
-                owner: p.manager!
+                owner: manager
             }));
         }
     }
@@ -2376,7 +2410,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
           const next: ServiceItem = {
             id: serviceId,
             name: serviceName,
-            owner: item.owner || p.manager || '待指派',
+            owner: item.owner || manager,
             status: item.status || 'Pending',
             notes: item.notes,
             catalogId: item.catalogId,
@@ -2393,7 +2427,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
               name: p.name || '未命名项目',
               contractRef: incomingContractRef,
               projectCategory: category,
-              manager: p.manager || '待指派',
+              manager,
               progress: 0,
               status: Status.Active,
               paymentStatus: 'unpaid',
@@ -2422,7 +2456,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
       projectCategory: category,
       costStatus,
       projectAmount,
-      manager: p.manager, // 此时必有值
+      manager, // 上面已兜底到当前用户，必有值
       /*
         ── 负责人 ID 一定要带上（2026-09-07 修）──────────────────
 
@@ -2434,7 +2468,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
 
         customerId 同理：丢了它，项目在客户档案里就挂不上。
       */
-      ...(p.ownerUserId ? { ownerUserId: p.ownerUserId } : {}),
+      ...(ownerUserId ? { ownerUserId } : {}),
       ...(p.customerId ? { customerId: p.customerId } : {}),
       progress: calculateProjectProgress(initialTasks),
       status: Status.Active,
@@ -3834,7 +3868,15 @@ ${receivableLines}
           contractRef: ref,
           customerId: linkedCustomerId,
           projectAmount: newContract.amount || 0,
-          manager: '待指派',
+          /*
+            负责人跟合同走 —— 谁录的合同，项目先归谁（2026-09-15 改）。
+
+            原来这里写死 '待指派'，建出来的项目谁都不属于，
+            于是「合同管理·与我相关」里有它、「项目管理·与我相关」里没有。
+            立项之后当然可以转派，但**不能有一个阶段是没人负责的**。
+          */
+          manager: newContract.owner,
+          ownerUserId: normalizedCurrentUser.id,
           projectCategory: 'Delivery',
           sourceType: 'contract',
           sourceRef: ref,

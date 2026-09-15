@@ -111,8 +111,14 @@ test('顾问能自己立项，负责人 ID 也要落库', () => {
     同名的人互相看到对方的项目；有人改了姓名，他名下的项目当场全消失。
     这两种情况都不会报错。
   */
+  /*
+    2026-09-15 放宽：原来钉的是字面量 `...(p.ownerUserId ? { ownerUserId: p.ownerUserId } : {})`。
+    当天把归属收口成「无主就兜底到当前操作人」的局部变量后，
+    写法变成 `...(ownerUserId ? { ownerUserId } : {})`，这条当场红了 —— 而 ID 并没有丢。
+    要守的是「有值就一定带进去」，不是那一串字符。
+  */
   const ctx = read('context/AppContext.tsx');
-  assert.match(ctx, /\.\.\.\(p\.ownerUserId \? \{ ownerUserId: p\.ownerUserId \} : \{\}\)/,
+  assert.match(ctx, /\.\.\.\((?:p\.)?ownerUserId \? \{ ownerUserId(?::\s*p\.ownerUserId)? \} : \{\}\)/,
     '新建项目时把负责人 ID 丢了');
   assert.match(ctx, /\.\.\.\(p\.customerId \? \{ customerId: p\.customerId \} : \{\}\)/,
     '新建项目时把客户 ID 丢了 —— 项目在客户档案里会挂不上');

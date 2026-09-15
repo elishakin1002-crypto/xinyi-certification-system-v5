@@ -154,10 +154,30 @@ test('7. 白名单式映射不许静默丢字段 —— 几天内踩过两次', 
     读代码读不出来，只能靠实测或这种测试钉住。
   */
   const ctx = read('context/AppContext.tsx');
-  const build = ctx.slice(ctx.indexOf('const buildProjectFromInput'), ctx.indexOf('const addProject ='));
-  assert.ok(build.length > 400, '没截到 buildProjectFromInput，测试要跟着结构改');
+  /*
+    只看**最后 return 出去的那个对象**，不看整个函数体。
+
+    函数里还有别的临时对象（生成任务、生成服务项）也带 manager、deadline，
+    截整个函数体的话，即使 return 里把字段丢了，测试照样能匹配到 —— 假绿。
+    2026-09-15 实测过：把 return 里的 `manager,` 删掉，这条测试没红。
+  */
+  const whole = ctx.slice(ctx.indexOf('const buildProjectFromInput'), ctx.indexOf('const addProject ='));
+  assert.ok(whole.length > 400, '没截到 buildProjectFromInput，测试要跟着结构改');
+  const build = whole.slice(whole.lastIndexOf('return {'));
+  assert.ok(build.length > 200, '没截到 buildProjectFromInput 的返回对象');
+  /*
+    ── 允许 ES 简写（2026-09-15）────────────────────────────────
+
+    原来这里断言的是字面量 `manager:`。当天把 manager 收口成
+    「无主就兜底到当前操作人」的局部变量之后，写法变成了简写 `manager,`，
+    这条测试当场变红 —— 而字段一个都没丢。
+
+    这正是 CLAUDE.md 二点五形状 D：**钉写法不钉意图**。
+    要守的是「这个字段有没有被带进返回的对象」，
+    `manager: x` 和 `manager,` 在这件事上完全等价。
+  */
   ['projectType', 'vendorName', 'manager', 'deadline'].forEach((f) => {
-    assert.match(build, new RegExp(`${f}:`), `buildProjectFromInput 漏了 ${f} —— 表单填了也进不了库，且不报错`);
+    assert.match(build, new RegExp(`${f}\\s*[:,]`), `buildProjectFromInput 漏了 ${f} —— 表单填了也进不了库，且不报错`);
   });
 
   const profiles = ctx.slice(ctx.indexOf('const hydrateProfilesFromAuth'), ctx.indexOf('hydrateProfilesFromAuth();'));
