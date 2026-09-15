@@ -458,7 +458,15 @@ const Leads = () => {
          {/* Filter & Search Bar */}
          <div className="p-4 border-b border-gray-100 flex flex-col bg-gray-50/30 gap-4">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="flex space-x-2 w-full md:w-auto overflow-x-auto no-scrollbar pb-1 md:pb-0">
+              {/*
+                手机上换行显示，不用横向滚动（2026-09-15 修）。
+
+                原来是 `overflow-x-auto no-scrollbar` —— 能滚，但把滚动条也藏了，
+                于是 375px 下最后一个「已转化」只露出一半，
+                人看不出这一排还能往右滑，右下角的 AI 悬浮按钮又正好压在那里。
+                四个标签都很短，换行放得下，没必要滚。
+              */}
+              <div className="flex flex-wrap gap-2 w-full md:w-auto md:flex-nowrap">
                   {['All', Status.New, Status.Pending, Status.Converted].map(s => (
                       <button key={s} onClick={() => setStatusFilter(s as any)} className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors whitespace-nowrap ${statusFilter === s ? 'bg-gray-900 text-white shadow-md' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                           {s === 'All' ? '全部' : getStatusBadge(s as Status)}

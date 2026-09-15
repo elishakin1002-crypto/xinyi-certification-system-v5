@@ -1224,9 +1224,17 @@ const Contracts = () => {
 
   return (
     <div className="p-6">
-       <div className="mb-6 flex justify-between items-center">
-           <div><h1 className="text-2xl font-bold text-gray-900">合同管理</h1><p className="text-sm text-gray-500 mt-1">管理合同详情、回款节点与执行状态</p></div>
-           <div className="flex items-center gap-2">
+       {/*
+         标题和按钮在手机上分两行（2026-09-15 修）。
+
+         原来是 `flex justify-between items-center`，没有任何断点。
+         375px 下右边「Excel 批量导入」+「录入合同」两个按钮占掉大半宽度，
+         左边标题被压到几个字符宽，「合同管理」四个字断成多行、
+         下面那句说明几乎一字一行 —— 首屏没法读。
+       */}
+       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+           <div className="min-w-0"><h1 className="text-2xl font-bold text-gray-900">合同管理</h1><p className="text-sm text-gray-500 mt-1">管理合同详情、回款节点与执行状态</p></div>
+           <div className="flex flex-wrap items-center gap-2">
              <input
                ref={importInputRef}
                type="file"

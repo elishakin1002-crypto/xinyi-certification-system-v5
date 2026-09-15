@@ -333,13 +333,45 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     setIsGlobalResultPanelOpen(false);
   }, [location.search]);
 
+  /*
+    被路由守卫拦下来时说一句话（2026-09-15 加，见 ProtectedRoute 的说明）。
+
+    放在 Layout 而不是工作台里：守卫将来可能落到别的页，
+    而「为什么我被弹回来了」这句话在哪一页都得看得到。
+    显示一次就清掉 location.state —— 否则刷新还在，人会以为又被拦了一次。
+  */
+  const [accessDenied, setAccessDenied] = useState<{ path: string; reason: string } | null>(null);
+  useEffect(() => {
+    const denied = (location.state as any)?.accessDenied;
+    if (!denied) return;
+    setAccessDenied(denied);
+    navigate(location.pathname + location.search, { replace: true, state: null });
+  }, [location.state]);
+
+  /*
+    ── 「搜索」按钮点了没反应（2026-09-15 修）────────────────────────
+
+    Codex 巡检：输入「浙江嘉力」，下拉里明明写着
+    「客户管理 1 · 合同管理 1 · 项目管理 1」，
+    可点「搜索」或按回车，**界面一点变化都没有**，
+    只有点某条结果旁的「打开」才进得去。
+
+    真因：命中多个模块时这里直接
+        setIsGlobalResultPanelOpen(true); return;
+    而面板在输入框获得焦点的那一刻就已经打开了（onFocus 里设过一次）——
+    于是这一下是把一个已经为 true 的状态再设一次 true，**零变化**。
+
+    更能说明问题的是按钮自己的 tooltip：`优先跳转：${topGlobalHit.label}`。
+    **按钮承诺了跳转，代码却在这一支里提前 return。**
+    人不会怀疑自己按错了，只会认为这个按钮是坏的。
+
+    改成：回车／点搜索一律跳到命中最靠前的那个模块（带上 q），
+    和 tooltip 说的一致；想去别的模块，下拉面板里每条结果旁边还有「打开」。
+    这也是搜索框的通用心智 —— 回车就是「去」。
+  */
   const handleGlobalSearchSubmit = () => {
     const q = globalQuery.trim();
     if (!q) return;
-    if (groupedHitScopes.length > 1) {
-      setIsGlobalResultPanelOpen(true);
-      return;
-    }
     const target = resolveGlobalSearchTarget(q, { leads, customers, contracts, projects, knowledgeDocs }, location.pathname, { includeScopes: searchableScopes });
     const params = new URLSearchParams();
     params.set('q', q);
@@ -1054,7 +1086,30 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         </header>
 
-        <main data-onboard="workspace-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50/50">
+        {/*
+          底部留出悬浮按钮的高度（2026-09-15 加）。
+          右下角的 AI 助手是固定定位，手机上会压住页面最后一行内容 ——
+          Codex 巡检就是在线索页被它挡住了最后一个筛选标签。
+          桌面端空间够，不用留这么多。
+        */}
+        <main data-onboard="workspace-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50/50 pb-20 md:pb-0">
+          {accessDenied && (
+            <div role="alert" className="m-3 flex flex-wrap items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[13px] font-bold text-amber-900">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <div>打不开「{accessDenied.path}」，已回到工作台。</div>
+                <div className="mt-0.5 font-normal">{accessDenied.reason}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAccessDenied(null)}
+                className="ml-auto shrink-0 rounded p-1 text-amber-700 hover:bg-amber-100"
+                aria-label="关闭提示"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
           {children}
         </main>
         <AIChatWidget />
