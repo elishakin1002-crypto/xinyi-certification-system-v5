@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ListTodo, ArrowRight, AlertTriangle, CalendarDays, Inbox } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { Project, ProjectTask } from '../types';
+import { Project, ProjectTask, Status } from '../types';
 import { Badge, EmptyState, FilterSelect, SearchInput, StatCard, StatGrid } from '../src/ui';
 import { TaskStatusControl } from '../components/TaskStatusControl';
 import { SampleRow } from '../components/SampleRow';
@@ -95,6 +95,17 @@ const MyTasks: React.FC = () => {
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     (projects || []).forEach(p => {
+      /*
+        ── 已结项项目里的任务不进这一页（2026-09-15）──────────────
+
+        这一页是「我的活」，不是「所有任务记录」。
+        项目结项了还剩几条没勾的，属于结项收尾没做干净，
+        不是今天要干的事 —— 放进来会让顶上的「已逾期」常年是个消不掉的红数字。
+
+        口径和工作台完全一致：三处都从 src/modules/myWork.ts 取。
+        残留的那些在下面用一句话单独提示，不会丢。
+      */
+      if (p.status === Status.Completed) return;
       (p.tasks || []).forEach(t => {
         if (scope === 'mine' && !isMine(t, p)) return;
         if (scope === 'assigned' && !isAssignedByMe(t, p)) return;

@@ -32,6 +32,8 @@ import ConsultantDashboard from './dashboard/ConsultantDashboard';
 import FinanceDashboard from './dashboard/FinanceDashboard';
 import RiskPanel, { RiskAlertItem } from './dashboard/RiskPanel';
 import { openDashboardRoute } from '../src/modules/dashboardNavigation';
+// 「这笔应收算不算逾期」只有一个判断，见 src/modules/glossary.ts
+import { isReceivableOverdue } from '../src/modules/glossary';
 
 type ReminderView = 'aggregated' | 'detail';
 type AIBriefKey = 'opportunity' | 'risk' | 'intel';
@@ -594,7 +596,7 @@ const Dashboard = () => {
   const overdueByMonth = React.useMemo(() => {
     const map: Record<string, number> = {};
     receivables
-      .filter(item => item.status !== 'paid' && String(item.dueDate || '') < today)
+      .filter(item => isReceivableOverdue(item, today))
       .forEach(item => {
         const key = String(item.dueDate || '').slice(0, 7);
         if (!key) return;
@@ -640,7 +642,7 @@ const Dashboard = () => {
       图表仍按月分布（那是它该干的事），但摘要卡说合计就是真合计。
     */
     const totalOverdue = receivables
-      .filter(item => item.status !== 'paid' && String(item.dueDate || '') < today)
+      .filter(item => isReceivableOverdue(item, today))
       .reduce((sum, item) => sum + Number(item.amount || 0), 0);
     const collectRate = totalSigned > 0 ? Math.round((totalRevenue / totalSigned) * 100) : 0;
     const delta = latest && prev ? latest.revenue - prev.revenue : 0;

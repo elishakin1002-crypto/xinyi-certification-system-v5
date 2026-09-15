@@ -930,6 +930,24 @@ const IntelRadar = () => {
                             <span className="text-[10px] font-black px-2 py-1 rounded-full bg-gray-50 text-gray-500 border border-gray-200 inline-flex items-center">
                               <XCircle className="w-3 h-3 mr-1" /> 已忽略
                             </span>
+                          ) : s.status === MARKET_SIGNAL_STATUS.TRIAGED ? (
+                            /*
+                              ── 「已分拣」原来没有徽章（2026-09-15 Codex 走查抓到）──
+
+                              这里原来只分「已转化」「已忽略」和"其它"，
+                              而 triaged 掉进了"其它"，显示成「待处理」。
+
+                              于是点完「标记已分拣」——**后端其实存成功了** ——
+                              界面上那条仍然写着「待处理」，按钮也还在。
+                              人自然判断"点了没反应"，Codex 也是这么报的。
+
+                              我上一轮只修了后端（PATCH 找不到就补建），
+                              **没检查界面认不认这个状态** ——
+                              又是一次"改了一半"。
+                            */
+                            <span className="text-[10px] font-black px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 inline-flex items-center">
+                              <CheckCircle2 className="w-3 h-3 mr-1" /> 已分拣
+                            </span>
                           ) : (
                             <span className="text-[10px] font-black px-2 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-100 inline-flex items-center">
                               <PlusCircle className="w-3 h-3 mr-1" /> 待处理
@@ -1052,11 +1070,22 @@ const IntelRadar = () => {
                     >
                       转为情报研判任务
                     </button>
+                    {/*
+                      按钮要反映当前状态：已经分拣过了还显示「标记已分拣」，
+                      人点完看不出变化，只会以为没生效（Codex 走查就是这么判的）。
+                      已分拣时改成「取消分拣」，点了退回未处理 —— 动作可逆，人才敢点。
+                    */}
                     <button
-                      onClick={() => markTriaged(selected.id)}
-                      className="px-4 py-2 rounded-xl text-sm font-bold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                      onClick={() => (selected.status === MARKET_SIGNAL_STATUS.TRIAGED
+                        ? updateMarketSignal(selected.id, { status: MARKET_SIGNAL_STATUS.NEW })
+                        : markTriaged(selected.id))}
+                      className={`px-4 py-2 rounded-xl text-sm font-bold border ${
+                        selected.status === MARKET_SIGNAL_STATUS.TRIAGED
+                          ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
                     >
-                      标记已分拣
+                      {selected.status === MARKET_SIGNAL_STATUS.TRIAGED ? '✓ 已分拣（点此取消）' : '标记已分拣'}
                     </button>
                     <button
                       onClick={() => markIgnored(selected.id)}

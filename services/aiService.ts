@@ -47,10 +47,35 @@ class AIService {
     return timeout;
   }
 
+  /*
+    ── 「厂商名」不是「模型名」（2026-09-15 Codex 走查抓到）────────
+
+    战略管理点「让 AI 读这些数字」，等满 60 秒后报
+    「AI 模型配置有误（指定的模型不存在）」。
+
+    真因：调用方写的是 `generateJSON('kimi', ...)` —— 传的是**厂商名**，
+    而这个字符串被原样当成模型名发给了 Moonshot：
+        用 model=kimi → 404 Not found the model kimi
+    而账号里真实可用的是 kimi-k3、kimi-k2.6 这些。
+
+    这类写法很自然（"我要用 kimi"），所以不能靠人记得写全称 ——
+    在这里把厂商别名翻译成服务端认识的默认模型。
+    服务端会按 `model.includes('deepseek'|'gemini')` 分派，
+    所以别名映射成带厂商前缀的真实模型名就能走对路。
+  */
+  private static readonly PROVIDER_ALIAS: Record<string, string> = {
+    kimi: 'kimi-k3',
+    moonshot: 'kimi-k3',
+    deepseek: 'deepseek-chat',
+    gemini: 'gemini-3-flash',
+  };
+
   private normalizeModelName(input: string | undefined, fallback: string): string {
     const raw = String(input || '').trim();
     if (!raw) return fallback;
-    return raw.startsWith('models/') ? raw.slice('models/'.length) : raw;
+    const stripped = raw.startsWith('models/') ? raw.slice('models/'.length) : raw;
+    // 传厂商名（kimi / deepseek / gemini）时翻成该厂商的默认模型
+    return AIService.PROVIDER_ALIAS[stripped.toLowerCase()] || stripped;
   }
 
   private normalizeBase64(rawData: string): string {

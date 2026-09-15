@@ -4,6 +4,8 @@ import { inferProjectMeta } from '../src/utils/projectCapabilities';
 import { isOpenTask, isOverdue } from '../src/modules/taskFlow';
 // 术语只有一份定义，见 src/modules/glossary.ts（口径也写在那里）
 import { TERM_PROJECT, TERM_TASK, TERM_RECEIVABLE } from '../src/modules/glossary';
+// 「我该做什么」只算一次，见 src/modules/myWork.ts
+import { myActionableTasks } from '../src/modules/myWork';
 
 export type DashboardRoleView = 'boss' | 'manager' | 'sales' | 'consultant' | 'finance';
 
@@ -578,11 +580,18 @@ const buildConsultantMetrics = (inputs: Inputs): RoleDashboardMetrics => {
     所以「我的逾期任务」只算**进行中项目**里的 —— 和项目管理那边同口径。
     残留任务在项目详情里照样看得到，不会丢。
   */
-  const activeProjectIds = new Set(myActiveProjects.map(p => p.id));
+  /*
+    2026-09-15 下午：这段逻辑搬进 src/modules/myWork.ts 了。
+
+    上午我在这里加了「只算进行中项目」，**却没去改
+    MyWorkWidget 和 MyTasks** —— 于是同一屏上「逾期任务 0」
+    和「我今天的活 5 条已逾期」并存，比原来更糟。
+
+    现在三处都从 myWork.ts 取，数字必然一致，不靠谁记得同步。
+  */
+  const myOpenTasksInActive = myActionableTasks(inputs.projects, { name: me })
+    .map(({ task, project }) => ({ task, project }));
   const myOpenTasks = myTaskPairs.filter(({ task }) => isOpenTask(task));
-  const myOpenTasksInActive = myTaskPairs.filter(
-    ({ task, project }) => isOpenTask(task) && activeProjectIds.has(project.id)
-  );
   /*
     用 taskFlow.isOverdue，不要自己拿 diffDays 再判一遍（2026-09-14）。
 

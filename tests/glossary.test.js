@@ -97,11 +97,28 @@ test('「逾期任务」只算进行中项目里的 —— 两个页面必须同
     已结项项目里的残留任务是"结项收尾没做干净"，
     该在结项那一刻处理（完结清单就是干这个的），不该天天挂在待办上。
   */
-  const metrics = stripComments(fs.readFileSync(path.join(root, 'services/dashboardMetrics.ts'), 'utf8'));
-  assert.match(metrics, /const activeProjectIds = new Set\(myActiveProjects\.map/,
-    '没有把范围限定在进行中项目');
-  assert.match(metrics, /myOverdueTasks = myOpenTasksInActive\.filter/,
-    '「我的逾期任务」又把已结项项目里的任务算进来了');
+  /*
+    2026-09-15 下午更新：这条原来钉的是 dashboardMetrics 里的具体写法。
+    当天下午把逻辑收口进 src/modules/myWork.ts 之后它就红了 ——
+    又是"钉写法不钉意图"（CLAUDE.md 二点五形状 D）。
+
+    真正要守的是：**三个显示"我该做什么"的地方必须同源**。
+    只改一处的后果金恩来当天就看到了：
+    「逾期任务 0」和「我今天的活 5 条已逾期」出现在同一屏上。
+  */
+  const SURFACES = [
+    ['services/dashboardMetrics.ts', '工作台的逾期任务卡片'],
+    ['components/MyWorkWidget.tsx', '「我今天的活」'],
+  ];
+  for (const [f, label] of SURFACES) {
+    const src = stripComments(fs.readFileSync(path.join(root, f), 'utf8'));
+    assert.match(src, /from '.*myWork'/, `${label}（${f}）没有从 myWork.ts 取 —— 多半是又自己算了一遍`);
+    assert.match(src, /myActionableTasks\(/, `${label} 没有用 myActionableTasks`);
+  }
+  // 我的任务页是全量清单，但也必须排除已结项项目，否则三个数字对不上
+  const myTasks = stripComments(fs.readFileSync(path.join(root, 'pages/MyTasks.tsx'), 'utf8'));
+  assert.match(myTasks, /p\.status === Status\.Completed\) return;/,
+    '「我的任务」页没有排除已结项项目里的任务');
 });
 
 test('术语表里每个词都得有人用 —— 定了不用等于没定', () => {
@@ -142,4 +159,35 @@ test('情报日报不许再写进知识中心 —— 这是 2026-09-13 定下的
     '又出现了往知识中心写情报日报的代码：\n  ' + offenders.join('\n  ')
     + '\n  这个功能 2026-09-13 已经下线（金恩来：「感觉有点多余」）。'
     + '\n  真要恢复，先跟他确认，并且文档 id 必须是确定性的（按日期），不能用 Date.now()。');
+});
+
+test('没填到期日的应收不算逾期 —— 空字符串比任何日期都"小"', () => {
+  /*
+    工作台原来写的是 `String(item.dueDate || '') < today`。
+    看着没问题，但 **'' < '2026-09-15' 是 true** ——
+    于是所有没填到期日的应收都被算成了逾期。
+
+    金恩来看到的那一屏：
+      逾期回款      ¥59,000     ← 真正逾期的
+      逾期未收合计  ¥173,400    ← 混进了没填到期日的
+    两个都叫"逾期"，差了三倍。
+
+    规矩和任务那边一致：**没约定就没有迟到。**
+    没填到期日是资料缺失，该去补，不是欠款。
+  */
+  const { isReceivableOverdue } = require(out);
+  const today = '2026-09-15';
+  assert.equal(isReceivableOverdue({ status: 'unpaid', dueDate: '' }, today), false,
+    '没填到期日的被算成逾期了 —— 这正是 ¥173,400 的来源');
+  assert.equal(isReceivableOverdue({ status: 'unpaid', dueDate: undefined }, today), false);
+  assert.equal(isReceivableOverdue({ status: 'unpaid', dueDate: '   ' }, today), false, '空白字符也要当没填');
+  assert.equal(isReceivableOverdue({ status: 'unpaid', dueDate: '2026-09-14' }, today), true, '真逾期的没报出来');
+  assert.equal(isReceivableOverdue({ status: 'unpaid', dueDate: '2026-09-15' }, today), false, '今天到期不算逾期');
+  assert.equal(isReceivableOverdue({ status: 'paid', dueDate: '2020-01-01' }, today), false, '已收的不算');
+
+  // 界面上不许再自己写那个比较
+  const dash = stripComments(fs.readFileSync(path.join(root, 'pages/Dashboard.tsx'), 'utf8'));
+  assert.ok(!/dueDate \|\| ''\) < today/.test(dash),
+    '工作台又自己写了一遍 dueDate < today —— 空日期会再次被算成逾期');
+  assert.match(dash, /isReceivableOverdue\(/, '工作台没有用统一的判断');
 });

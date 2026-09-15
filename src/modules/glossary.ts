@@ -110,6 +110,35 @@ export const TERM_RECEIVABLE = {
  * 测试拿它扫描界面文案：出现左边的词就红，并告诉你该换成右边的。
  * **新增同义词时先查这张表**，别又造一个。
  */
+/**
+ * 一笔应收算不算「逾期」—— 全系统只用这一个判断。
+ *
+ * ── 为什么要抽出来（2026-09-15）────────────────────────────────
+ *
+ * 工作台上原来写的是：
+ *     String(item.dueDate || '') < today
+ * 看着没问题，但 **空字符串在字符串比较里永远小于任何日期**：
+ *     '' < '2026-09-15'  →  true
+ * 于是**所有没填到期日的应收都被算成了逾期**。
+ *
+ * 后果是金恩来看到的那一屏：
+ *     逾期回款      ¥59,000     ← 真正逾期的（dashboardMetrics 用 diffDays，空日期被排除）
+ *     逾期未收合计  ¥173,400    ← 混进了没填到期日的
+ * 两个都叫"逾期"，差了三倍。
+ *
+ * 这和「没有截止日期的任务不算逾期」是同一条规矩：
+ * **没约定就没有迟到。** 没填到期日是资料缺失，该去补，不是欠款。
+ */
+export const isReceivableOverdue = (
+  r: { status?: string; dueDate?: string },
+  today = new Date().toISOString().slice(0, 10)
+): boolean => {
+  if (!r || r.status === 'paid') return false;
+  const due = String(r.dueDate || '').trim();
+  if (!due) return false;          // ← 关键：没填到期日不算逾期
+  return due < today;
+};
+
 export const DEPRECATED_TERMS: Record<string, string> = {
   '超期': '逾期',
   '在制项目': TERM_PROJECT.active,

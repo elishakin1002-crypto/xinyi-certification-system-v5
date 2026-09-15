@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { ListTodo, ArrowRight, AlertTriangle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Project, ProjectTask } from '../types';
-import { isOpenTask, isOverdue, byUrgency } from '../src/modules/taskFlow';
+import { isOverdue, byUrgency } from '../src/modules/taskFlow';
+// 「我该做什么」只算一次，见 src/modules/myWork.ts
+import { myActionableTasks, strandedTasks } from '../src/modules/myWork';
 import { TaskStatusControl } from './TaskStatusControl';
 
 /**
@@ -42,23 +44,35 @@ export const MyWorkWidget: React.FC = () => {
   const { projects, currentUser, updateProjectTask, checkActionPermission } = useApp();
   const navigate = useNavigate();
 
-  const rows = useMemo(() => {
-    const me = String(currentUser?.name || '').trim();
-    const out: { task: ProjectTask; project: Project }[] = [];
-    (projects || []).forEach(p => {
-      (p.tasks || []).forEach(t => {
-        if (!isOpenTask(t)) return;
-        const owner = String(t.owner || '').trim();
-        // 任务没写负责人时算项目负责人的 —— 和「我的任务」页同一套判断
-        const mine = owner
-          ? owner === me
-          : (p.ownerUserId && currentUser?.id ? p.ownerUserId === currentUser.id : String(p.manager || '').trim() === me);
-        if (!mine) return;
-        out.push({ task: t, project: p });
-      });
-    });
-    return out.sort((a, b) => byUrgency(a.task, b.task));
-  }, [projects, currentUser?.name, currentUser?.id]);
+  /*
+    ── 「我该做什么」只算一次（2026-09-15）────────────────────────
+
+    这里原来自己遍历全部项目算一遍，而工作台的「逾期任务」卡片算另一遍。
+    我 09-15 上午只改了卡片那一处（排除已结项项目），
+    结果金恩来看到的是同一屏上：
+
+        逾期任务 0            ← 卡片（改过的）
+        我今天的活 5 条已逾期   ← 这里（没改的）
+
+    **从"两边都错"变成了"两边互相矛盾"，比原来更糟。**
+
+    现在两边都从 src/modules/myWork.ts 取 —— 数字必然一致，
+    不是靠谁记得同步。
+  */
+  const rows = useMemo(
+    () => myActionableTasks(projects, { name: currentUser?.name, id: currentUser?.id })
+      .sort((a, b) => byUrgency(a.task, b.task)),
+    [projects, currentUser?.name, currentUser?.id]
+  );
+
+  /*
+    挂在已结项项目上的残留任务：不进今天的清单，但要让人知道有这么回事。
+    不提的话，那 5 条就凭空消失了 —— 人会以为系统把活弄丢了。
+  */
+  const stranded = useMemo(
+    () => strandedTasks(projects, { name: currentUser?.name, id: currentUser?.id }),
+    [projects, currentUser?.name, currentUser?.id]
+  );
 
   /*
     只留「已经欠账的」和「这周要交的」。
@@ -92,6 +106,20 @@ export const MyWorkWidget: React.FC = () => {
           <ArrowRight className="h-3 w-3" />
         </button>
       </div>
+
+      {/*
+        挂在已结项项目上的残留任务，单独说一句。
+
+        它们**不进今天的清单**（项目都结项了，不是今天要干的活），
+        但也不能不提 —— 否则人会以为系统把活弄丢了。
+        说清楚「在哪、有几条、去哪清」，人自己决定要不要去收尾。
+      */}
+      {stranded.length > 0 && (
+        <p className="mb-2 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">
+          另有 {stranded.length} 条任务挂在**已结项**的项目上还没了结 ——
+          不算今天的活，但建议去「项目管理」把它们标完成或跳过，否则一直挂着。
+        </p>
+      )}
 
       {urgent.length === 0 ? (
         <p className="rounded-xl bg-gray-50 px-4 py-4 text-xs font-bold text-gray-400">
