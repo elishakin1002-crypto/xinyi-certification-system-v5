@@ -116,13 +116,48 @@ const backup = () => {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const file = path.join(dir, `pre-launch-clean-${stamp}.dump`);
   const url = process.env.DATABASE_URL || process.env.XINYI_DB_URL;
+  /*
+    ── pg_dump 可能不在本机，但在 Docker 容器里（2026-09-15）────────
+
+    金恩来让我清本机数据时撞上：`spawnSync pg_dump ENOENT`。
+    他的 Mac 上没装 PostgreSQL 客户端 —— 数据库跑在 Docker 里，
+    pg_dump 在容器里（/usr/local/bin/pg_dump）。
+
+    脚本当时**正确地中止了**（备份失败就不许删，这条铁律起了作用），
+    但只报「ENOENT」对人毫无帮助 —— 他不知道该装什么、还是该换个跑法。
+
+    所以先试本机的 pg_dump，没有就走容器。两条都不行才中止，
+    并且告诉他具体怎么办。
+  */
+  const dumpViaDocker = () => {
+    const container = process.env.XINYI_DB_CONTAINER || 'xinyi-dev-db';
+    // 容器里连自己：把 host 换成 localhost（容器内的视角）
+    const inner = url.replace(/@[^/]+\//, '@localhost/');
+    const buf = execFileSync('docker', ['exec', container, 'pg_dump', '-Fc', inner], {
+      stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1024 * 1024 * 512
+    });
+    fs.writeFileSync(file, buf);
+  };
+
+  let how = '';
   try {
     execFileSync('pg_dump', ['-Fc', '-f', file, url], { stdio: 'pipe' });
-  } catch (e) {
-    console.error('\n❌ 备份失败，中止。删数据之前必须有备份 —— 这是这个项目的铁律。');
-    console.error('   ', e.message.slice(0, 300), '\n');
-    process.exit(1);
+    how = '本机 pg_dump';
+  } catch (localErr) {
+    try {
+      dumpViaDocker();
+      how = 'Docker 容器里的 pg_dump';
+    } catch (dockerErr) {
+      console.error('\n❌ 备份失败，中止。删数据之前必须有备份 —— 这是这个项目的铁律。\n');
+      console.error('   本机 pg_dump：', String(localErr.message).slice(0, 120));
+      console.error('   容器 pg_dump：', String(dockerErr.message).slice(0, 120));
+      console.error('\n   两条路都不通，二选一：');
+      console.error('     · 确认数据库容器在跑：docker start xinyi-dev-db');
+      console.error('     · 或者本机装一个客户端：brew install libpq && brew link --force libpq\n');
+      process.exit(1);
+    }
   }
+  console.log(`（备份用的是${how}）`);
   const size = (fs.statSync(file).size / 1024 / 1024).toFixed(1);
   console.log(`✅ 已备份：${file}（${size} MB）\n`);
   return file;
