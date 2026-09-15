@@ -34,6 +34,7 @@ import RiskPanel, { RiskAlertItem } from './dashboard/RiskPanel';
 import { openDashboardRoute } from '../src/modules/dashboardNavigation';
 // 「这笔应收算不算逾期」只有一个判断，见 src/modules/glossary.ts
 import { isReceivableOverdue } from '../src/modules/glossary';
+import { isMyProject } from '../src/modules/ownership';
 
 type ReminderView = 'aggregated' | 'detail';
 type AIBriefKey = 'opportunity' | 'risk' | 'intel';
@@ -322,22 +323,41 @@ const Dashboard = () => {
     [receivables, monthKey]
   );
 
+  /*
+    ── 同一屏上两个「逾期」差了三倍（2026-09-15 修）──────────────────
+
+    这里原来用 `dayDiff(item.dueDate, now) < 0`，而同一页别处用
+    统一的 isReceivableOverdue，于是财务打开工作台看到：
+        逾期回款      ¥59,000
+        逾期未收合计  ¥173,400
+    两个都叫"逾期"，人没法判断该信哪个。
+
+    差异有两处：dayDiff 对空到期日的处理，以及「今天到期」算不算。
+    口径统一成术语表那一份：**没约定就没有迟到**，今天到期不算逾期。
+  */
   const overdueReceivableAmount = React.useMemo(
-    () => receivables.filter(item => item.status !== 'paid' && dayDiff(item.dueDate, now) < 0).reduce((sum, item) => sum + item.amount, 0),
-    [receivables, now]
+    () => receivables.filter(item => isReceivableOverdue(item, today)).reduce((sum, item) => sum + item.amount, 0),
+    [receivables, today]
   );
 
+  /*
+    归属走 src/modules/ownership.ts，和项目管理、合同管理同一份（2026-09-15 收口）。
+
+    原来这里只认「项目负责人姓名」和「任务负责人姓名」，
+    漏了 ownerUserId 和服务项负责人 —— 后果是同一个项目
+    在项目管理里算我的、在工作台里不算，两个数字对不上而且不报错。
+    姓名匹配本身也脆：同名的人会互相看到对方的项目，
+    改了姓名名下的项目当场全部消失。
+  */
   const myProjects = React.useMemo(
-    () => projects.filter(project => project.manager === currentUser.name || (project.tasks || []).some(task => task.owner === currentUser.name)),
-    [projects, currentUser.name]
+    () => projects.filter(project => isMyProject(project as any, currentUser)),
+    [projects, currentUser.id, currentUser.name]
   );
 
   const myRevenueProjectsThisMonth = React.useMemo(
     () =>
-      revenueProjectsThisMonth.filter(project =>
-        project.manager === currentUser.name || (project.tasks || []).some(task => task.owner === currentUser.name)
-      ),
-    [revenueProjectsThisMonth, currentUser.name]
+      revenueProjectsThisMonth.filter(project => isMyProject(project as any, currentUser)),
+    [revenueProjectsThisMonth, currentUser.id, currentUser.name]
   );
 
   const myLeadSet = React.useMemo(

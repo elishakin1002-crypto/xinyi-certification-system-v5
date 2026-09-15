@@ -27,7 +27,7 @@ execFileSync(path.join(root, 'node_modules/.bin/esbuild'), [
   path.join(root, 'src/modules/ownership.ts'),
   '--bundle', '--platform=node', '--format=cjs', `--outfile=${out}`
 ], { stdio: 'pipe' });
-const { isUnownedName, isUnownedProject, UNOWNED_LABELS } = require(out);
+const { isUnownedName, isUnownedProject, isMyProject, isMyContract, UNOWNED_LABELS } = require(out);
 test.after(() => { try { fs.unlinkSync(out); } catch { /* 已经没了 */ } });
 
 const stripComments = (raw) => raw
@@ -86,13 +86,42 @@ test('无主项目不许被「与我相关」藏起来 —— 那是要人认领
   /*
     第二道防线。口子已经在 AppContext 堵了，但生产库里可能还有
     历史无主项目。藏起来的后果是一个没人做的项目安安静静地烂掉。
+
+    这条钉的是**行为**不是写法：2026-09-15 下午把归属收口进
+    isMyProject 之后，原来那条钉 `isUnownedProject(` 字样的断言就红了 ——
+    而行为一点没变。又是形状 D（钉写法不钉意图）。
   */
-  const src = stripComments(fs.readFileSync(path.join(root, 'pages/Projects.tsx'), 'utf8'));
-  assert.match(src, /from '\.\.\/src\/modules\/ownership'/,
-    '项目管理没有引 ownership.ts');
-  const mine = src.slice(src.indexOf('const isMineProject'));
-  assert.match(mine.slice(0, 900), /isUnownedProject\(/,
-    'isMineProject 没有放行无主项目 —— 它会对全公司每个人都隐藏');
+  const me = { id: 'U-1', name: '黄佳佳' };
+  assert.equal(isMyProject({ manager: '待指派' }, me), true,
+    '无主项目被藏起来了 —— 它会对全公司每个人都隐藏');
+  assert.equal(isMyProject({ manager: '别人', ownerUserId: 'U-2' }, me), false,
+    '别人的项目被算成我的了');
+});
+
+test('三个页面的「与我相关」必须是同一份判定', () => {
+  /*
+    2026-09-15 Codex 横扫发现同一个概念有**四份**实现：
+      pages/Projects.tsx    ownerUserId ✓ 姓名 ✓ 服务项 ✓ 任务 ✓ 无主 ✓
+      pages/Contracts.tsx   ownerUserId ✗ 姓名 ✓ 服务项 ✗ 任务 ✓ 无主 ✗
+      pages/Dashboard.tsx   ownerUserId ✗ 姓名 ✓ 服务项 ✗ 任务 ✓ 无主 ✗
+      pages/Contracts.tsx 里另有一份更窄的（合同有 owner 就只比姓名）
+    后果：同一个项目在项目管理里是「我的」，在工作台里不是，且不报错。
+
+    守的是「不许再各写各的」：三处都必须引共享模块，
+    而且不许自己再写 `manager === currentUser.name` 这种判定。
+  */
+  const SURFACES = [
+    ['pages/Projects.tsx', '项目管理'],
+    ['pages/Contracts.tsx', '合同管理'],
+    ['pages/Dashboard.tsx', '工作台'],
+  ];
+  for (const [f, label] of SURFACES) {
+    const src = stripComments(fs.readFileSync(path.join(root, f), 'utf8'));
+    assert.match(src, /from '\.\.\/src\/modules\/ownership'/,
+      `${label}（${f}）没有引 ownership.ts —— 多半又自己写了一份归属判定`);
+    assert.ok(!/\.manager === currentUser\.name/.test(src),
+      `${label} 里还留着 \`manager === currentUser.name\` —— 这就是漏掉 ownerUserId 和服务项负责人的那种写法`);
+  }
 });
 
 test('「无主」的说法只能在一个地方加', () => {

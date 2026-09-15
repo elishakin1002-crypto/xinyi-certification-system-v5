@@ -31,7 +31,7 @@ const { sendSuccess, sendFail, ERROR_CODES } = require('./utils/apiResponse');
 const { businessEventRepo } = require('./repos/businessEventRepo');
 const { requireAction } = require('./authz/middleware');
 const { claimPatch, recordOwnershipChange, resourceOf } = require('./authz/ownership');
-const { MARKET_SIGNAL_STATUS } = require('../src/constants/status.js');
+const { MARKET_SIGNAL_STATUS, TASK_STATUS } = require('../src/constants/status.js');
 const batch1Router = require('./routes/batch1');
 const batch2Router = require('./routes/batch2');
 const batch3Router = require('./routes/batch3');
@@ -1012,7 +1012,24 @@ app.post('/api/auth/logout', async (req, res) => {
 
 const API_KEY = process.env.KIMI_API_KEY || process.env.API_KEY || '';
 const KIMI_BASE_URL = String(process.env.KIMI_BASE_URL || 'https://api.moonshot.cn/v1').replace(/\/$/, '');
-const DEFAULT_MODEL = String(process.env.KIMI_MODEL || 'kimi-k2.5').trim();
+/*
+  ── 兜底型号不能是一个已经下架的（2026-09-15 修）────────────────────
+
+  这里原来兜底到 'kimi-k2.5'。Moonshot 早就没有这个型号了
+  （现在是 kimi-k3 / k2.6 / k2.7-code*），调用会返回
+  「Not found the model kimi-k2.5 or Permission denied」。
+
+  更麻烦的是 2026-09-03 已经在 services/aiService.ts 里把默认值改过一次，
+  注释写着「不再写死 kimi-k2.5」—— 但 **.env.local 里那个值没人动**，
+  而代码是 `envModel || 'kimi-k3'`，配置有值就轮不到兜底。
+  于是「修好了」的是代码，真正生效的还是死型号。
+  金恩来当天在战略管理点「让 AI 读这些数字」，等满 60 秒，
+  得到「AI 模型配置有误（指定的模型不存在）」。
+
+  教训是配置和代码要一起验 —— 所以下面加了开机自检（checkConfiguredModels），
+  型号不可用时在启动日志里直接喊出来，不等用户去点。
+*/
+const DEFAULT_MODEL = String(process.env.KIMI_MODEL || 'kimi-k3').trim();
 const FALLBACK_MODEL = String(process.env.KIMI_FALLBACK_MODEL || '').trim();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
@@ -1498,8 +1515,27 @@ const normalizeProjectType = (type) => (
   ['Self-Operated', 'Outsourced', 'Joint'].includes(type) ? type : 'Self-Operated'
 );
 
+/*
+  ── 任务状态白名单必须跟着前端那份枚举走（2026-09-15 修）──────────
+
+  原来这里硬写着 `['Pending', 'Completed']`，而前端支持四态
+  （src/constants/status.ts 的 TASK_STATUS）。后果是**静默丢状态**：
+
+    顾问把任务点成「进行中」→ 存 InProgress → 经过这个接口 → 变回 Pending
+    顾问点「跳过」并填了原因   → 存 Skipped    → 经过这个接口 → 变回 Pending
+
+  两次都不报错，页面也不会红，只是他刚做的事没了。
+  更糟的是 Skipped 被改回 Pending 之后，这条任务重新算「未完成」，
+  于是它会重新出现在「我今天的活」和逾期数里 ——
+  一件人已经交代过为什么不做的事，第二天又冒出来催他。
+
+  枚举写死在服务端 = 前端加一个状态就得记得来这里加一次。
+  CLAUDE.md 二点五第 4 条：要人记住的规矩早晚有人记不住。
+  所以直接引那份常量，加状态只加一处。
+*/
+const TASK_STATUS_VALUES = Object.values(TASK_STATUS);
 const normalizeTaskStatus = (status) => (
-  ['Pending', 'Completed'].includes(status) ? status : 'Pending'
+  TASK_STATUS_VALUES.includes(status) ? status : TASK_STATUS.PENDING
 );
 
 const normalizeTaskPriority = (priority) => (
@@ -5593,6 +5629,23 @@ const startServer = async () => {
     } catch (e) {
       console.warn('[定时任务] 没能启用（不影响业务）:', e.message);
     }
+
+    /*
+      配置里写的模型，厂商那边还在不在 —— 起服务时自己问一句。
+
+      2026-09-15：.env.local 里配着 kimi-k2.5，而 Moonshot 早就下架了它。
+      代码里的默认值三天前就改成 k3 了，但 `envModel || 'kimi-k3'`
+      配置有值就轮不到兜底，于是「改好的」是代码、生效的还是死型号。
+      金恩来点一次战略分析、等 60 秒，才看到「指定的模型不存在」。
+
+      模型被厂商下架不受我们控制，也不会有人定期去查 ——
+      唯一可靠的是服务起来时自检一次（CLAUDE.md 二点五第 2 条：
+      「有个脚本可以跑」等于没有）。
+      不可用只警告不拦启动：型号坏了系统其它部分照常能用。
+    */
+    require('./services/modelHealthCheck')
+      .checkConfiguredModels({ log: console })
+      .catch(e => console.warn('[模型自检] 没跑成（不影响业务）:', e.message));
   });
 };
 

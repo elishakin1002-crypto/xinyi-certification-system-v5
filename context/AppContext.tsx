@@ -1611,17 +1611,69 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     });
   }, [reminders, userProfiles]);
 
+  /**
+   * 抓取回来的情报并入现有列表。
+   *
+   * ── 人做过的决定不许被自动抓取覆盖（2026-09-15 修）────────────────
+   *
+   * 金恩来连着两轮说「标记已分拣点了没反应」。上一轮我查到两个原因
+   * （后端 404、前端徽章漏了 triaged）都修了，他说还是不行 —— 因为
+   * **真正的原因在第三处**：这里原来是 `list.forEach(s => map.set(s.id, s))`，
+   * 抓回来的整条直接盖掉已有的，**连 status 一起盖**。
+   *
+   * 时序是这样的：
+   *   点「标记已分拣」→ 前端立刻改成 triaged，后端也存成功了（我实测过 200）
+   *   → 十分钟一次的轮询拉 /api/intel/latest（读的是抓取缓存，里面还是 new）
+   *   → 这一行把 triaged 盖回 new
+   * 全程不报错，所以查了两轮都没查到。
+   *
+   * 分清两种字段是关键：
+   *   **内容**（标题、摘要、评分、正文）—— 抓取方权威，该覆盖
+   *   **决定**（分拣状态、认领人、转化成了什么）—— 人权威，绝不能覆盖
+   *
+   * 这和「提醒的已读状态不能被重新生成的提醒冲掉」是同一条规矩：
+   * 自动流程可以更新事实，但不能推翻人已经做过的判断 ——
+   * 否则人会发现自己做的事第二天又回来了，然后就不再做了。
+   */
   const upsertMarketSignals = (signals: MarketSignal[]) => {
     const list = Array.isArray(signals) ? signals : [];
     if (list.length === 0) return;
     setMarketSignals(prev => {
       const map = new Map<string, MarketSignal>();
       prev.forEach(s => map.set(s.id, s));
-      list.forEach(s => map.set(s.id, s));
+      list.forEach(incoming => {
+        const existing = map.get(incoming.id);
+        if (!existing) { map.set(incoming.id, incoming); return; }
+        /*
+          已经有人动过（状态不再是 new，或者已经认领/转化过）——
+          内容照常更新，这三个字段保留人那一份。
+        */
+        const humanDecided =
+          (existing.status && existing.status !== MARKET_SIGNAL_STATUS.NEW) ||
+          Boolean((existing as any).ownerUserId) ||
+          Boolean((existing as any).convertedTo);
+        map.set(incoming.id, humanDecided
+          ? {
+              ...incoming,
+              status: existing.status,
+              ...((existing as any).ownerUserId ? { ownerUserId: (existing as any).ownerUserId } : {}),
+              ...((existing as any).convertedTo ? { convertedTo: (existing as any).convertedTo } : {})
+            }
+          : incoming);
+      });
       return Array.from(map.values()).sort((a, b) => b.score - a.score);
     });
     if (signalService.isEnabled()) {
-      signalService.upsertSignals(list).catch(e => console.warn('[SignalService] bulk upsert failed', e));
+      /*
+        往回写也要带上保留后的状态，否则这次轮询把库里的 triaged
+        又刷成 new —— 那等于把同一个 bug 搬到了服务端。
+      */
+      const merged = list.map(incoming => {
+        const existing = marketSignals.find(s => s.id === incoming.id);
+        if (!existing || existing.status === MARKET_SIGNAL_STATUS.NEW) return incoming;
+        return { ...incoming, status: existing.status };
+      });
+      signalService.upsertSignals(merged).catch(e => console.warn('[SignalService] bulk upsert failed', e));
     }
   };
 

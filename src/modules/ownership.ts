@@ -64,3 +64,80 @@ export const isUnownedProject = (project: {
   if (String(project.ownerUserId ?? '').trim()) return false;
   return isUnownedName(project.manager);
 };
+
+/* ════════════════════════════════════════════════════════════════
+   「这个项目算不算我的」—— 全系统只算这一次
+   ════════════════════════════════════════════════════════════════
+
+   2026-09-15 Codex 横扫发现，同一个「与我相关」在三处各写了一份：
+
+     pages/Projects.tsx    ownerUserId ✓ 负责人名 ✓ 服务项 ✓ 任务 ✓ 无主 ✓
+     pages/Contracts.tsx   ownerUserId ✗ 负责人名 ✓ 服务项 ✗ 任务 ✓ 无主 ✗
+     pages/Dashboard.tsx   ownerUserId ✗ 负责人名 ✓ 服务项 ✗ 任务 ✓ 无主 ✗
+
+   后果很具体：一个只写了 ownerUserId、或者只把某个服务项分给我的项目，
+   在项目管理里是「我的」，在合同管理和工作台里就「不是我的」。
+   人看到的是三个页面对同一个问题给三个答案 —— 而没有任何一处报错。
+
+   这就是 CLAUDE.md 二点五第 3 条要的第三级做法：
+   不是把另外两处也补齐（那只是这一次补齐了），
+   是让「各写一份」这件事本身做不到。
+*/
+
+/** 判断归属时需要知道的那点信息。故意写得比 Project 宽松，合同页传的是拼出来的对象 */
+export type OwnableProject = {
+  manager?: string | null;
+  ownerUserId?: string | null;
+  serviceItems?: ReadonlyArray<{ owner?: string | null; ownerUserId?: string | null }> | null;
+  tasks?: ReadonlyArray<{ owner?: string | null }> | null;
+};
+
+/**
+ * 这个项目算不算「我的」。
+ *
+ * 一份合同常有多个服务项由不同咨询师负责，所以不能只认项目负责人 ——
+ * 我是负责人、我负责其中任一服务项、或有任务在我名下，都算。
+ *
+ * 最后一条是无主兜底：不属于任何人的项目对**所有人**可见。
+ * 无主是需要有人认领的异常，藏起来的后果是一个没人做的项目安静烂掉。
+ */
+export const isMyProject = (
+  project: OwnableProject | null | undefined,
+  me: { id?: string | null; name?: string | null }
+): boolean => {
+  if (!project) return false;
+  const myId = String(me?.id ?? '').trim();
+  const myName = String(me?.name ?? '').trim();
+
+  const ownerId = String(project.ownerUserId ?? '').trim();
+  if (myId && ownerId && ownerId === myId) return true;
+  if (myName && String(project.manager ?? '').trim() === myName) return true;
+
+  const mineByService = (project.serviceItems || []).some(si =>
+    (myId && String(si?.ownerUserId ?? '').trim() === myId) ||
+    (myName && String(si?.owner ?? '').trim() === myName)
+  );
+  if (mineByService) return true;
+
+  if (myName && (project.tasks || []).some(t => String(t?.owner ?? '').trim() === myName)) return true;
+
+  return isUnownedProject(project);
+};
+
+/**
+ * 这份合同算不算「我的」：我是合同负责人，或者它立出来的项目是我的。
+ *
+ * 第二条走 isMyProject，所以合同页和项目页**必然同答案** ——
+ * 不是靠谁记得两边一起改。
+ */
+export const isMyContract = (
+  contract: { owner?: string | null; ownerUserId?: string | null },
+  linkedProject: OwnableProject | null | undefined,
+  me: { id?: string | null; name?: string | null }
+): boolean => {
+  const myId = String(me?.id ?? '').trim();
+  const myName = String(me?.name ?? '').trim();
+  if (myId && String(contract?.ownerUserId ?? '').trim() === myId) return true;
+  if (myName && String(contract?.owner ?? '').trim() === myName) return true;
+  return linkedProject ? isMyProject(linkedProject, me) : false;
+};

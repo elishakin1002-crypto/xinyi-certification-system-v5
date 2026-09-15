@@ -4,6 +4,7 @@ import { guessCompanyFromContractTitle } from '../src/modules/companyFromTitle';
 
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { isMyContract } from '../src/modules/ownership';
 import { SampleTr } from '../components/SampleRow';
 import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search, FileSpreadsheet, Sparkles} from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -138,15 +139,15 @@ const Contracts = () => {
   const canEditContractAttachments = (contract: Contract) => {
     if (activeRole === 'ADMIN' || activeRole === 'MANAGER') return true;
     if (activeRole !== 'CONSULTANT') return false;
-    const ownByContract = String(contract.owner || '').trim() === String(currentUser.name || '').trim();
-    if (ownByContract) return true;
-    const linkedProject = projects.find(p => p.contractRef === contract.id || p.contractRef === contract.contractNo);
-    const ownByProject = Boolean(
-      linkedProject &&
-      (linkedProject.manager === currentUser.name ||
-        (linkedProject.tasks || []).some((t: any) => t.owner === currentUser.name))
-    );
-    return ownByProject;
+    /*
+      走共用的归属判定（2026-09-15 改）。
+
+      原来这里自己写了一份，漏掉 ownerUserId 和服务项负责人 ——
+      顾问在项目管理里看得到某个项目（因为某个服务项分给了他），
+      却不能给对应合同补电子档案，而且不给任何解释。
+      界面权限只是提示，真正的保护在服务端，这里跟项目页一致就行。
+    */
+    return isMyContract(contract, getLinkedProject(contract), currentUser);
   };
 
   const openAttachmentPickerForContract = (e: React.MouseEvent, contractId: string) => {
@@ -1011,15 +1012,9 @@ const Contracts = () => {
   const isTotalMatching = Math.abs(totalReceivables - contractAmount) < 1;
   const hasSubjectMismatch = fromLeadId && formData.customerName && originalLead?.company && originalLead.company !== formData.customerName;
   const calculateProgress = (contract: Contract) => { const paid = contract.receivables.filter(r => r.status === 'paid').reduce((acc, r) => acc + r.amount, 0); return contract.amount > 0 ? (paid / contract.amount) * 100 : 0; };
-  const isMyContract = (contract: Contract) => {
-    const owner = String((contract as any).owner || '').trim();
-    if (owner) return owner === currentUser.name;
-    const linked = projects.find(p => p.contractRef === contract.id || p.contractRef === contract.contractNo);
-    return linked ? String(linked.manager || '') === currentUser.name : false;
-  };
   const matchesDashboardFocus = (contract: Contract) => {
     if (!dashboardFocus?.type) return true;
-    if (dashboardFocus.owner === 'me' && !isMyContract(contract)) return false;
+    if (dashboardFocus.owner === 'me' && !isMyContract(contract, getLinkedProject(contract), currentUser)) return false;
     if (dashboardFocus.contractId && contract.id !== dashboardFocus.contractId) return false;
 
     if (dashboardFocus.type === 'signed_month') return String(contract.signDate || '').startsWith(String(dashboardFocus.month || ''));
@@ -1056,16 +1051,13 @@ const Contracts = () => {
       现在按模型来：**能看见存在，看不看得到金额另算**（maskAmount 照旧）。
       日常默认仍是「与我相关」，噪音不变；要找就切「全公司」。
     */
-    if (contractScope === 'related') {
-      const ownByContract = String(c.owner || '').trim() === String(currentUser.name || '').trim();
-      const linkedProject = projects.find(p => p.contractRef === c.id || p.contractRef === c.contractNo);
-      const ownByProject = Boolean(
-        linkedProject &&
-        (linkedProject.manager === currentUser.name ||
-          (linkedProject.tasks || []).some((t: any) => t.owner === currentUser.name))
-      );
-      if (!ownByContract && !ownByProject) return false;
-    }
+    /*
+      和附件权限、项目管理用同一份归属判定（2026-09-15 收口）。
+      三处原来各写各的，差异是「合同页和工作台漏了 ownerUserId
+      和服务项负责人」—— 同一个项目在项目管理里是我的，
+      在合同管理里就不是，而且不报错。
+    */
+    if (contractScope === 'related' && !isMyContract(c, getLinkedProject(c), currentUser)) return false;
     const matchScopedCustomer = (() => {
       if (customerScope.customerId) return c.customerId === customerScope.customerId;
       if (customerScope.customerName) return normalizeNameKey(c.customerName) === normalizeNameKey(customerScope.customerName);

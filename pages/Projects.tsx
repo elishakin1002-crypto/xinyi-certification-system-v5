@@ -6,7 +6,7 @@ import { useApp } from '../context/AppContext';
 import { TaskSkipButton } from '../components/TaskSkipButton';
 import { TaskStatusControl } from '../components/TaskStatusControl';
 import { canBePrerequisite, knockOnDelays, isOverdue } from '../src/modules/taskFlow';
-import { isUnownedProject } from '../src/modules/ownership';
+import { isMyProject } from '../src/modules/ownership';
 import { ProjectCompleteChecklist } from '../components/ProjectCompleteChecklist';
 import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog, TaskSkipReason, TASK_SKIP_REASON_LABEL, ServiceItem} from '../types';
 import { SERVICE_CATALOG, SERVICE_CATEGORIES, SERVICE_CATEGORY_DELIVERY_MODE, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY } from '../constants';
@@ -290,27 +290,13 @@ const Projects = () => {
    * 一份合同常有多个服务项由不同咨询师负责，所以不能只认项目负责人——
    * 只要我是负责人、负责其中任一服务项、或有任务在我名下，这个项目就与我相关。
    */
-  const isMineProject = (project: Project) => {
-    const ownerId = String((project as any).ownerUserId || '').trim();
-    if (ownerId && ownerId === currentUser.id) return true;
-    if (project.manager === currentUser.name) return true;
-    if ((project.serviceItems || []).some(si => String((si as any).ownerUserId || '') === currentUser.id || String(si.owner || '') === currentUser.name)) return true;
-    if ((project.tasks || []).some(task => String(task.owner || '') === currentUser.name)) return true;
-    /*
-      ── 无主项目对所有人可见（2026-09-15 加）──────────────────────
-
-      金恩来用合同识别建了合同+项目，合同管理「与我相关」里有，
-      项目管理「与我相关」里没有 —— 因为那个项目 manager='待指派'、
-      ownerUserId 空、任务 owner 也全是'待指派'，上面四条判据全不成立。
-      **不属于任何人 = 对每个人都隐藏**，包括刚刚亲手建它的人。
-
-      产出无主项目的口子已经在 AppContext.buildProjectFromInput 堵上了
-      （兜底到当前操作人）。这里是第二道：生产库里可能还有历史无主项目，
-      它们必须被看见 —— 无主是**需要有人认领的异常**，
-      藏起来的后果是一个没人做的项目安安静静地烂掉。
-    */
-    return isUnownedProject(project);
-  };
+  /*
+    归属判定在 src/modules/ownership.ts，项目页、合同页、工作台共用一份。
+    2026-09-15 之前这三处各写各的：合同页和工作台都漏了 ownerUserId
+    和服务项负责人，工作台还漏了无主兜底 —— 于是同一个项目在
+    项目管理里是「我的」，在工作台里就不是，而且不报错。
+  */
+  const isMineProject = (project: Project) => isMyProject(project as any, currentUser);
   /**
    * 还没了结的任务。
    *
@@ -500,7 +486,12 @@ const Projects = () => {
     改名叫「有逾期任务的项目」—— 和旁边的「有任务卡住的项目」同一个句式，
     一眼看出这一列数的是项目。
   */
-  const projectStatusFilters = [...STATUS_FILTERS, {value: 'Stuck' as const, label: '有任务卡住的项目'}, {value: 'Overdue' as const, label: TERM_PROJECT.withOverdueTask}];
+  /*
+    下拉里不再有 Stuck —— 它的条件（Active && 有逾期任务）和 Overdue
+    （!Completed && 有逾期任务）在项目只有两种状态时完全等价，
+    留着就是两个选项选出同一份清单。见下方两张统计卡处的说明。
+  */
+  const projectStatusFilters = [...STATUS_FILTERS, {value: 'Overdue' as const, label: TERM_PROJECT.withOverdueTask}];
   const selectOverview = (status: typeof filterStatus) => { setFilterStatus(status); setSearchTerm(''); setDashboardFocus(null); setDashboardFocusLabel(''); };
   const matchesOverviewStatus = (p: Project) => {
     if (filterStatus === 'Active') return p.status === Status.Active;
@@ -2623,23 +2614,60 @@ const Projects = () => {
           onClick={() => selectOverview('Completed')}
           title="点击只看已完成的项目"
         />
+        {/*
+          ── 第三、四张卡讲同一件事的两个粒度（2026-09-15 重做）──────────
+
+          原来是这样的：
+            第三张「有任务卡住的项目」 值=项目数  筛选 Stuck   = Active && 有逾期任务
+            第四张「有逾期任务的项目」 值=任务数  筛选 Overdue = !Completed && 有逾期任务
+          项目状态只有 Active / Completed，所以 `!== Completed` 就等于 `=== Active`
+          —— **两个筛选条件完全一样**，点哪张卡进的都是同一份清单，
+          却显示两个不同的数字、挂着两个不同的名字，还都叫「…的项目」
+          （其中一个数的却是任务）。
+
+          金恩来先问过「是不是重复内容」，后来又说「字段要和实际功能挂钩，
+          不能词不达意」—— 这一处两条都占了。
+
+          改法不是改名了事，是承认它们本来就是一件事的两个粒度：
+            有逾期任务的项目 N 个，一共 M 条逾期任务
+          所以两张卡指向**同一个筛选**，名字各自说清自己数的是什么。
+          「状态」下拉里的 Stuck 选项一并去掉 —— 它和 Overdue 选出来一样。
+        */}
         <StatCard
           icon={<AlertTriangle className="w-6 h-6" />}
           value={overviewStats.stuck}
-          label="有任务卡住的项目"
+          label={TERM_PROJECT.withOverdueTask}
           tone="amber"
-          selected={filterStatus === 'Stuck'}
-          onClick={() => selectOverview('Stuck')}
-          title="进行中项目里存在逾期任务的"
+          selected={filterStatus === 'Overdue'}
+          onClick={() => selectOverview('Overdue')}
+          title={`${TERM_PROJECT.withOverdueTask}：进行中、且名下有任务过了截止日的项目个数`}
         />
+        {/*
+          ── 标签数项目、数字数任务（2026-09-15 修）────────────────────
+
+          这张卡原来写着「有逾期任务的项目」，而 value 是
+          `overviewStats.overdueTasks` —— 逾期**任务的条数**。
+          旁边第三张「有任务卡住的项目」数的是**项目个数**。
+          两张挨着的卡都叫「…的项目」，一张数任务一张数项目。
+
+          金恩来 2026-09-15：「字段要和实际功能挂钩，不能词不达意。」
+          这就是最典型的一处，而且「有逾期任务的项目」这个词
+          就写在 src/modules/glossary.ts 里，口径是
+          `Active && tasks.some(isOverdue)` —— 卡片没按自己的口径算。
+
+          选「改标签」不是「改数字」：点这张卡之后进的是
+          filterStatus='Overdue' 的清单，底下那行写的是
+          「共 N 项逾期任务 · 涉及 M 个项目」—— 人真正要处理的是任务。
+          所以数字保持任务数，把名字改对。
+        */}
         <StatCard
           icon={<Clock className="w-6 h-6" />}
           value={overviewStats.overdueTasks}
-          label="有逾期任务的项目"
+          label={TERM_TASK.overdue}
           emphasis="danger"
           selected={filterStatus === 'Overdue'}
           onClick={() => selectOverview('Overdue')}
-          title="所有未完结项目下已过截止日期的任务总数"
+          title={`${TERM_TASK.overdue}：未完结项目下已过截止日期的任务总数（点开看是哪几个项目）`}
         />
       </StatGrid>
 

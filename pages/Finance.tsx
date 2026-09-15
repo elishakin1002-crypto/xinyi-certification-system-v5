@@ -9,6 +9,7 @@ import { hasContract, isBillable } from '../src/modules/projectCategory';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { aiService } from '../services/aiService';
 import { SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
+import { isReceivableOverdue } from '../src/modules/glossary';
 
 const Finance = () => {
   const { contracts, settlements, projects, toggleReceivableStatus, rejectReceivable, importSettlements, updateSettlementStatus, vendors } = useApp();
@@ -71,11 +72,27 @@ const Finance = () => {
     }
   }, [location.state]);
 
+  /** 按自然日比较，和术语表 isReceivableOverdue 的口径一致 */
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  /*
+    ── 「今天到期」不算逾期（2026-09-15 修）──────────────────────────
+
+    原来这里把到期日转成时间戳和**此刻**比：
+        new Date('2026-09-15').getTime() < Date.now()
+    到期日会被解析成当天零点，所以今天早上八点打开页面，
+    今天才到期的那笔就已经显示「逾期」了 —— 而客户还有一整天可以付。
+
+    而术语表里的判断是按自然日：`due < today`，今天到期不算逾期。
+    同一笔款在工作台和这一页会得到相反的状态，人没法判断要不要打电话催。
+
+    另外原来的写法在日期解析失败时会**沿用记录上已有的 overdue 标记**，
+    等于让一个可能早就过时的标志位继续生效。现在统一按术语表算，
+    没填到期日就是没填，不是逾期（没约定就没有迟到）。
+  */
   const resolveReceivableStatus = (receivable: Receivable): Receivable['status'] => {
     if (receivable.status === 'paid') return 'paid';
-    const dueMs = new Date(String(receivable.dueDate || '')).getTime();
-    if (!Number.isFinite(dueMs)) return receivable.status === 'overdue' ? 'overdue' : 'unpaid';
-    return dueMs < Date.now() ? 'overdue' : 'unpaid';
+    return isReceivableOverdue(receivable, todayStr) ? 'overdue' : 'unpaid';
   };
 
   const allReceivables = contracts.flatMap(c => c.receivables.map((r, idx) => ({
