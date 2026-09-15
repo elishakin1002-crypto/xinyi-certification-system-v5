@@ -60,11 +60,24 @@ test('折叠开关挂在摘要块上，不是整张卡片上', () => {
 });
 
 test('详情块是兄弟节点，排在可点击块后面', () => {
+  /*
+    ── 认「折叠开关」不认某一句写法（2026-09-15 改）────────────────
+
+    这条原来钉的是字面量
+        setExpandedProject(expandedProject === project.id ? null : project.id)
+    当天把展开状态同步到地址（?p=<id>）之后，入口改成了 toggleProject(...)，
+    这条当场变红 —— 而 DOM 结构一点没动。又是形状 D：钉写法不钉意图。
+
+    真正要守的是**结构**：详情必须是可点击块的兄弟节点、排在它后面。
+    否则详情在开关肚子里，点详情里任何东西都会把它折叠掉。
+  */
   const i = src.indexOf('<div className="block md:hidden">');
   const section = src.slice(i, i + 4000);
-  const clickIdx = section.indexOf('setExpandedProject(expandedProject === project.id ? null : project.id)');
+  const TOGGLES = ['toggleProject(project.id)', 'setExpandedProject(expandedProject === project.id ? null : project.id)'];
+  const clickIdx = TOGGLES.map(t => section.indexOf(t)).filter(n => n > 0).sort((a, b) => a - b)[0] ?? -1;
+  assert.ok(clickIdx > 0, '找不到折叠开关 —— 换了新写法的话把它加进 TOGGLES');
   const detailIdx = section.indexOf('{renderProjectDetail(project)}');
-  assert.ok(clickIdx > 0 && detailIdx > clickIdx, '详情和折叠开关的相对位置不对');
+  assert.ok(detailIdx > clickIdx, '详情和折叠开关的相对位置不对');
 
   // 可点击块必须在详情之前闭合：两者之间要有 `</div>`
   const between = section.slice(clickIdx, detailIdx);

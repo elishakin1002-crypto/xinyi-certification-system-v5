@@ -425,7 +425,8 @@ const Projects = () => {
     const focus = state.dashboardFocus;
 
     if (state.openDetailId) {
-      setExpandedProject(state.openDetailId);
+      // 走 openProject 写进地址 —— 直接 setExpandedProject 会被 URL 同步的 effect 清掉
+      openProject(String(state.openDetailId));
     }
 
     if (focus?.type) {
@@ -471,6 +472,82 @@ const Projects = () => {
     const q = readGlobalSearchQuery(location.search);
     setSearchTerm(q);
   }, [location.search]);
+
+  /*
+    ── 项目详情要有自己的地址（2026-09-15 加）──────────────────────
+
+    展开哪个项目原来只存在 `expandedProject` 这个本地状态里，
+    地址栏从头到尾是 `#/projects`。后果有三个，都很日常：
+
+      · 总助想跟顾问说「你看下嘉力那个项目」——**发不出链接**
+      · 刷新一下就退回列表，刚看到哪儿全没了
+      · 按浏览器后退，详情不会关，直接跳出这一页
+
+    第三个还有个连带：详情页上的任何东西都没法「刷新再看一眼」，
+    而这正是我们查「点了到底存没存住」的标准手法。
+
+    所以把它同步到 `?p=<项目id>`：地址能发、刷新还在、后退能关。
+    用 push 不用 replace —— 打开详情在人心里就是「进去了一层」，
+    后退应该回到列表，而不是直接离开项目管理。
+  */
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get('p');
+    setExpandedProject(id || null);
+  }, [location.search]);
+
+  /*
+    ── 带地址进来时，要保证这个项目**看得见**（2026-09-15）──────────
+
+    加完 `?p=<id>` 之后第一次实测就踩了坑：总助打开
+    `#/projects?p=P-1789440937759`，页面显示「共 0 个项目」——
+    因为「范围」默认是「与我相关」，而那个项目是别人的，直接被筛掉了，
+    连行都没渲染，自然也无处展开。
+
+    **链接发过去对方打开是空的，等于这个功能没有。**
+    这和 2026-09-15 上午「合同说已立项、项目管理里找不到」是同一个形状：
+    东西在，但默认筛选把它藏了。
+
+    所以带 id 进来时，如果这个项目确实存在却不在当前筛选结果里，
+    就把挡住它的那几个筛选放开，并说明一句为什么 ——
+    数字突然变了而没有解释，比看不见更让人糊涂。
+  */
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get('p');
+    if (!id) return;
+    const target = projects.find(p => p.id === id);
+    if (!target) return;
+    const blocked: string[] = [];
+    if (viewScope === 'related' && !isMineProject(target)) { setViewScope('all'); blocked.push('范围→全公司'); }
+    if (!matchesModeScope(target)) { setModeScope('all'); blocked.push('类别→全部'); }
+    if (!matchesOverviewStatus(target)) { setFilterStatus('All'); blocked.push('状态→全部'); }
+    if (blocked.length) {
+      setCreatedNotice(`为了让你看到「${target.name}」，已放开筛选（${blocked.join('、')}）。`);
+    }
+  }, [location.search, projects]);
+
+  /**
+   * 打开某个项目的详情（只开不关）。
+   *
+   * 从工作台跳过来、从逾期任务清单点过来都走这个 ——
+   * 必须写进地址，不能直接 setExpandedProject：
+   * 上面那个跟着 location.search 跑的 effect 会在同一轮把它清掉，
+   * 于是「从工作台点某条逾期任务进来」会变成停在列表页什么都没展开。
+   * （加 URL 同步时差点就这么漏了一处。）
+   */
+  const openProject = (id: string) => {
+    const params = new URLSearchParams(location.search);
+    params.set('p', id);
+    navigate({ pathname: location.pathname, search: `?${params.toString()}` }, { replace: true });
+  };
+
+  /** 展开/收起同时改地址。列表里所有展开入口都走这个，别再直接 setExpandedProject */
+  const toggleProject = (id: string) => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('p') === id) params.delete('p');
+    else params.set('p', id);
+    const qs = params.toString();
+    navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '' });
+  };
 
   /*
     换角色（含右上角切视角）时把范围恢复成默认。
@@ -2789,7 +2866,7 @@ const Projects = () => {
 
       {filterStatus === 'Overdue' ? <div data-testid="overdue-task-results" className="rounded-2xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-100">
         <h2 className="px-4 py-3 font-bold text-gray-900">有逾期任务的项目</h2>
-        {filteredProjects.flatMap(project => (project.tasks || []).filter(isOverdueTask).map(task => <button key={project.id + ':' + task.id} type="button" onClick={() => { selectOverview('All'); setExpandedProject(project.id); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center justify-between gap-4">
+        {filteredProjects.flatMap(project => (project.tasks || []).filter(isOverdueTask).map(task => <button key={project.id + ':' + task.id} type="button" onClick={() => { selectOverview('All'); openProject(project.id); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center justify-between gap-4">
           <div><p className="font-bold text-gray-900">{task.title}</p><p className="mt-1 text-xs text-gray-500">{project.name} · 负责人：{task.owner || project.manager}</p></div>
           <div className="shrink-0 text-xs text-red-600">截止 {task.deadline}<span className="block mt-1 text-blue-600">查看所属项目 →</span></div>
         </button>))}
@@ -2823,11 +2900,11 @@ const Projects = () => {
                tabIndex={0}
                aria-expanded={expandedProject === project.id}
                className="p-4 cursor-pointer hover:bg-gray-50 active:bg-gray-100 transition-colors"
-               onClick={() => setExpandedProject(expandedProject === project.id ? null : project.id)}
+               onClick={() => toggleProject(project.id)}
                onKeyDown={e => {
                  if (e.key === 'Enter' || e.key === ' ') {
                    e.preventDefault();
-                   setExpandedProject(expandedProject === project.id ? null : project.id);
+                   toggleProject(project.id);
                  }
                }}
              >
@@ -2888,7 +2965,7 @@ const Projects = () => {
 
                 <SampleList items={filteredProjects} sample={SAMPLE_PROJECT} render={project => (
                     <React.Fragment key={project.id}>
-                        <tr className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${expandedProject === project.id ? 'bg-indigo-50/30' : ''}`} onClick={() => setExpandedProject(expandedProject === project.id ? null : project.id)}>
+                        <tr className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${expandedProject === project.id ? 'bg-indigo-50/30' : ''}`} onClick={() => toggleProject(project.id)}>
                             <td className="pl-4 text-gray-300">
                               {expandedProject === project.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                             </td>
