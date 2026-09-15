@@ -29,6 +29,8 @@ import {
 } from '../src/modules/projectCategory';
 import { buildSuggestion, buildSuggestionRecord } from '../src/modules/ownerSuggestion';
 import { PROJECT_TYPE_META } from '../types';
+// 术语只有一份定义，见 src/modules/glossary.ts
+import { TERM_PROJECT, TERM_TASK } from '../src/modules/glossary';
 import { SERVICE_GROUPS, GROUP_TO_CATALOG_CATEGORY, type ServiceGroup } from '../src/modules/serviceLine';
 
 const normalizeServiceToken = (value: string) => (value || '')
@@ -403,7 +405,7 @@ const Projects = () => {
       else if (focus.type === 'logs') setDashboardFocusLabel(focus.metric === 'hours' ? '本周工时日志项目' : '本周日志覆盖项目');
       else if (focus.type === 'busiest_owner') setDashboardFocusLabel('任务堆积最多项目');
       else if (focus.type === 'team_overview') setDashboardFocusLabel('团队项目总览');
-      else if (focus.type === 'active_projects') setDashboardFocusLabel(focus.owner === 'me' ? '我负责的进行中项目' : '进行中项目');
+      else if (focus.type === 'active_projects') setDashboardFocusLabel(focus.owner === 'me' ? `我负责的${TERM_PROJECT.active}` : TERM_PROJECT.active);
     }
 
     if (state.dashboardFocus || state.openDetailId) {
@@ -483,7 +485,7 @@ const Projects = () => {
     改名叫「有逾期任务的项目」—— 和旁边的「有任务卡住的项目」同一个句式，
     一眼看出这一列数的是项目。
   */
-  const projectStatusFilters = [...STATUS_FILTERS, {value: 'Stuck' as const, label: '有任务卡住的项目'}, {value: 'Overdue' as const, label: '有逾期任务的项目'}];
+  const projectStatusFilters = [...STATUS_FILTERS, {value: 'Stuck' as const, label: '有任务卡住的项目'}, {value: 'Overdue' as const, label: TERM_PROJECT.withOverdueTask}];
   const selectOverview = (status: typeof filterStatus) => { setFilterStatus(status); setSearchTerm(''); setDashboardFocus(null); setDashboardFocusLabel(''); };
   const matchesOverviewStatus = (p: Project) => {
     if (filterStatus === 'Active') return p.status === Status.Active;
@@ -2591,7 +2593,7 @@ const Projects = () => {
         <StatCard
           icon={<Briefcase className="w-6 h-6" />}
           value={overviewStats.active}
-          label="进行中项目"
+          label={TERM_PROJECT.active}
           tone="blue"
           selected={filterStatus === 'Active'}
           onClick={() => selectOverview('Active')}
@@ -2600,7 +2602,7 @@ const Projects = () => {
         <StatCard
           icon={<CheckCircle className="w-6 h-6" />}
           value={overviewStats.completed}
-          label="已完成项目"
+          label={TERM_PROJECT.completed}
           tone="emerald"
           selected={filterStatus === 'Completed'}
           onClick={() => selectOverview('Completed')}
@@ -2618,7 +2620,7 @@ const Projects = () => {
         <StatCard
           icon={<Clock className="w-6 h-6" />}
           value={overviewStats.overdueTasks}
-          label="逾期未完成任务"
+          label="有逾期任务的项目"
           emphasis="danger"
           selected={filterStatus === 'Overdue'}
           onClick={() => selectOverview('Overdue')}
@@ -2714,12 +2716,12 @@ const Projects = () => {
       </div>
 
       {filterStatus === 'Overdue' ? <div data-testid="overdue-task-results" className="rounded-2xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-100">
-        <h2 className="px-4 py-3 font-bold text-gray-900">逾期未完成任务</h2>
+        <h2 className="px-4 py-3 font-bold text-gray-900">有逾期任务的项目</h2>
         {filteredProjects.flatMap(project => (project.tasks || []).filter(isOverdueTask).map(task => <button key={project.id + ':' + task.id} type="button" onClick={() => { selectOverview('All'); setExpandedProject(project.id); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center justify-between gap-4">
           <div><p className="font-bold text-gray-900">{task.title}</p><p className="mt-1 text-xs text-gray-500">{project.name} · 负责人：{task.owner || project.manager}</p></div>
           <div className="shrink-0 text-xs text-red-600">截止 {task.deadline}<span className="block mt-1 text-blue-600">查看所属项目 →</span></div>
         </button>))}
-        {filteredProjects.length === 0 && <p className="p-6 text-sm text-gray-500">当前范围没有逾期未完成任务。</p>}
+        {filteredProjects.length === 0 && <p className="p-6 text-sm text-gray-500">当前范围没有有逾期任务的项目。</p>}
       </div> : (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         {/* Mobile Card View */}

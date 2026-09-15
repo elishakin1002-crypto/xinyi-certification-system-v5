@@ -2,6 +2,8 @@ import { Contract, Customer, Lead, Project, ProjectTask, ProjectWorkLog, RoleID,
 import { APP_ROUTES } from '../src/routes';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
 import { isOpenTask, isOverdue } from '../src/modules/taskFlow';
+// 术语只有一份定义，见 src/modules/glossary.ts（口径也写在那里）
+import { TERM_PROJECT, TERM_TASK, TERM_RECEIVABLE } from '../src/modules/glossary';
 
 export type DashboardRoleView = 'boss' | 'manager' | 'sales' | 'consultant' | 'finance';
 
@@ -316,17 +318,17 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
     topCards: [
       { id: 'boss-month-contract', title: '本月新增合同金额', value: money(monthContractAmount), route: `${APP_ROUTES.CONTRACTS}?month=this` },
       { id: 'boss-month-paid', title: '本月已回款金额', value: money(monthPaid), route: `${APP_ROUTES.FINANCE}?month=this&view=paid` },
-      { id: 'boss-overdue-amt', title: '回款风险金额（逾期）', value: money(overdueAmount), route: `${APP_ROUTES.FINANCE}?status=overdue` },
+      { id: 'boss-overdue-amt', title: `${TERM_RECEIVABLE.overdue}金额`, value: money(overdueAmount), route: `${APP_ROUTES.FINANCE}?status=overdue` },
       { id: 'boss-conv', title: '销售转化率（线索→营收项目）', value: rate(monthLeadRevenueProjects.length, monthLeads.length), route: `${APP_ROUTES.LEADS}?filter=conversion` }
     ],
     middleCards: [
       { id: 'boss-near-overdue', title: '即将逾期合同', value: String(nearOverdueContracts), route: `${APP_ROUTES.CONTRACTS}?due=7d` },
       { id: 'boss-high-risk-project', title: '高风险项目', value: String(highRiskProjects), route: `${APP_ROUTES.PROJECTS}?risk=high` },
-      { id: 'boss-overdue-receivable', title: '应收逾期清单', value: String(overdueReceivableCount), route: `${APP_ROUTES.FINANCE}?status=overdue` },
+      { id: 'boss-overdue-receivable', title: `${TERM_RECEIVABLE.overdue}清单`, value: String(overdueReceivableCount), route: `${APP_ROUTES.FINANCE}?status=overdue` },
       { id: 'boss-customer-churn', title: '客户流失预警', value: String(churnCustomers), route: `${APP_ROUTES.CUSTOMERS}?filter=churn` }
     ],
     bottomCards: [
-      { id: 'boss-capacity', title: '人均在制项目数', value: avgInProgress.toFixed(2), route: `${APP_ROUTES.PROJECTS}?view=team` },
+      { id: 'boss-capacity', title: `人均${TERM_PROJECT.active}数`, value: avgInProgress.toFixed(2), route: `${APP_ROUTES.PROJECTS}?view=team` },
       { id: 'boss-delay-rate', title: '项目延误率', value: rate(delayedTasks.length, openTasks.length), route: `${APP_ROUTES.PROJECTS}?filter=delay` },
       // 必须带 range=7d：不带的话下钻看的是「任何时候有日志的项目」，
       // 而指标算的是本周，点进去的列表和卡片上的数字对不上。
@@ -423,9 +425,9 @@ const buildManagerMetrics = (inputs: Inputs): RoleDashboardMetrics => {
     topCards: [
       { id: 'mgr-unassigned', title: '待指派负责人', value: String(unassigned.length),
         hint: '没人认领的项目不会自己往前走', route: `${APP_ROUTES.PROJECTS}?filter=unassigned` },
-      { id: 'mgr-overdue-task', title: '已逾期任务', value: String(overdueTasks.length),
+      { id: 'mgr-overdue-task', title: TERM_TASK.overdue, value: String(overdueTasks.length),
         hint: '过了截止日还没完成的', route: `${APP_ROUTES.PROJECTS}?filter=delay` },
-      { id: 'mgr-due-soon', title: '三天内到期', value: String(dueSoonTasks.length),
+      { id: 'mgr-due-soon', title: '三天内到期任务', value: String(dueSoonTasks.length),
         hint: '现在提醒还来得及', route: `${APP_ROUTES.PROJECTS}?filter=duesoon` },
       { id: 'mgr-log-coverage', title: '本周日志覆盖率',
         value: rate(weekLogProjects.size, activeProjects.length),
@@ -440,11 +442,11 @@ const buildManagerMetrics = (inputs: Inputs): RoleDashboardMetrics => {
       route: `${APP_ROUTES.PROJECTS}?owner=${encodeURIComponent(owner)}`
     })),
     bottomCards: [
-      { id: 'mgr-active', title: '在制项目总数', value: String(activeProjects.length),
+      { id: 'mgr-active', title: TERM_PROJECT.active, value: String(activeProjects.length),
         route: `${APP_ROUTES.PROJECTS}?view=team` },
       { id: 'mgr-people', title: '有活在手的人', value: String(loads.length),
         route: `${APP_ROUTES.PROJECTS}?view=team` },
-      { id: 'mgr-open-task', title: '未完成任务', value: String(openTasks.length),
+      { id: 'mgr-open-task', title: TERM_TASK.open, value: String(openTasks.length),
         route: `${APP_ROUTES.PROJECTS}?filter=open` }
     ],
     listItems: stuckList
@@ -555,13 +557,32 @@ const buildConsultantMetrics = (inputs: Inputs): RoleDashboardMetrics => {
   const myTaskPairs = myProjects.flatMap(project => (project.tasks || []).map(task => ({ project, task })))
     .filter(({ task }) => taskOwner(task, me));
   /*
-    个人这套也要用同一个判据。
+    ── 已结项项目里的残留任务，不算「逾期任务」（2026-09-15 推翻了原设计）──
 
-    这里**故意不限定在制项目** —— 顾问的「我的任务」看的是自己名下的活，
-    包括挂在已结项项目上还没勾的那几条（他确实还得去处理或跳过）。
-    但 Skipped 必须排除，理由和上面一样：跳过是主动决定，不是欠账。
+    这里原来的注释写着「**故意**不限定在制项目 —— 他确实还得去处理或跳过」。
+    那个"故意"是错的，金恩来的截图把后果摆了出来：
+
+        当前在制项目数  0        ← 他名下项目全结项了
+        逾期任务数      5        ← 却还有 5 条红色的逾期任务
+        （项目管理那边的同名统计是 0，因为它只算进行中项目）
+
+    于是顾问每天打开工作台，看到一个**永远消不掉的红色 5**，
+    点进去还找不到对应的项目。两个后果，第二个更贵：
+      · 他不知道该做什么
+      · **他开始不信任所有红色数字** —— 而真正紧急的那条也在红色里
+
+    已结项项目里没勾完的任务，本质是**结项时收尾没做干净的记录问题**，
+    该在结项那一刻处理（完结清单就是干这个的），
+    不该天天挂在人的日常待办上。
+
+    所以「我的逾期任务」只算**进行中项目**里的 —— 和项目管理那边同口径。
+    残留任务在项目详情里照样看得到，不会丢。
   */
+  const activeProjectIds = new Set(myActiveProjects.map(p => p.id));
   const myOpenTasks = myTaskPairs.filter(({ task }) => isOpenTask(task));
+  const myOpenTasksInActive = myTaskPairs.filter(
+    ({ task, project }) => isOpenTask(task) && activeProjectIds.has(project.id)
+  );
   /*
     用 taskFlow.isOverdue，不要自己拿 diffDays 再判一遍（2026-09-14）。
 
@@ -572,7 +593,7 @@ const buildConsultantMetrics = (inputs: Inputs): RoleDashboardMetrics => {
 
     全系统判逾期只留 taskFlow.isOverdue 这一份。
   */
-  const myOverdueTasks = myOpenTasks.filter(({ task }) => isOverdue(task, now.getTime()));
+  const myOverdueTasks = myOpenTasksInActive.filter(({ task }) => isOverdue(task, now.getTime()));
   const myDueSoonTasks = myOpenTasks.filter(({ task }) => diffDays(task.deadline, now) >= 0 && diffDays(task.deadline, now) <= 7);
   const thisWeekStart = new Date(now);
   thisWeekStart.setDate(now.getDate() - 6);
@@ -598,13 +619,13 @@ const buildConsultantMetrics = (inputs: Inputs): RoleDashboardMetrics => {
 
   return {
     topCards: [
-      { id: 'cons-active-project', title: '当前在制项目数', value: String(myActiveProjects.length), route: `${APP_ROUTES.PROJECTS}?owner=me&status=active` },
-      { id: 'cons-overdue-task', title: '逾期任务数', value: String(myOverdueTasks.length), route: `${APP_ROUTES.PROJECTS}?owner=me&task=overdue` },
+      { id: 'cons-active-project', title: TERM_PROJECT.active, value: String(myActiveProjects.length), route: `${APP_ROUTES.PROJECTS}?owner=me&status=active` },
+      { id: 'cons-overdue-task', title: TERM_TASK.overdue, value: String(myOverdueTasks.length), route: `${APP_ROUTES.PROJECTS}?owner=me&task=overdue` },
       { id: 'cons-week-completed', title: '本周完成任务数', value: String(weekCompletedTasks), route: `${APP_ROUTES.PROJECTS}?owner=me&task=completed&range=7d` },
       { id: 'cons-customer-confirm', title: '客户待确认事项', value: String(pendingCustomerConfirm), route: `${APP_ROUTES.PROJECTS}?owner=me&task=customer_confirm` }
     ],
     middleCards: [
-      { id: 'cons-due-soon', title: '即将到期任务', value: String(myDueSoonTasks.length), route: `${APP_ROUTES.PROJECTS}?owner=me&task=due_7d` },
+      { id: 'cons-due-soon', title: TERM_TASK.dueSoon, value: String(myDueSoonTasks.length), route: `${APP_ROUTES.PROJECTS}?owner=me&task=due_7d` },
       { id: 'cons-stacked-project', title: '任务堆积最多项目', value: mostStackedProject ? `${mostStackedProject.name}` : '暂无数据', route: `${APP_ROUTES.PROJECTS}?owner=me&focus=stacked` },
       { id: 'cons-below-half', title: '服务进度低于50%项目', value: String(belowHalfProjects.length), route: `${APP_ROUTES.PROJECTS}?owner=me&progress=lt50` }
     ],
@@ -676,7 +697,7 @@ const buildFinanceMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMet
     topCards: [
       { id: 'fin-month-rec', title: '本月应收', value: money(monthReceivable), route: `${APP_ROUTES.FINANCE}?month=this&view=receivable` },
       { id: 'fin-month-paid', title: '本月已收', value: money(monthPaid), route: `${APP_ROUTES.FINANCE}?month=this&view=paid` },
-      { id: 'fin-overdue', title: '逾期金额', value: money(overdueAmount), hint: `${overdueItems.length} 单`, route: `${APP_ROUTES.FINANCE}?status=overdue` },
+      { id: 'fin-overdue', title: TERM_RECEIVABLE.overdue, value: money(overdueAmount), hint: `${overdueItems.length} 单`, route: `${APP_ROUTES.FINANCE}?status=overdue` },
       { id: 'fin-next30', title: '未来30天预计回款', value: money(expected30), route: `${APP_ROUTES.FINANCE}?range=30d` }
     ],
     middleCards: [

@@ -72,10 +72,25 @@ const main = async () => {
     // 3. 真抓一次
     console.log('正在抓取（会联网 + 调一次 AI，慢，最多等 90 秒）…\n');
     const t0 = Date.now();
+    /*
+      ── 必须用界面上真实的筛选条件，不能传空（2026-09-15）──────────
+
+      原来这里传 `{}`，服务端于是走 DEFAULT_*（宽范围），每次都抓到 20 条。
+      而界面上的筛选器走的是 /api/intel/config 返回的那一套 ——
+      **两套条件不同，于是自检永远绿、用户永远抓不到。**
+
+      金恩来连着三轮说「情报雷达还是不行」，我三轮都没找到，
+      就是因为自检和真实路径喂的参数不一样。
+      自检必须走用户真正走的那条路，否则它检的是另一个系统。
+    */
     const res = await fetch(`${BASE}/api/intel/fetch`, {
       method: 'POST',
       headers: { cookie, 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
+      body: JSON.stringify({
+        regions: cfg?.data?.config?.regions,
+        industries: cfg?.data?.config?.industries,
+        limit: cfg?.data?.config?.limit ?? 20
+      })
     });
     const body = await res.json();
     const secs = ((Date.now() - t0) / 1000).toFixed(1);

@@ -87,6 +87,12 @@ test('界面上不许再出现「超期」—— 和「逾期」是同一件事�
       const st = fs.statSync(p);
       if (st.isDirectory()) { walk(path.join(dir, name)); continue; }
       if (!/\.(tsx?|ts)$/.test(name)) continue;
+      /*
+        术语表自己要列出「超期 → 逾期」这条淘汰关系，所以它里面必然有「超期」。
+        把它排除掉 —— 否则这条测试会把"定义规矩的那个文件"判成违规。
+        （2026-09-15 建 glossary.ts 时当场撞上。）
+      */
+      if (name === 'glossary.ts') continue;
       const src = strip(fs.readFileSync(p, 'utf8'));
       if (src.includes('超期')) offenders.push(path.join(dir, name));
     }
@@ -103,7 +109,17 @@ test('「有逾期任务的项目」这个筛选名要和它数的东西对上',
     于是页面上「逾期任务数 5」（数任务）和「逾期未完成任务 0」（数项目）
     并存，两个都叫"任务"，人只会觉得系统不靠谱。
   */
+  /*
+    2026-09-15：这里原来钉的是字面量 `label: '有逾期任务的项目'`。
+    建了术语表之后改成引用常量 `label: TERM_PROJECT.withOverdueTask`，
+    这条就红了 —— **红得没道理，因为意图一点没变**。
+    这正是 CLAUDE.md 二点五里的形状 D：钉「怎么写的」而不是「要守住什么」。
+    改成两条都接受，真正要守的「名字和它数的东西对得上」由术语表保证。
+  */
   const src = code('pages/Projects.tsx');
-  assert.match(src, /label: '有逾期任务的项目'/, '筛选项名字又和它数的东西对不上了');
+  assert.ok(
+    /label: '有逾期任务的项目'/.test(src) || /label: TERM_PROJECT\.withOverdueTask/.test(src),
+    '筛选项名字又和它数的东西对不上了'
+  );
   assert.ok(!/label: '逾期未完成任务'/.test(src), '改回了那个名实不符的旧名字');
 });

@@ -1069,8 +1069,30 @@ const DEFAULT_INTEL_KIND_QUOTA = Object.freeze({
 });
 const DEFAULT_INTEL_REGIONS = ['温州', '苍南', '平阳', '龙港'];
 const DEFAULT_INTEL_INDUSTRIES = ['塑料编织制品制造业', '食包', '药材', '印刷', '食品', '餐饮'];
-const FOCUSED_INTEL_REGIONS = ['龙港', '苍南', '平阳'];
-const FOCUSED_INTEL_INDUSTRIES = ['食包', '印刷', '塑编'];
+/*
+  ── 界面默认的筛选范围（2026-09-15 放宽）────────────────────────
+
+  原来是龙港/苍南/平阳 + 食包/印刷/塑编 —— **窄到抓不到东西**。
+
+  金恩来连着几轮说「情报雷达还是无法正常抓取」，真相是它根本没坏：
+  接口返回的原话是「11 个情报源都抓到了正文，AI 也返回了，
+  但没解析出任何一条结构化情报（多半是今天这些页面上确实没有
+  和龙港、苍南、平阳／食包、印刷、塑编相关的新内容）」。
+
+  为什么会窄到这个地步：情报源里有认监委、CNAS、市场监管总局、
+  中国政府采购网 —— **全国性公告很少点名龙港/苍南/平阳**。
+  而一条「认监委注销 25 家检验检测机构资质」对信义是实打实的情报，
+  却因为没提到这三个镇被筛掉了。
+
+  而我的自检脚本调接口时传的是空参数，走的是更宽的 DEFAULT_*，
+  所以每次都抓到 20 条 —— **自检和真实界面用的不是同一套筛选条件，
+  于是自检永远是绿的**。这是"自检有盲区"的第三种形态。
+
+  改成和 DEFAULT_* 一致：加上温州（市级政策本来就该收），
+  行业补齐六个。人要收窄随时可以在筛选器里点。
+*/
+const FOCUSED_INTEL_REGIONS = DEFAULT_INTEL_REGIONS;
+const FOCUSED_INTEL_INDUSTRIES = DEFAULT_INTEL_INDUSTRIES;
 
 const { DEFAULT_INTEL_SOURCE_URLS } = require('./intelSources');  // 清单和淘汰记录都在那个文件里
 const REGION_FEATURED_INDUSTRIES = Object.freeze({

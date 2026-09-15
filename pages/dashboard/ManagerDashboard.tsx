@@ -45,7 +45,7 @@ const ManagerDashboard: React.FC<Props> = ({ metrics }) => (
       {
         key: 'load',
         title: '谁手上活多少',
-        subtitle: '按在制项目数排。派活之前先看这里，别只盯着好说话的那几个人。',
+        subtitle: '按进行中项目数排。派活之前先看这里，别只盯着好说话的那几个人。',
         icon: <Users className="w-5 h-5 text-blue-600" />,
         cards: metrics.middleCards,
         cols: 'grid-cols-2 md:grid-cols-4 xl:grid-cols-4',
@@ -54,7 +54,7 @@ const ManagerDashboard: React.FC<Props> = ({ metrics }) => (
       {
         key: 'totals',
         title: '整体盘子',
-        subtitle: '在制项目、有活在手的人数、未完成任务。',
+        subtitle: '进行中项目、有活在手的人数、未完成任务。',
         icon: <ClipboardList className="w-5 h-5 text-emerald-600" />,
         cards: metrics.bottomCards,
         cols: 'grid-cols-1 md:grid-cols-3'
