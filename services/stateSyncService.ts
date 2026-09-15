@@ -29,7 +29,29 @@ const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 let syncError = '';
 const listeners = new Set<() => void>();
 const report = (message: string) => { syncError = message; listeners.forEach(fn => fn()); };
+/*
+  ── 主动退出登录时不许再拦人（2026-09-15 修）────────────────────────
+
+  这个守卫本身是对的：有没保存的内容就别让人直接关页面。
+  但它把**主动退出**也拦住了，而且拦得很隐蔽：
+
+    点「退出登录」→ 清 cookie
+    → 队列里那笔防抖写入这时才发出 → 401 Login required
+    → failedPayload 置上、红条弹出「有内容尚未保存到服务器」
+    → handleLogout 最后的 reload 触发 beforeunload
+    → 这里看到 failedPayload，preventDefault，**页面不走了**
+
+  于是人停在原来的工作台上，看着一条看不懂的英文报错。
+  后果正是 handleLogout 那段注释当初要防的事故：
+  **共用电脑上退不出去，下一个人看到上一个人的数据。**
+
+  真正该做的是在清 cookie **之前**把待写内容落盘（那时还有登录态），
+  落完再放行。所以这里加一个显式的 signingOut 开关，
+  由 prepareSignOut() 打开 —— 不靠猜「这次 unload 是不是退出」。
+*/
+let signingOut = false;
 if (typeof window !== 'undefined') window.addEventListener('beforeunload', event => {
+  if (signingOut) return;
   if (inFlight || latestPayload || failedPayload) { event.preventDefault(); event.returnValue = ''; }
 });
 
@@ -76,7 +98,14 @@ const doSync = async (payload: SyncPayload) => {
   });
   const body = await res.json();
   const parsed = parseEnvelope(body);
-  if (!res.ok || !parsed.ok) throw new Error(parsed.message || `保存失败（${res.status}）`);
+  if (!res.ok || !parsed.ok) {
+    /*
+      401 直接把服务端的 'Login required' 抛给界面，人看到的就是一行英文。
+      项目规矩：给用户的文案要说清后果和下一步。
+    */
+    if (res.status === 401) throw new Error('登录已过期，这次没能保存。请重新登录后再试。');
+    throw new Error(parsed.message || `保存失败（${res.status}）`);
+  }
   // Keep the browser's own acknowledged view, not unseen remote rows.
   // Otherwise a later save would interpret unseen rows as local deletions.
   if (epoch === generation) for (const key of Object.keys(baseDatasets)) baselines.set(key, clone(datasets[key]));
@@ -113,6 +142,30 @@ export const stateSyncService = {
     if (syncTimer) clearTimeout(syncTimer);
     latestPayload = null; failedPayload = null; baselines.clear(); report('');
   },
+  /**
+   * 退出登录前把待写内容落盘，然后放行 unload。
+   *
+   * **必须在清 cookie 之前调用** —— 那时还有登录态，写得进去。
+   * 返回 false 表示有内容没保住，调用方该告诉人，而不是当没发生。
+   *
+   * 不管成没成，最后都把守卫关掉：人已经按了退出，
+   * 再拦着不让走只会让他停在一个登不出去的页面上（2026-09-15 就是这样）。
+   */
+  prepareSignOut: async (waitMs = 5000): Promise<boolean> => {
+    if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+    const deadline = Date.now() + Math.max(0, waitMs);
+    while ((inFlight || latestPayload) && Date.now() < deadline) {
+      if (!inFlight && latestPayload) await flush();
+      else await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    const saved = !latestPayload && !failedPayload && !inFlight;
+    signingOut = true;
+    generation++;                       // 还在飞的请求回来时别再动状态
+    latestPayload = null; failedPayload = null; baselines.clear(); report('');
+    return saved;
+  },
+  /** 取消退出（人在确认框里点了「取消」）—— 守卫要装回去 */
+  cancelSignOut: () => { signingOut = false; },
   subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   getSyncError: () => syncError,
   exportPending: () => clone(latestPayload || failedPayload || { datasets: {} }),

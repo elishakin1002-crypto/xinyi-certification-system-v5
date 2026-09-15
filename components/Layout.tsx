@@ -10,6 +10,7 @@ import HelpHub from './HelpHub';
 import { Menu, Bell, User, Search, ShieldCheck, ChevronDown, Users, Settings, LogOut, Eye, MessageSquare, Compass, MonitorSmartphone, AlertTriangle, X, HelpCircle, KeyRound } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { authService } from '../services/authService';
+import { stateSyncService } from '../services/stateSyncService';
 import { dataService } from '../services/dataService';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { SYSTEM_ROLES , ROLE_TO_PERSONA} from '../constants';
@@ -61,6 +62,40 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const handleLogout = async () => {
     if (isLoggingOut) return;
     setIsLoggingOut(true);
+    /*
+      ── 先落盘，再清 cookie（2026-09-15 修）────────────────────────
+
+      原来是直接 logout。问题出在时序上：
+      清了 cookie 之后，队列里那笔防抖写入才发出 → 401 →
+      红条「有内容尚未保存到服务器 Login required」弹出 →
+      最后的 reload 撞上 stateSyncService 的 beforeunload 守卫 →
+      **页面不走了，人停在原来的工作台上退不出去。**
+
+      共用电脑上退不出去 = 下一个人看到上一个人的数据，
+      正是这个按钮当初被加进来要防的事故。
+
+      落盘要在清 cookie 之前 —— 那时还有登录态，写得进去。
+      写不进去也要告诉人后果，让他选，而不是默默丢掉或默默卡住。
+    */
+    try {
+      const saved = await stateSyncService.prepareSignOut();
+      if (!saved) {
+        const go = window.confirm(
+          '有内容没能保存到服务器。\n\n'
+          + '现在退出的话，这部分内容会丢失。\n\n'
+          + '点「确定」仍然退出；点「取消」留在页面上，'
+          + '可以用红色提示条里的「导出未保存内容」先存一份交给管理员。'
+        );
+        if (!go) {
+          stateSyncService.cancelSignOut();
+          setIsLoggingOut(false);
+          return;
+        }
+      }
+    } catch (error) {
+      // 落盘这一步出错也不能卡住退出 —— 退不出去比丢一次草稿严重得多
+      console.warn('[logout] 落盘失败，仍然继续退出', error);
+    }
     try {
       await authService.logout();
     } catch (error) {
