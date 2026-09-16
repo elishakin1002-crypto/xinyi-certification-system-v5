@@ -15,13 +15,26 @@ function renderTimeline(target, limit) {
   $(target).innerHTML = items.length ? items.reverse().map(eventHtml).join('') : '<div class="empty">还没有协作记录</div>';
 }
 
+/*
+  「已完成」不能是默认值（2026-09-16）。
+
+  原来只有三档：执行中 / 已完成 / 待启动，而后端把「进程没了」
+  一律当成已完成。于是金总派的两条任务明明因为登录失效 5 秒就退出了，
+  面板照样给他看「已完成」—— 他以为活干完了。
+
+  失败必须是一个**显式的状态**，而且要把原因写在卡片上：
+  只说「失败」不告诉人为什么，他还是得去翻日志。
+*/
+const STATUS_LABEL = { running: '执行中', completed: '已完成', failed: '没跑成', queued: '待启动' };
+
 function renderTasks() {
   const items = state?.tasks || [];
   $('taskList').innerHTML = items.length ? items.map((task) => `
     <article class="task-item">
       <div class="task-id">${escapeHtml(task.id)}</div>
       <div><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(task.description)}</p><div class="task-meta"><span>${task.target === 'claude' ? 'Claude 总负责' : 'Codex 执行'}</span><span>${escapeHtml(task.priority)}</span>${task.scope ? `<span>${escapeHtml(task.scope)}</span>` : ''}</div></div>
-      <span class="task-status ${task.status}">${task.status === 'running' ? '执行中' : (task.status === 'completed' ? '已完成' : '待启动')}</span>
+      <span class="task-status ${task.status}">${STATUS_LABEL[task.status] || '待启动'}</span>
+      ${task.failureReason ? `<p class="task-failure">没跑成：${escapeHtml(task.failureReason)}</p>` : ''}
     </article>`).join('') : '<div class="empty">任务板还是空的。点“布置任务”建立第一项任务。</div>';
 }
 

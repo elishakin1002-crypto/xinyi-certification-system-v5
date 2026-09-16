@@ -71,6 +71,55 @@ function reportProgress() {
   };
 }
 
+/**
+ * 从任务日志里读出它到底成没成。
+ *
+ * ── 为什么要有这个（2026-09-16）────────────────────────────────
+ *
+ * 原来判「完成」只看进程还在不在：`process.kill(pid, 0)` 抛异常就标已完成。
+ * **进程退出 ≠ 任务完成。**
+ *
+ * 金总当天派了两条任务，面板都显示「已完成」，但一行代码没改、
+ * git 没有新提交。翻日志才看到：
+ *     "error":"authentication_failed"
+ *     "OAuth access token has been revoked"
+ * 两个后台 Claude 会话登录失效，5 秒就退出了，什么都没做。
+ *
+ * 而且日志最后那行本身就有坑：
+ *     {"subtype":"success", "is_error":true, "api_error_status":401}
+ * **subtype 写着 success，is_error 是 true** —— 只看 subtype 就会误判。
+ *
+ * 这正是这个项目反复踩的形状：**显示的是标志位，不是事实**。
+ * 一个会把失败报成成功的监督台，比没有监督台更糟 ——
+ * 人会以为活干完了，直到上线那天才发现没有。
+ */
+function readTaskOutcome(taskId) {
+  const logPath = path.join(runtimeDir, `${taskId}.log`);
+  const raw = read(logPath, '');
+  if (!raw.trim()) return { ok: false, reason: '没有任何输出，多半是根本没起来' };
+
+  // Claude 的 stream-json：最后一条 type=result 才是结论
+  let last = null;
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('{')) continue;
+    try { const o = JSON.parse(t); if (o.type === 'result') last = o; } catch { /* 半行/非 JSON，跳过 */ }
+  }
+  if (last) {
+    if (last.is_error || last.api_error_status) {
+      return { ok: false, reason: String(last.result || `接口返回 ${last.api_error_status}`).slice(0, 300) };
+    }
+    return { ok: true, reason: String(last.result || '').slice(0, 300) };
+  }
+
+  // Codex 走的是 codex-run.sh，纯文本日志：认里面的 ERROR / 退出码
+  if (/^ERROR:/m.test(raw)) return { ok: false, reason: (raw.match(/^ERROR:.*/m) || [''])[0].slice(0, 300) };
+  if (/跑完（退出码 0）/.test(raw)) return { ok: true, reason: '' };
+  if (/跑完（退出码 [1-9]/.test(raw)) return { ok: false, reason: (raw.match(/跑完（退出码 \d+）/) || [''])[0] };
+
+  return { ok: false, reason: '日志里没有可判定的结论 —— 当作没完成，别猜' };
+}
+
 function tasks() {
   try {
     const items = JSON.parse(read(taskFile, '[]'));
@@ -78,7 +127,14 @@ function tasks() {
     for (const item of items) {
       if (item.status !== 'running' || !item.pid) continue;
       try { process.kill(item.pid, 0); }
-      catch { item.status = 'completed'; item.completedAt = new Date().toISOString(); changed = true; }
+      catch {
+        // 进程没了只说明"跑完了"，成没成要去日志里看
+        const outcome = readTaskOutcome(item.id);
+        item.status = outcome.ok ? 'completed' : 'failed';
+        item.failureReason = outcome.ok ? undefined : outcome.reason;
+        item.completedAt = new Date().toISOString();
+        changed = true;
+      }
     }
     if (changed) saveTasks(items);
     return items;
