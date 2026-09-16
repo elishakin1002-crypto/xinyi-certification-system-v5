@@ -70,7 +70,8 @@ echo
 # -s workspace-write：只能改工作区，不联网装东西、不碰系统。
 # 「不许改业务代码」「不许跑破坏性命令」写在提示词里，那才是主防线。
 set +e
-codex exec -s workspace-write -C "$ROOT" "$(cat "$PROMPT_TXT")" 2>&1 | tee "$LOG"
+# < /dev/null：见 codex-ask.sh 里的说明，不加会停在等 stdin
+codex exec -s workspace-write -C "$ROOT" "$(cat "$PROMPT_TXT")" < /dev/null 2>&1 | tee "$LOG"
 CODE=${PIPESTATUS[0]}
 set -e
 
