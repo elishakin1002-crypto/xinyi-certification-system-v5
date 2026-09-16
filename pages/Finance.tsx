@@ -72,6 +72,33 @@ const Finance = () => {
     }
   }, [location.state]);
 
+  /**
+   * 一笔应收该显示成什么 —— 桌面和手机共用这一份。
+   *
+   * ── 为什么要收口（2026-09-16）────────────────────────────────
+   *
+   * 桌面表格和手机卡片各写各的，同一个状态两个说法：
+   *     已收到钱   桌面「已到账」   手机「已核销」
+   *     还没收到   桌面「待回款」   手机「待确认」
+   * 而顶上的筛选器写的是「待回款 / 已逾期 / 已到账」——
+   * 财务点「待回款」筛出来的行，在手机上每一行却写着「待确认」，
+   * 她没法判断这是不是同一件事。
+   *
+   * 「待确认」本身是个有用的词，但它只该用在**真的有人报备了已收款、
+   * 等财务核对**的那一种（r.paymentClaim）。用在所有未付款的行上，
+   * 就是词不达意 —— 那条根本没人报备过，就是还没收到钱。
+   *
+   * 金恩来 2026-09-15：「字段要和实际功能挂钩，不能词不达意。」
+   * 导出对账单也走这一份（STATUS_TEXT 已并进来），三处必然一致。
+   */
+  const receivableStatusLabel = (r: { displayStatus?: string; paymentClaim?: unknown; rejectionReason?: string }) => {
+    if (r.displayStatus === 'paid') return '已到账';
+    if (r.displayStatus === 'overdue') return '已逾期';
+    if (r.rejectionReason) return '被驳回';
+    if (r.paymentClaim) return '待确认';   // 有人报备了，等财务核对 —— 名副其实的那一种
+    return '待回款';                        // 和筛选器的说法一致
+  };
+
   /** 按自然日比较，和术语表 isReceivableOverdue 的口径一致 */
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -161,7 +188,7 @@ const Finance = () => {
       // 逗号、引号、换行都要包起来，否则一个带逗号的客户名就把整列错开
       return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
     };
-    const STATUS_TEXT: Record<string, string> = { paid: '已到账', overdue: '已逾期', unpaid: '待回款' };
+
     const header = ['到期日', '客户', '合同', '收款节点', '期数', '金额(元)', '状态'];
     const rows = filteredReceivables.map(r => [
       r.dueDate || '待定',
@@ -170,7 +197,7 @@ const Finance = () => {
       r.node,
       r.periodIndex ?? '',
       Number(r.amount || 0).toFixed(2),   // 已经是「元」，别再 ÷100
-      STATUS_TEXT[r.displayStatus] || r.displayStatus,
+      receivableStatusLabel(r),   // 和界面上显示的完全一致，不另起一套
     ].map(cell).join(','));
 
     const csv = '\uFEFF' + [header.map(cell).join(','), ...rows].join('\r\n');
@@ -484,13 +511,33 @@ const Finance = () => {
                                 <td className={`${tdClass} text-right font-mono font-black text-gray-900 text-base`}>¥{r.amount.toLocaleString()}</td>
                                 <td className={`${tdClass} text-center`}>
                                   {r.displayStatus === 'paid' ? (
-                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-green-100 text-green-800"><CheckCircle className="w-3 h-3 mr-1" /> 已核销</span>
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-green-100 text-green-800"><CheckCircle className="w-3 h-3 mr-1" /> {receivableStatusLabel(r)}</span>
                                   ) : r.displayStatus === 'overdue' ? (
-                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-red-100 text-red-800"><AlertCircle className="w-3 h-3 mr-1" /> 已逾期</span>
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-red-100 text-red-800"><AlertCircle className="w-3 h-3 mr-1" /> {receivableStatusLabel(r)}</span>
                                   ) : r.rejectionReason ? (
-                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-red-50 text-red-600 border border-red-100"><RefreshCcw className="w-3 h-3 mr-1" /> 被驳回</span>
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-red-50 text-red-600 border border-red-100"><RefreshCcw className="w-3 h-3 mr-1" /> {receivableStatusLabel(r)}</span>
+                                  ) : r.paymentClaim ? (
+                                    /*
+                                      「待确认」名副其实的那一种：有人报备了已收款，等财务核对到账。
+                                    */
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-yellow-100 text-yellow-800"><Clock className="w-3 h-3 mr-1" /> {receivableStatusLabel(r)}</span>
                                   ) : (
-                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-yellow-100 text-yellow-800"><Clock className="w-3 h-3 mr-1" /> 待确认</span>
+                                    /*
+                                      ── 没人报备的就叫「待回款」（2026-09-16 修）──────────────
+
+                                      这一支原来也写「待确认」，于是同一个状态在同一屏上有两个说法：
+                                          筛选器      「待回款」
+                                          行里的徽章  「待确认」
+                                      财务点「待回款」筛出来的行，每一行却写着「待确认」，
+                                      她没法判断这是不是同一件事。
+
+                                      而且「待确认」有误导：它听起来像"已经报备了、等我核对"，
+                                      实际上这条根本没人报备过 —— 就是还没收到钱。
+                                      真正该叫「待确认」的是上面那一支（有 paymentClaim）。
+
+                                      金恩来 2026-09-15：「字段要和实际功能挂钩，不能词不达意。」
+                                    */
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-gray-100 text-gray-700"><Clock className="w-3 h-3 mr-1" /> {receivableStatusLabel(r)}</span>
                                   )}
                                 </td>
                                 <td className={`${tdClass} text-right`}>
@@ -530,9 +577,10 @@ const Finance = () => {
                             </div>
                             <div className="flex justify-between items-center">
                                 <div>
-                                    {r.displayStatus === 'paid' ? <span className="text-green-600 text-xs flex items-center"><CheckCircle className="w-3 h-3 mr-1"/>已核销</span> : 
-                                     r.displayStatus === 'overdue' ? <span className="text-red-600 text-xs flex items-center"><AlertCircle className="w-3 h-3 mr-1"/>已逾期</span> : 
-                                     <span className="text-yellow-600 text-xs flex items-center"><Clock className="w-3 h-3 mr-1"/>待确认</span>}
+                                    {/* 文案走 receivableStatusLabel，和桌面表格、导出文件同一份 */}
+                                    {r.displayStatus === 'paid' ? <span className="text-green-600 text-xs flex items-center"><CheckCircle className="w-3 h-3 mr-1"/>{receivableStatusLabel(r)}</span> : 
+                                     r.displayStatus === 'overdue' ? <span className="text-red-600 text-xs flex items-center"><AlertCircle className="w-3 h-3 mr-1"/>{receivableStatusLabel(r)}</span> : 
+                                     <span className="text-gray-600 text-xs flex items-center"><Clock className="w-3 h-3 mr-1"/>{receivableStatusLabel(r)}</span>}
                                 </div>
                                 {r.displayStatus !== 'paid' ? (
                                     <button onClick={() => toggleReceivableStatus(r.contractId, r.id)} className="px-3 py-1 bg-blue-600 text-white text-xs rounded">确认</button>
