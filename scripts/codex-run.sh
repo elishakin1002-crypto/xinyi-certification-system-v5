@@ -47,7 +47,7 @@ PROMPT_TXT="$LOGDIR/$STAMP.prompt.txt"
 {
   # 对齐提交 —— 已经吃过一次亏：Codex 拿着旧副本，
   # 把我修掉的七条又报了一遍，白跑一轮。
-  echo "你在 $ROOT 工作。当前提交 $HEAD_SHA，开始前先 git log --oneline -5 确认你在这个提交上。"
+  echo "你在 $ROOT 工作。当前提交 ${HEAD_SHA}，开始前先 git log --oneline -5 确认你在这个提交上。"
   echo
   echo "【记流水账】每完成一段（或遇到卡点、或得出一条结论）就往 docs/协作日志.md 追加一行，格式："
   echo "    - HH:MM Codex：<一句话说清你做了什么、结论是什么>"
@@ -62,7 +62,7 @@ mkdir -p "$(dirname "$JOURNAL")"
 [ -f "$JOURNAL" ] || printf '# 协作日志\n\n> Claude 和 Codex 各自记一行。实时过程看 `.runtime/codex-logs/latest.log`。\n\n' > "$JOURNAL"
 printf -- '- %s Claude：派活给 Codex —— %s（基于提交 %s）\n' "$NOW" "$(basename "$PROMPT_FILE")" "$HEAD_SHA" >> "$JOURNAL"
 
-echo "→ 派给 Codex：$(basename "$PROMPT_FILE")（HEAD $HEAD_SHA）"
+echo "→ 派给 Codex：$(basename "$PROMPT_FILE")（HEAD ${HEAD_SHA}）"
 echo "→ 看直播：    tail -f .runtime/codex-logs/latest.log"
 echo "→ 看流水账：  docs/协作日志.md"
 echo
@@ -77,5 +77,5 @@ set -e
 
 printf -- '- %s Codex：这一段跑完（退出码 %s），过程见 .runtime/codex-logs/%s.log\n' "$(date +%H:%M)" "$CODE" "$STAMP" >> "$JOURNAL"
 echo
-echo "✅ 跑完（退出码 $CODE）。报告在 docs/ 下，流水账在 docs/协作日志.md"
+echo "✅ 跑完（退出码 ${CODE}）。报告在 docs/ 下，流水账在 docs/协作日志.md"
 exit "$CODE"

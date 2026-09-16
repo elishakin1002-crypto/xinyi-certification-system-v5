@@ -54,3 +54,4 @@ VERSION
 # Codex 协作产生的运行时日志（过程留本机，结论进 docs/）
 .runtime/codex-logs/
 .runtime/codex-dispatch.out
+run-codex-now.sh
