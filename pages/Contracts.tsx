@@ -436,6 +436,27 @@ const Contracts = () => {
     alert('项目已创建，可在「项目管理」中继续推进。');
   };
   const handleGoToProject = (e: React.MouseEvent) => { e.stopPropagation(); navigate('/projects'); }
+  /*
+    ── 文件类型徽标只放扩展名（2026-09-16 修）────────────────────
+
+    原来这两处直接把 `file.type` 渲染进一个 32×32（另一处 24×24）的小方块，
+    而 file.type 存的是完整 MIME：`application/pdf`。
+    十五个字符塞进两行高的方块里，整条溢出来压在文件名上 ——
+    金总截图里那个「CATION/PDF」就是 "application/pdf" 被裁剩的后半截。
+
+    这类问题 tsc 和测试都拦不住：类型对、值也对，只是放不下。
+    只能靠有人真看一眼。
+
+    取扩展名优先用**文件名**：MIME 有 `application/vnd.openxmlformats-…`
+    这种长得离谱的，从里面截出来的字母没有意义（docx 会变成 "VND"）。
+  */
+  const fileTypeBadge = (file: { name?: string; type?: string }) => {
+    const ext = String(file?.name || '').split('.').pop() || '';
+    if (ext && ext.length <= 4 && ext !== file?.name) return ext.toUpperCase();
+    const sub = String(file?.type || '').split('/').pop() || '';
+    return (sub.length <= 4 ? sub : sub.slice(0, 4)).toUpperCase() || '文件';
+  };
+
   const resolvePreviewTarget = (file: ContractAttachment): { kind: 'pdf' | 'image'; url: string } | null => {
     const lowerType = String(file.type || '').toLowerCase();
     const lowerName = String(file.name || '').toLowerCase();
@@ -1525,7 +1546,7 @@ const Contracts = () => {
                                             {contract.attachments && contract.attachments.length > 0 ? contract.attachments.map(file => ( 
                                                 <div key={file.id} className="flex items-center justify-between p-2 bg-white border border-gray-200 rounded-lg hover:shadow-sm transition-shadow"> 
                                                     <div className="flex items-center overflow-hidden"> 
-                                                        <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center shrink-0 text-xs font-black text-gray-500 uppercase mr-3"> {file.type} </div> 
+                                                        <div title={file.type} className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center shrink-0 text-[10px] leading-none font-black text-gray-500 uppercase mr-3 overflow-hidden">{fileTypeBadge(file)}</div> 
                                                         <div className="min-w-0"> <div className="text-sm font-bold text-gray-900 truncate max-w-[120px]" title={file.name}>{file.name}</div> <div className="text-xs text-gray-400">{file.size} • {file.uploadDate}</div> </div> 
                                                     </div> 
                                                     <div className="flex space-x-1"> 
@@ -1626,7 +1647,7 @@ const Contracts = () => {
                                       {contract.attachments && contract.attachments.length > 0 ? contract.attachments.map(file => (
                                           <div key={file.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
                                               <div className="flex items-center overflow-hidden mr-2">
-                                                  <div className="w-6 h-6 bg-white rounded flex items-center justify-center text-xs font-black text-gray-500 border border-gray-200 uppercase shrink-0 mr-2">{file.type}</div>
+                                                  <div title={file.type} className="w-6 h-6 bg-white rounded flex items-center justify-center text-[9px] leading-none font-black text-gray-500 border border-gray-200 uppercase shrink-0 mr-2 overflow-hidden">{fileTypeBadge(file)}</div>
                                                   <div className="truncate text-xs font-bold text-gray-700">{file.name}</div>
                                               </div>
                                               <div className="flex space-x-1">

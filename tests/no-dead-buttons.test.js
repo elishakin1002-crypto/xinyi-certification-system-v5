@@ -79,7 +79,13 @@ const buttons = (src) => {
 
 test('界面上不许有「点了什么都不发生」的按钮', () => {
   const offenders = [];
-  for (const f of [...walk('pages'), ...walk('components')]) {
+  /*
+    src/ui 也要扫（2026-09-16 补）。
+    Codex 独立核查了 components/ 和 src/ui/ 共 23 个文件、92 处按钮，
+    结论是 0 处死按钮。我把 src/ui 加进扫描范围做交叉验证 ——
+    「它说没有」和「我也扫过没有」是两回事，后者才钉得住。
+  */
+  for (const f of [...walk('pages'), ...walk('components'), ...walk('src/ui')]) {
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     for (const b of buttons(src)) {
       // 接了任何一种点击处理，就算活的
