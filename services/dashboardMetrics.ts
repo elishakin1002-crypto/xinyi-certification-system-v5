@@ -273,6 +273,8 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
   const avgInProgress = owners.length > 0 ? activeProjects.length / owners.length : 0;
   const openTasks = openTasksOf(inputs.projects);
   const delayedTasks = openTasks.filter(t => isOverdue(t, now.getTime()));   // 判逾期只用 taskFlow.isOverdue 一份
+  /** 进行中、且名下有逾期任务的项目 —— 口径见 glossary 的 TERM_PROJECT.withOverdueTask */
+  const delayedProjects = activeProjects.filter(p => (p.tasks || []).some(t => isOpenTask(t) && isOverdue(t, now.getTime())));
   const weekStart = new Date(now);
   weekStart.setDate(now.getDate() - 6);
   /*
@@ -331,7 +333,23 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
     ],
     bottomCards: [
       { id: 'boss-capacity', title: `人均${TERM_PROJECT.active}数`, value: avgInProgress.toFixed(2), route: `${APP_ROUTES.PROJECTS}?view=team` },
-      { id: 'boss-delay-rate', title: '项目延误率', value: rate(delayedTasks.length, openTasks.length), route: `${APP_ROUTES.PROJECTS}?filter=delay` },
+      /*
+        ── 「项目延误率」要数项目，不是数任务（2026-09-16 修）──────────
+
+        这张卡原来算的是 rate(delayedTasks, openTasks) —— **任务**的比例，
+        标题却写「**项目**延误率」。库里 3 条逾期任务 / 10 条未完成任务
+        显示成 30.0%，而实际是 2 个项目里有 2 个出了问题（100%）。
+        老板照这个数字判断"团队还好"，其实手上每个项目都在延。
+
+        和 2026-09-16 上午修的项目卡片是同一类：
+        **标签念出来，和它旁边那个数字对不上**。
+        而且它左右两张卡（人均进行中项目数、本周日志覆盖率）都是项目口径，
+        夹在中间的这张数任务，人更不会察觉。
+
+        口径用术语表的 TERM_PROJECT.withOverdueTask：
+        进行中、且名下有逾期任务的项目 ÷ 进行中项目。
+      */
+      { id: 'boss-delay-rate', title: '项目延误率', value: rate(delayedProjects.length, activeProjects.length), route: `${APP_ROUTES.PROJECTS}?filter=delay` },
       // 必须带 range=7d：不带的话下钻看的是「任何时候有日志的项目」，
       // 而指标算的是本周，点进去的列表和卡片上的数字对不上。
       { id: 'boss-log-coverage', title: '本周日志覆盖率', value: rate(weekLogProjects.size, activeProjects.length), route: `${APP_ROUTES.PROJECTS}?tab=logs&range=7d` }

@@ -56,3 +56,5 @@ VERSION
 .runtime/qa-supervisor/
 .runtime/codex-dispatch.out
 run-codex-now.sh
+.runtime/ui-shots/
+.runtime/pw/
