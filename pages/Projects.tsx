@@ -1616,9 +1616,30 @@ const Projects = () => {
                   <CheckCircle className="w-4 h-4 mr-1.5" /> 标记完成
                 </button>
               )}
+              {/*
+                ── 「发起结算」暂时没有可接的动作（2026-09-16）──────────────
+
+                这个按钮原来是个壳：没有 onClick、不在表单里，点了什么都不发生，
+                而它是绿色主按钮、带播放图标、有 hover ——
+                看起来比页面上任何一个按钮都像"能用"。
+
+                查过了：这个系统里结算只能从 Excel 导入（AppContext 的
+                importSettlements），**没有"在应用内新建一笔结算"这个动作**。
+                所以不能硬接一个，硬接出来的是假功能。
+
+                改成两件事：
+                  · 文案说实话（「结算从 Excel 导入」），不再冒充可执行动作
+                  · 给出口 —— 点它跳到结算页，那里才是真正能做事的地方
+                规矩是：不许留「看起来能用、点了没反应」这第三种状态。
+              */}
               {canSeeSettlement && (
-                <button className="w-full md:w-auto bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center hover:bg-green-700 transition-all active:scale-95 shadow-md shadow-green-200">
-                  <PlayCircle className="w-4 h-4 mr-1.5" /> 发起结算
+                <button
+                  type="button"
+                  onClick={() => navigate('/finance/settlements')}
+                  title="本系统的结算通过 Excel 批量导入，点此前往结算页"
+                  className="w-full md:w-auto border border-green-600 text-green-700 bg-white px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center hover:bg-green-50 transition-all active:scale-95"
+                >
+                  <PlayCircle className="w-4 h-4 mr-1.5" /> 结算从 Excel 导入
                 </button>
               )}
             </div>

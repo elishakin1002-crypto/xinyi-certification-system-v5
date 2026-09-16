@@ -33,7 +33,7 @@ function renderTasks() {
     <article class="task-item">
       <div class="task-id">${escapeHtml(task.id)}</div>
       <div><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(task.description)}</p><div class="task-meta"><span>${task.target === 'claude' ? 'Claude 总负责' : 'Codex 执行'}</span><span>${escapeHtml(task.priority)}</span>${task.scope ? `<span>${escapeHtml(task.scope)}</span>` : ''}</div></div>
-      <span class="task-status ${task.status}">${STATUS_LABEL[task.status] || '待启动'}</span>
+      <div class="task-actions"><span class="task-status ${task.status}">${STATUS_LABEL[task.status] || '待启动'}</span><button class="quiet view-task" data-task-id="${task.id}">查看详情</button></div>
       ${task.failureReason ? `<p class="task-failure">没跑成：${escapeHtml(task.failureReason)}</p>` : ''}
     </article>`).join('') : '<div class="empty">任务板还是空的。点“布置任务”建立第一项任务。</div>';
 }
@@ -87,12 +87,24 @@ document.querySelectorAll('.filter').forEach((button) => button.addEventListener
 }));
 $('refresh').addEventListener('click', refresh);
 const dialog = $('taskDialog');
+const detailDialog = $('detailDialog');
 const openDialog = () => { $('taskError').textContent = ''; dialog.showModal(); };
 const closeDialog = () => dialog.close();
 $('newTask').addEventListener('click', openDialog);
 document.querySelectorAll('.open-task').forEach((button) => button.addEventListener('click', openDialog));
 $('closeTask').addEventListener('click', closeDialog);
 $('cancelTask').addEventListener('click', closeDialog);
+$('closeDetail').addEventListener('click', () => detailDialog.close());
+detailDialog.addEventListener('click', (event) => { if (event.target === detailDialog) detailDialog.close(); });
+document.addEventListener('click', async (event) => {
+  const button = event.target.closest('.view-task');
+  if (!button) return;
+  $('detailBody').innerHTML = '<div class="empty">正在读取任务证据…</div>'; detailDialog.showModal();
+  const response = await fetch(`/api/tasks/${button.dataset.taskId}`, { cache: 'no-store' });
+  const task = await response.json();
+  const resultText = task.status === 'failed' ? `失败：${task.failureReason || task.outcome?.reason || '未取得原因'}` : (task.status === 'completed' ? `成功：${task.outcome?.reason || '进程正常完成'}` : STATUS_LABEL[task.status]);
+  $('detailBody').innerHTML = `<div class="detail-summary ${task.status}"><strong>${escapeHtml(resultText)}</strong><span>${escapeHtml(task.id)} · ${task.target === 'claude' ? 'Claude' : 'Codex'}</span></div><dl><dt>任务</dt><dd>${escapeHtml(task.title)}</dd><dt>要做什么</dt><dd>${escapeHtml(task.description)}</dd><dt>验收标准</dt><dd>${escapeHtml(task.acceptance)}</dd><dt>时间</dt><dd>${new Date(task.createdAt).toLocaleString('zh-CN')} ${task.completedAt ? `— ${new Date(task.completedAt).toLocaleString('zh-CN')}` : ''}</dd></dl><h3>原始执行记录</h3><pre class="task-log">${escapeHtml((task.logLines || []).join('\n') || '没有任何输出')}</pre>`;
+});
 dialog.addEventListener('click', (event) => { if (event.target === dialog) closeDialog(); });
 $('taskForm').elements.runNow.addEventListener('change', (event) => {
   $('taskForm').querySelector('[type="submit"]').textContent = event.target.checked ? '立即启动' : '加入任务板';

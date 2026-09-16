@@ -130,6 +130,58 @@ const Finance = () => {
     if (dashboardFocus.type === 'progress_abnormal') return Number(receivable.contractAmount || 0) > 0 && Number(receivable.amount || 0) / Number(receivable.contractAmount || 1) > 0.5;
     return true;
   };
+  /*
+    ── 导出对账单（2026-09-16 补）────────────────────────────────
+
+    这个按钮原来**只是个壳**：没有 onClick、不在表单里，点下去什么都不发生。
+    而它长得和能用的按钮一模一样（白底描边、带下载图标、有 hover），
+    财务点了会以为系统坏了，或者以为导出失败了去找人。
+
+    导的是**当前筛选后的结果**，不是全量 —— 人筛了半天状态和月份，
+    导出却给他一整本，那这个按钮等于没用。
+
+    金额**不要再换算**。库里存的确实是「分」（CLAUDE.md 第 4 条），
+    但仓储层 `kind: 'amount'` 已经自动 ÷100 过一次，
+    到前端时 r.amount 就是「元」了 —— 页面上那个 ¥18,000 就是这么来的。
+
+    我第一版在这里又除了一次 100，导出来变成 100.00 / 80.00，
+    小了一百倍。是导出后打开文件对了一眼数字才发现的 ——
+    「改完要验原本正常的东西还正常」，这次验的是我自己刚写的东西。
+
+    加 BOM：Excel 打开无 BOM 的 UTF-8 CSV 会把中文显示成乱码，
+    而这份文件就是给人用 Excel 打开的。
+  */
+  const exportReceivables = () => {
+    if (filteredReceivables.length === 0) {
+      alert('当前筛选条件下没有应收记录，先放宽筛选再导出。');
+      return;
+    }
+    const cell = (v: unknown) => {
+      const text = String(v ?? '');
+      // 逗号、引号、换行都要包起来，否则一个带逗号的客户名就把整列错开
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+    const STATUS_TEXT: Record<string, string> = { paid: '已到账', overdue: '已逾期', unpaid: '待回款' };
+    const header = ['到期日', '客户', '合同', '收款节点', '期数', '金额(元)', '状态'];
+    const rows = filteredReceivables.map(r => [
+      r.dueDate || '待定',
+      r.customerName,
+      r.contractTitle,
+      r.node,
+      r.periodIndex ?? '',
+      Number(r.amount || 0).toFixed(2),   // 已经是「元」，别再 ÷100
+      STATUS_TEXT[r.displayStatus] || r.displayStatus,
+    ].map(cell).join(','));
+
+    const csv = '\uFEFF' + [header.map(cell).join(','), ...rows].join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `应收对账单-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const filteredReceivables = allReceivables
     .filter(r => {
       if (filterStatus !== 'all' && r.displayStatus !== filterStatus) return false;
@@ -379,7 +431,7 @@ const Finance = () => {
 	                    </div> 
                     <div className="flex items-center space-x-3 w-full md:w-auto"> 
                         <div className="relative w-full md:w-64"> <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" /> <input type="text" value={receivableQuery} onChange={(e) => setReceivableQuery(e.target.value)} placeholder="搜索客户/节点/合同..." className="pl-9 pr-4 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-full" /> </div> 
-                        <button className="flex items-center px-3 py-1.5 text-sm border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 shrink-0"> <Download className="w-4 h-4 mr-2" /> <span className="hidden md:inline">导出对账单</span> <span className="md:hidden">导出</span> </button> 
+                        <button type="button" onClick={exportReceivables} title={`导出当前筛选的 ${filteredReceivables.length} 条应收记录`} className="flex items-center px-3 py-1.5 text-sm border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 shrink-0"> <Download className="w-4 h-4 mr-2" /> <span className="hidden md:inline">导出对账单</span> <span className="md:hidden">导出</span> </button> 
                     </div> 
                 </div> 
                 

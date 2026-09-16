@@ -1079,7 +1079,16 @@ const Customers = () => {
                                 </div>
                               </td>
                             )}
-                            <td className={`${tdClass} text-right`}> <button className="text-gray-400 hover:text-blue-600 p-2 hover:bg-blue-50 rounded-lg transition-colors"> <MoreHorizontal className="w-5 h-5" /> </button> </td>
+                            {/*
+                              图标从「⋯」换成「›」（2026-09-16）。
+
+                              「⋯」在所有系统里都表示「更多操作菜单」，
+                              而这里点下去并没有菜单 —— 事件冒泡到整行的 onClick，
+                              打开的是客户详情。不算坏，但名不副实，
+                              而且线索页同一位置用的就是「›」，两页不一致。
+                              「›」的含义正是「打开这一行」，和实际行为对得上。
+                            */}
+                            <td className={`${tdClass} text-right`}> <button type="button" aria-label="查看客户详情" className="text-gray-400 hover:text-blue-600 p-2 hover:bg-blue-50 rounded-lg transition-colors"> <ChevronRight className="w-5 h-5" /> </button> </td>
                         </tr>
                     )} />
                 </tbody>

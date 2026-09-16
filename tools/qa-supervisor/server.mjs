@@ -145,6 +145,15 @@ function saveTasks(items) {
   fs.writeFileSync(taskFile, `${JSON.stringify(items, null, 2)}\n`);
 }
 
+function taskDetail(id) {
+  const task = tasks().find((item) => item.id === id);
+  if (!task) return null;
+  const logPath = path.join(runtimeDir, `${id}.log`);
+  const logLines = redact(read(logPath, '')).split('\n').filter(Boolean);
+  const outcome = task.status === 'running' || task.status === 'queued' ? null : readTaskOutcome(id);
+  return { ...task, outcome, logLines: logLines.slice(-160) };
+}
+
 function taskPrompt(task) {
   return `# 监督台任务：${task.title}\n\n` +
     `- 发起人：金总\n- 负责人：${task.target === 'claude' ? 'Claude 总负责人' : 'Codex 执行员'}\n` +
@@ -248,6 +257,13 @@ const server = http.createServer((req, res) => {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ error: error.message || '创建任务失败' }));
     });
+    return;
+  }
+  const taskMatch = url.pathname.match(/^\/api\/tasks\/(T-[A-Z0-9]+)$/);
+  if (taskMatch && req.method === 'GET') {
+    const detail = taskDetail(taskMatch[1]);
+    res.writeHead(detail ? 200 : 404, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(detail || { error: '找不到任务' }));
     return;
   }
   const requested = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
