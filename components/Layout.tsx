@@ -341,12 +341,30 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     显示一次就清掉 location.state —— 否则刷新还在，人会以为又被拦了一次。
   */
   const [accessDenied, setAccessDenied] = useState<{ path: string; reason: string } | null>(null);
+  const deniedLandedAt = React.useRef('');
   useEffect(() => {
     const denied = (location.state as any)?.accessDenied;
     if (!denied) return;
     setAccessDenied(denied);
+    deniedLandedAt.current = location.pathname;
     navigate(location.pathname + location.search, { replace: true, state: null });
   }, [location.state]);
+
+  /*
+    ── 人走开了就把这条提示收掉（2026-09-16 补）────────────────────
+
+    这条提示原来只有点 × 才消失。于是顾问被拦一次之后，
+    他去线索、客户、项目每一页，头顶都还顶着
+    「打不开「/finance」，已回到工作台」——
+    而他早就不在工作台了，看着像又被拦了一次。
+
+    是我自己跑权限矩阵时发现的：顾问明明进得去线索管理
+    （正文两万多字，内容都加载出来了），脚本却判成"被拦"，
+    因为那条提示还挂在上面。**测不准是因为界面本身在说假话。**
+  */
+  useEffect(() => {
+    if (accessDenied && location.pathname !== deniedLandedAt.current) setAccessDenied(null);
+  }, [location.pathname]);
 
   /*
     ── 「搜索」按钮点了没反应（2026-09-15 修）────────────────────────

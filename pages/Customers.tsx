@@ -905,15 +905,38 @@ const Customers = () => {
 
   const openRejectModal = (contractId: string, receivableId: string, amount: number, customer: string) => { setRejectData({ contractId, receivableId, amount, customer }); setIsRejectModalOpen(true); };
 
-  // 顶部概览：客户总数、在执行合同、高风险、累计金额
-  const customerStats = useMemo(() => ({
-    total: customers.length,
-    activeContracts: customers.reduce((sum, c) => sum + Number(c.activeContracts || 0), 0),
-    highRisk: customers.filter(c => c.riskStatus === 'high').length,
-    // 用 totalAmount（历史累计消费），不是 totalValue（客户价值预估）——
-    // 标签写的是「累计合作金额」，之前误用 totalValue，数字虚高 6 倍。
-    totalAmount: customers.reduce((sum, c) => sum + Number(c.totalAmount || 0), 0)
-  }), [customers]);
+  /*
+    顶部概览：客户总数、在执行合同、高风险、累计金额。
+
+    ── 「在执行合同」和「累计合作金额」从真实合同算（2026-09-16 修）────
+
+    这两个数原来读的是**客户表上那份冗余统计**（c.activeContracts /
+    c.totalAmount）—— 一份要靠"建合同时记得回头去更新客户"才准的数据。
+    而合同识别建客户时根本没写这两个字段，于是它们永远是 0。
+
+    金恩来库里明明躺着一份 18000 元的在执行合同，客户管理却显示
+        在执行合同 0        累计合作金额 ¥0
+    这是「显示的是标志位，不是事实」的又一例（和"合同说已立项、
+    项目管理里没有"、"点了已分拣刷新变回待处理"同类）。
+
+    冗余字段的通病：**写的人和读的人不是同一段代码**，
+    只要有一条写入路径忘了更新，这个数就永远错，而且不报错。
+    合同就在 contracts 里，当场数一遍是 O(n) 的事，
+    没有任何理由去信一份可能没人维护的缓存。
+
+    「累计合作金额」的口径保持不变：算**所有**合同（含已完成），
+    这是"历史一共做了多少钱"，不是"现在还在执行多少"。
+  */
+  const customerStats = useMemo(() => {
+    const customerIds = new Set(customers.map(c => c.id));
+    const mine = contracts.filter(ct => customerIds.has(String(ct.customerId || '')));
+    return {
+      total: customers.length,
+      activeContracts: mine.filter(ct => ct.status === Status.Active).length,
+      highRisk: customers.filter(c => c.riskStatus === 'high').length,
+      totalAmount: mine.reduce((sum, ct) => sum + Number(ct.amount || 0), 0)
+    };
+  }, [customers, contracts]);
 
   /**
    * 客户财务信息可见性。
