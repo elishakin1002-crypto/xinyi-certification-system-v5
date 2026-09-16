@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="信义认证系统 Claude × Codex 上线巡检监督面板" />
+  <title>信义 QA 监督台</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand"><span class="brand-mark">信</span><div><strong>信义 QA</strong><small>协作监督台</small></div></div>
+      <nav aria-label="监督台导航">
+        <button class="nav-item active" data-view="overview"><span>⌁</span>总览</button>
+        <button class="nav-item" data-view="tasks"><span>＋</span>任务中心</button>
+        <button class="nav-item" data-view="timeline"><span>↕</span>协作对话</button>
+        <button class="nav-item" data-view="evidence"><span>▣</span>现场记录</button>
+        <button class="nav-item" data-view="cost"><span>◒</span>Token 成本</button>
+      </nav>
+      <div class="rail-note"><span class="pulse-dot"></span><div><strong>本机只读</strong><small>每 3 秒同步</small></div></div>
+    </aside>
+
+    <main>
+      <header>
+        <div><p class="eyebrow">RELEASE CONTROL ROOM</p><h1>上线巡检监督台</h1></div>
+        <div class="header-actions"><button id="newTask" class="primary-action">＋ 布置任务</button><span id="commit" class="commit">—</span><span id="liveBadge" class="badge">正在连接</span></div>
+      </header>
+
+      <section id="overview" class="view active">
+        <div class="summary-grid">
+          <article class="metric primary"><span>页面矩阵</span><strong id="cellsMetric">—</strong><div class="progress"><i id="cellsBar"></i></div><small>六角色 × 应测页面</small></article>
+          <article class="metric"><span>可点入口</span><strong id="buttonsMetric">—</strong><div class="progress"><i id="buttonsBar"></i></div><small id="buttonBasis">以纠偏清单为准</small></article>
+          <article class="metric"><span>当前责任人</span><strong id="ownerMetric">—</strong><small id="ownerDetail">等待协作记录</small></article>
+          <article class="metric warning"><span>需要关注</span><strong id="blockedMetric">—</strong><small id="blockedDetail">没有读取到卡点</small></article>
+        </div>
+
+        <div class="work-grid">
+          <section class="panel timeline-panel">
+            <div class="panel-head"><div><p class="kicker">VISIBLE HANDOFF</p><h2>Claude ↔ Codex</h2></div><button id="refresh" class="quiet">立即同步</button></div>
+            <div id="timelineList" class="timeline"></div>
+          </section>
+
+          <aside class="right-stack">
+            <section class="panel roles">
+              <div class="panel-head"><div><p class="kicker">CLEAR OWNERSHIP</p><h2>职责边界</h2></div></div>
+              <div class="role"><div class="avatar claude">C</div><div><strong>Claude · 总负责人</strong><p>派单、判断、改代码、写回归测试</p></div></div>
+              <div class="role"><div class="avatar codex">X</div><div><strong>Codex · 执行员</strong><p>界面巡检、数据对账、脚本与报告</p></div></div>
+              <div class="role"><div class="avatar boss">金</div><div><strong>金总 · 监督与裁决</strong><p>改优先级、定口径、批准上线</p></div></div>
+            </section>
+            <section class="panel token-card">
+              <div class="panel-head"><div><p class="kicker">LEAN CONTEXT</p><h2>低 Token 模式</h2></div><span class="good">已启用</span></div>
+              <div class="token-number"><strong id="tokenEstimate">—</strong><span>本地日志等价 Token（未发送）</span></div>
+              <ul><li>面板刷新：0 Token</li><li>代理只交换摘要和证据路径</li><li>完整日志留本机，按需读取</li></ul>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section id="tasks" class="view"><section class="panel full"><div class="panel-head"><div><p class="kicker">ASSIGN & REVIEW</p><h2>任务中心</h2></div><button class="primary-action open-task">＋ 布置任务</button></div><div class="connection-row"><span id="claudeConnection">Claude：检测中</span><span id="codexConnection">Codex：检测中</span></div><div class="task-guide"><strong>怎么用</strong><span>1. 写任务和验收标准</span><span>2. 选 Claude 或 Codex</span><span>3. 先加入任务板，确认后再立即执行</span></div><div id="taskList" class="task-list"></div></section></section>
+
+      <section id="timeline" class="view"><section class="panel full"><div class="panel-head"><div><p class="kicker">AUDIT TRAIL</p><h2>完整协作对话</h2></div><div class="filters"><button class="filter active" data-actor="all">全部</button><button class="filter" data-actor="Claude">Claude</button><button class="filter" data-actor="Codex">Codex</button></div></div><div id="fullTimeline" class="timeline roomy"></div></section></section>
+
+      <section id="evidence" class="view"><section class="panel full"><div class="panel-head"><div><p class="kicker">LOCAL EVIDENCE</p><h2>Codex 现场记录</h2></div><span id="logUpdated" class="muted">—</span></div><pre id="logViewer">正在读取本地日志…</pre></section></section>
+
+      <section id="cost" class="view"><div class="cost-grid"><section class="panel full"><p class="kicker">WHAT COSTS TOKENS</p><h2>Token 增量从哪里来</h2><div class="cost-rows"><div><strong>监督面板</strong><span class="good">0</span><p>读取本地文件并展示，不请求模型。</p></div><div><strong>结构化派单</strong><span>低</span><p>每轮只发送目标、验收条件和证据索引。</p></div><div><strong>双重判断</strong><span>中</span><p>Claude 复核 Codex 结论会增加一次模型阅读。</p></div><div><strong>重复传完整日志</strong><span class="danger">高</span><p>默认禁用；完整日志只在争议时按需读取。</p></div></div></section><section class="panel full recommendation"><p class="kicker">BUDGET RULE</p><h2>建议控制线</h2><strong>协作增量控制在 10%–25%</strong><p>日常派单只传 5 项：任务、角色、页面、验收条件、证据路径。出现争议才升级为双方阅读全文和对质。</p></section></div></section>
+    </main>
+  </div>
+
+  <dialog id="taskDialog" class="task-dialog">
+    <form id="taskForm">
+      <div class="dialog-head"><div><p class="kicker">NEW ASSIGNMENT</p><h2>布置任务</h2></div><button type="button" id="closeTask" class="icon-button" aria-label="关闭">×</button></div>
+      <label>任务名称<input name="title" maxlength="80" placeholder="例如：重测顾问工作流的任务状态" required /></label>
+      <div class="form-row"><label>负责人<select name="target"><option value="claude">Claude · 总负责人（判断、修代码、派复测）</option><option value="codex">Codex · 执行员（巡检、对账、脚本、报告）</option></select></label><label>优先级<select name="priority"><option>P1</option><option selected>P2</option><option>P3</option><option>P0</option></select></label></div>
+      <label>角色 / 页面<input name="scope" maxlength="120" placeholder="例如：咨询顾问 / 项目管理、我的任务" /></label>
+      <label>具体要做什么<textarea name="description" rows="4" placeholder="写清操作范围、允许做什么、禁止做什么" required></textarea></label>
+      <label>验收标准<textarea name="acceptance" rows="4" placeholder="例如：刷新并等待 60 秒后状态仍保留；换总助账号可见" required></textarea></label>
+      <label class="run-choice"><input type="checkbox" name="runNow" /><span><strong>立即启动负责人</strong><small>勾选后提交会开始消耗 Token；不勾选只加入任务板。</small></span></label>
+      <p class="connection-help">第一次启动 Claude 会建立“信义-QA-总负责人”长期会话；后续任务会继续交给同一个 Claude。若尚未登录 Claude Code，请先在终端运行 <code>claude</code> 完成登录。</p>
+      <p id="taskError" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" id="cancelTask" class="quiet">取消</button><button type="submit" class="primary-action">加入任务板</button></div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
