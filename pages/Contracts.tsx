@@ -5,6 +5,7 @@ import { guessCompanyFromContractTitle } from '../src/modules/companyFromTitle';
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { isMyContract } from '../src/modules/ownership';
+import { findProjectByContract } from '../src/modules/contractLink';
 import { SampleTr } from '../components/SampleRow';
 import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search, FileSpreadsheet, Sparkles} from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -373,7 +374,7 @@ const Contracts = () => {
       }
     }, 50);
   };
-  const getLinkedProject = (contract: Contract) => projects.find(p => p.contractRef === contract.id || p.contractRef === contract.contractNo);
+  const getLinkedProject = (contract: Contract) => findProjectByContract(projects, contract);
   const defaultDeadline = () => {
     const d = new Date();
     d.setDate(d.getDate() + 90);
@@ -1153,7 +1154,7 @@ const Contracts = () => {
       if (contractScope !== 'related') return true;
       const owner = String((c as any).owner || '').trim();
       if (owner) return owner === currentUser.name;
-      const linked = projects.find(p => p.contractRef === c.id || p.contractRef === c.contractNo);
+      const linked = findProjectByContract(projects, c);
       return linked ? String(linked.manager || '') === currentUser.name : false;
     });
     const live = scoped.filter(c => c.archiveStatus !== ARCHIVE_STATUS.ARCHIVED);

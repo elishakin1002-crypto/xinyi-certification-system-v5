@@ -2,6 +2,7 @@ import { SampleList } from '../components/SampleRow';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { buildLessonDoc, isLessonWorthKeeping } from '../src/modules/knowledge/lessons';
+import { findContractByRef, findProjectByContract } from '../src/modules/contractLink';
 import { SampleTr } from '../components/SampleRow';
 import { AuditEvidence, AuditIssue, KnowledgeDoc } from '../types';
 import {
@@ -268,7 +269,7 @@ const buildRelationSnapshot = (
 ) => {
   const resolveProjectContract = (project?: { contractRef?: string }) => {
     if (!project?.contractRef) return undefined;
-    return contracts.find(contract => contract.id === project.contractRef || contract.contractNo === project.contractRef);
+    return findContractByRef(contracts, project.contractRef);
   };
 
   const resolveProjectCustomerId = (project?: { customerId?: string; contractRef?: string }) => {
@@ -278,11 +279,11 @@ const buildRelationSnapshot = (
 
   const linkedContract = issue.contractId
     ? contracts.find(contract => contract.id === issue.contractId)
-    : contracts.find(contract => contract.id === issue.contractRef || contract.contractNo === issue.contractRef);
+    : findContractByRef(contracts, issue.contractRef);
   const linkedProject = issue.projectId
     ? projects.find(project => project.id === issue.projectId)
     : linkedContract
-      ? projects.find(project => project.contractRef === linkedContract.id || (linkedContract.contractNo && project.contractRef === linkedContract.contractNo))
+      ? findProjectByContract(projects, linkedContract)
       : undefined;
   const resolvedCustomerId = issue.customerId
     || resolveProjectCustomerId(linkedProject)

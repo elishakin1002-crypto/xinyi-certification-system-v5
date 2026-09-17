@@ -62,16 +62,49 @@ mkdir -p "$(dirname "$JOURNAL")"
 [ -f "$JOURNAL" ] || printf '# 协作日志\n\n> Claude 和 Codex 各自记一行。实时过程看 `.runtime/codex-logs/latest.log`。\n\n' > "$JOURNAL"
 printf -- '- %s Claude：派活给 Codex —— %s（基于提交 %s）\n' "$NOW" "$(basename "$PROMPT_FILE")" "$HEAD_SHA" >> "$JOURNAL"
 
+# ── 把浏览器先备好（2026-09-17 加）──────────────────────────────
+#
+# 第一轮数据交叉复核整轮作废，Codex 的报告写着「Chromium 因 macOS
+# Mach 端口注册被拒绝而在打开页面前退出」。实测确认属实：沙箱里
+# 起不了 Chromium。所以改成**沙箱外起一次、常驻**，它连进来用。
+# 详见 scripts/ui-browser-server.mjs 顶上那段。
+WS_FILE="$ROOT/.runtime/ui-browser-ws"
+WS_PID="$WS_FILE.pid"
+ensure_browser() {
+  # 用 pidfile 判活，不用 pkill/pgrep 匹配文件名 —— 那种写法误杀过别人的服务。
+  # pidfile 由服务自己写（见 ui-browser-server.mjs），不由这里写：
+  # 这里写的话，别人手工起的那个就登记不上，会被当成没起，于是再起一个。
+  if [ -s "$WS_FILE" ] && [ -f "$WS_PID" ] && kill -0 "$(cat "$WS_PID")" 2>/dev/null; then
+    echo "→ 浏览器服务：已在跑（PID $(cat "$WS_PID")）"
+    return
+  fi
+  rm -f "$WS_FILE"
+  node "$ROOT/scripts/ui-browser-server.mjs" >> "$LOGDIR/browser-server.log" 2>&1 &
+  for _ in $(seq 1 40); do
+    # 等 pidfile 而不是等端点文件：服务是先写端点、后写 pidfile，
+    # 只等前者会在两次写之间读到空 PID
+    [ -s "$WS_PID" ] && { echo "→ 浏览器服务：起好了（PID $(cat "$WS_PID")）"; return; }
+    sleep 0.25
+  done
+  echo "⚠️  浏览器服务没起来 —— Codex 这一轮将拿不到界面证据，见 $LOGDIR/browser-server.log"
+}
+ensure_browser
+
 echo "→ 派给 Codex：$(basename "$PROMPT_FILE")（HEAD ${HEAD_SHA}）"
 echo "→ 看直播：    tail -f .runtime/codex-logs/latest.log"
 echo "→ 看流水账：  docs/协作日志.md"
 echo
 
-# -s workspace-write：只能改工作区，不联网装东西、不碰系统。
+# -s workspace-write：只能改工作区，不碰系统。
+# network_access=true：只为了让它连本机的 3000/3001/5432 和上面那个浏览器服务。
+#   实测不加这条，沙箱里 curl localhost 全失败，它连页面都打不开 ——
+#   第一轮就是这么废的。
 # 「不许改业务代码」「不许跑破坏性命令」写在提示词里，那才是主防线。
 set +e
 # < /dev/null：见 codex-ask.sh 里的说明，不加会停在等 stdin
-codex exec -s workspace-write -C "$ROOT" "$(cat "$PROMPT_TXT")" < /dev/null 2>&1 | tee "$LOG"
+codex exec -s workspace-write \
+  -c sandbox_workspace_write.network_access=true \
+  -C "$ROOT" "$(cat "$PROMPT_TXT")" < /dev/null 2>&1 | tee "$LOG"
 CODE=${PIPESTATUS[0]}
 set -e
 

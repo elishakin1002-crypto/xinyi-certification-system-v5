@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useMe
 import { detectStandards, buildPdcaTitle } from '../src/modules/knowledge/standards';
 import { judgeDuplicate } from '../src/modules/customerIdentity';
 import { isUnownedName } from '../src/modules/ownership';
+import { findContractByRef, findProjectByContract } from '../src/modules/contractLink';
 import { Lead, Customer, Contract, ContractAttachment, Project, Settlement, Reminder, AuditIssue, Status, KnowledgeDoc, Vendor, ProjectTask, ServiceItem, RoleID, DashboardPersona, TaskTemplate, UserProfile, PermissionCode, FollowUpRecord, AuditNode, StrategicTask, Receivable, CertificateDetail, ProjectCategory, AIDecisionLog, AIAction, ActionCode, AIAllowedAction, AggregatedReminder, ReminderSeverity, ImportRecord, MarketSignal, ProjectWorkLog } from '../types';
 import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG, ROLE_TO_PERSONA, PERSONA_TO_ROLE } from '../constants';
 import { dataService } from '../services/dataService';
@@ -1215,7 +1216,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         const found = customers.find(c => c.id === customerId);
         if (found?.name) return found.name;
       }
-      const linked = contracts.find(c => c.id === ref || c.contractNo === ref);
+      const linked = findContractByRef(contracts, ref);
       return linked?.customerName;
     };
 
@@ -1255,13 +1256,13 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
       } else if (linkType === 'lead') {
         customerName = leads.find(l => l.id === linkId)?.company;
       } else if (linkType === 'contract') {
-        customerName = contracts.find(c => c.id === linkId || c.contractNo === linkId)?.customerName;
+        customerName = findContractByRef(contracts, linkId)?.customerName;
       } else if (linkType === 'audit') {
         const issue = auditIssues.find(x => x.id === linkId);
         const linkedProject = issue?.projectId ? projects.find(x => x.id === issue.projectId) : undefined;
         const linkedContract = issue?.contractId
           ? contracts.find(c => c.id === issue.contractId)
-          : contracts.find(c => c.id === issue?.contractRef || c.contractNo === issue?.contractRef);
+          : findContractByRef(contracts, issue?.contractRef);
         const linkedCustomer = issue?.customerId ? customers.find(c => c.id === issue.customerId) : undefined;
         projectId = linkedProject?.id;
         projectName = linkedProject?.name;
@@ -2039,7 +2040,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
         const dueMs = parseDateMs(receivable.dueDate);
         if (!dueMs) return;
         const diffDays = Math.ceil((dueMs - nowMs) / (1000 * 3600 * 24));
-        const linkedProject = projects.find(p => p.contractRef === contract.id || (contract.contractNo && p.contractRef === contract.contractNo));
+        const linkedProject = findProjectByContract(projects, contract);
         const managerName = linkedProject?.manager || contract.contactPerson || '';
 
         if (diffDays <= 7 && diffDays >= 0) {
@@ -2101,7 +2102,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     setProjects(prev => {
       let changed = false;
       const next = prev.map(project => {
-        const linked = effectiveContracts.find(c => c.id === project.contractRef || (c.contractNo && project.contractRef === c.contractNo));
+        const linked = findContractByRef(effectiveContracts, project.contractRef);
         if (!linked || !Array.isArray(linked.receivables) || linked.receivables.length === 0) return project;
         const nextStatus = deriveProjectPaymentStatus(linked.receivables);
         if (project.paymentStatus === nextStatus) return project;
@@ -3032,7 +3033,7 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
   };
 
   const resolveProjectPDCAContext = (project: Project, contractOverride?: Contract) => {
-    const linkedContract = contractOverride || contracts.find(c => c.id === project.contractRef || c.contractNo === project.contractRef);
+    const linkedContract = contractOverride || findContractByRef(contracts, project.contractRef);
     const primaryServiceItem = (project.serviceItems || []).find(si => si.standardName || si.name);
     const catalogMatch = primaryServiceItem ? null : matchServiceCatalogText(`${linkedContract?.serviceLine || ''} ${linkedContract?.title || ''} ${project.name || ''}`);
     const projectTypeLabel =
@@ -3693,7 +3694,7 @@ ${receivableLines}
 
     paidContracts.forEach(contract => {
       scanned++;
-      const relatedProject = projects.find(p => p.contractRef === contract.id || (contract.contractNo && p.contractRef === contract.contractNo));
+      const relatedProject = findProjectByContract(projects, contract);
       const customerByContractId = contract.customerId ? customers.find(c => c.id === contract.customerId) : undefined;
       const customerByProjectId = relatedProject?.customerId ? customers.find(c => c.id === relatedProject.customerId) : undefined;
       const customerByName = findCustomerByName(contract.customerName);
@@ -3913,7 +3914,7 @@ ${receivableLines}
 
     if (createProject) {
       const ref = newContract.id;
-      const existingProject = projects.find(p => p.status === Status.Active && (p.contractRef === ref || (newContract.contractNo && p.contractRef === newContract.contractNo)));
+      const existingProject = findProjectByContract(projects, newContract, p => p.status === Status.Active);
       if (!existingProject) {
         createdProject = buildProjectFromInput({
           name: `${newContract.customerName} ${newContract.title}`,
@@ -4174,10 +4175,10 @@ ${receivableLines}
 
     const contract = issue.contractId
       ? contracts.find(item => item.id === issue.contractId)
-      : contracts.find(item => item.id === issue.contractRef || item.contractNo === issue.contractRef);
+      : findContractByRef(contracts, issue.contractRef);
     if (!contract) return null;
 
-    return projects.find(project => project.contractRef === contract.id || (contract.contractNo && project.contractRef === contract.contractNo)) || null;
+    return findProjectByContract(projects, contract) || null;
   };
 
   const buildAuditRectificationTaskTitle = (issue: Partial<AuditIssue>) => {

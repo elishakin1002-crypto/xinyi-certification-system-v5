@@ -49,13 +49,56 @@
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { credentials } from './ui-accounts.mjs';
 
 const BASE = process.env.UI_BASE || 'http://localhost:3000';
 const SHOT_DIR = process.env.UI_SHOT_DIR || '.runtime/ui-shots';
+const WS_FILE = process.env.UI_WS_FILE || '.runtime/ui-browser-ws';
+
+/**
+ * 有没有一个已经起好的浏览器可以连？
+ *
+ * 沙箱里的 AI（`codex exec -s workspace-write`）**起不了 Chromium** ——
+ * macOS seatbelt 拒绝 Mach 端口注册，进程在渲染第一个页面前就被杀掉，
+ * 报的错是「Target page, context or browser has been closed」，
+ * 看起来像代码问题，其实是权限问题，害得第一轮交叉复核整轮作废。
+ *
+ * 所以：浏览器由沙箱外的人起一次（`scripts/ui-browser-server.mjs`），
+ * 这里优先连它。连不上再自己起 —— 在不受限的环境里直接起是正常路径。
+ */
+const wsEndpoint = () => {
+  if (process.env.UI_WS_ENDPOINT) return process.env.UI_WS_ENDPOINT;
+  try {
+    return fs.readFileSync(WS_FILE, 'utf8').trim() || null;
+  } catch {
+    return null;                                   // 没这个文件 = 没人起过，自己起
+  }
+};
 
 /** 起一个浏览器。HEADED=1 时会真弹窗口，默认无头（只是没窗口，浏览器是真的） */
 export const open = async () => {
-  const browser = await chromium.launch({ headless: !process.env.HEADED });
+  const endpoint = wsEndpoint();
+  /*
+    连不上/起不来时，**要说清是哪一种**。
+    2026-09-17 有一轮就废在这上面：端点文件被误删，于是这里静悄悄回退去
+    沙箱里自己起 Chromium，报的是「Target page, context or browser has been closed」——
+    看起来像代码坏了，实际是"那台常驻浏览器没了"。
+    错误信息指错方向，比没有错误信息更费时间。
+  */
+  const browser = await (endpoint
+    ? chromium.connect(endpoint).catch((error) => {
+        throw new Error(
+          `连不上常驻浏览器（${endpoint}）：${String(error).slice(0, 120)}\n`
+          + '多半是那个服务已经退出了。重起：node scripts/ui-browser-server.mjs &'
+        );
+      })
+    : chromium.launch({ headless: !process.env.HEADED }).catch((error) => {
+        throw new Error(
+          `没有常驻浏览器可连，自己起也失败了：${String(error).slice(0, 160)}\n`
+          + '如果你在沙箱里（比如 codex exec），自己是起不了 Chromium 的（macOS Mach 端口被拒）。\n'
+          + '让沙箱外的人先跑：node scripts/ui-browser-server.mjs &'
+        );
+      }));
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   /*
     必须用 addInitScript：它在**每个页面的脚本跑之前**执行。
@@ -72,6 +115,12 @@ export const open = async () => {
   return { browser, context, page, errors };
 };
 
+/**
+ * 收工。
+ * 连的是常驻服务时，这里只是断开自己这条连接并清掉自己开的页面，
+ * 服务本身还活着给下一个人用 —— 这是 Playwright 对 connect() 的定义，
+ * 不用担心把别人的浏览器关了。
+ */
 export const close = async (ctx) => { await ctx.browser.close(); };
 
 /** 登录。失败会抛，不会静悄悄继续 —— 后面所有结论都建立在登录成功上 */
@@ -95,6 +144,25 @@ export const login = async (ctx, account, password) => {
     （和「一个永远消不掉的红色数字」是同一个道理。）
   */
   ctx.errors.length = 0;
+};
+
+/**
+ * 按角色登录，不用知道密码。
+ *
+ * 项目规矩第二条：密码不进对话、不进仓库、不进报告。
+ * 所以密码本由 `scripts/ui-accounts.mjs` 生成并留在 .runtime/，
+ * 这里读出来直接往输入框填 —— **调用方全程拿不到那个字符串**，
+ * 也就不可能不小心写进清点报告里。
+ *
+ *   await loginAs(ctx, 'CONSULTANT');   // ADMIN/SYS_ADMIN/MANAGER/SALES/CONSULTANT/FINANCE
+ */
+export const loginAs = async (ctx, role) => {
+  const book = credentials();
+  if (!book) throw new Error('没有验收账号密码本 —— 先跑一次 `node scripts/ui-accounts.mjs`');
+  const entry = book[role];
+  if (!entry) throw new Error(`密码本里没有角色 ${role}，跑 \`node scripts/ui-accounts.mjs --reset\` 重建`);
+  await login(ctx, entry.username, entry.password);
+  return entry.username;                              // 用户名可以记进报告，密码不行
 };
 
 /** 换页。HashRouter，等 SPA 渲染，不能只等 networkidle */

@@ -12,8 +12,43 @@ const { explainDbError } = require('../utils/dbErrors');
 const { requireAction } = require('../authz/middleware');
 const { refreshMirror, refreshMirrorsByKeys } = require('../services/datasetMirror');
 const { makeAssignOwnerRoute, resourceOf } = require('../authz/ownership');
+const { PROJECT_STATUS } = require('../../src/constants/status.js');
 
 const router = express.Router();
+
+/*
+  项目状态必须是枚举里的词，不许调用方自带。
+
+  2026-09-17 造验收样本时 `POST /api/projects` 传了 `status: '进行中'`，
+  **原样存进了库**。后果不是报错，是更糟的东西：
+    · 列表里照常显示（列表不按状态过滤）
+    · 但项目管理四张卡每一张都判 `status !== 'Active'`，
+      于是这个项目对四张卡**全部不可见**
+    · 状态列渲染出原始字符串「进行中」，和旁边真项目的「执行中」并排，
+      同一列两个词，谁也说不清差在哪
+  也就是说：一个存在、能点开、却不进任何统计的项目。
+  这正是 2026-09-15 那个「任务状态被静默改回待处理」的同款
+  —— 服务端不校验枚举，前端按枚举算数。
+
+  只认 Active/Completed：这两个是项目真正会有的态。
+  其余（New/Pending/Converted/Risk/Lost）属于线索/合同，
+  写到项目上就是脏数据。**不认识的一律拒绝，不静默改写** ——
+  静默改写会让调用方以为自己传对了。
+*/
+const PROJECT_STATUS_VALUES = Object.values(PROJECT_STATUS);
+const rejectBadProjectStatus = (status, res) => {
+  if (status === undefined || status === null) return false;
+  if (PROJECT_STATUS_VALUES.includes(status)) return false;
+  sendFail(
+    res,
+    ERROR_CODES.PARAM_ERROR,
+    `项目状态只能是 ${PROJECT_STATUS_VALUES.join(' 或 ')}，收到的是「${String(status).slice(0, 40)}」。`
+      + '写进去的话，项目在列表里看得见，却不会出现在任何一张统计卡里。',
+    {},
+    400
+  );
+  return true;
+};
 router.use((req, res, next) => (pool.isEnabled() ? next() : next('router')));
 
 const MIRROR_TARGETS = [
@@ -132,6 +167,7 @@ router.post('/api/projects',
   if (!String(raw?.name || '').trim()) {
     return sendFail(res, ERROR_CODES.PARAM_ERROR, '项目名称不能为空 —— 列表里会是一行空白，谁也认不出这是什么活。', {}, 400);
   }
+  if (rejectBadProjectStatus(raw.status, res)) return undefined;
   const tasks = (Array.isArray(raw.tasks) ? raw.tasks : []).map(normTask);
   const project = await projectRepo.create({
     status: 'Active', projectCategory: 'Delivery', projectType: 'Self-Operated',
@@ -151,6 +187,8 @@ router.patch('/api/projects/:id',
   if (updates.status === 'Completed') {
     return sendFail(res, ERROR_CODES.PARAM_ERROR, '完成项目请调用 /api/projects/:id/complete（含级联）', {}, 400);
   }
+  // 建的时候拦了，改的时候也得拦 —— 否则绕一步 PATCH 就把脏状态写回去了
+  if (rejectBadProjectStatus(updates.status, res)) return undefined;
   if (Array.isArray(updates.tasks)) updates.progress = calcProgress(updates.tasks);
   const project = await projectRepo.update(req.params.id, updates);
   sendSuccess(res, { project }, 'success');

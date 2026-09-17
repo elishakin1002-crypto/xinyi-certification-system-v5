@@ -7,6 +7,7 @@ import { TaskSkipButton } from '../components/TaskSkipButton';
 import { TaskStatusControl } from '../components/TaskStatusControl';
 import { canBePrerequisite, knockOnDelays, isOverdue } from '../src/modules/taskFlow';
 import { isMyProject, isUnownedProject } from '../src/modules/ownership';
+import { findContractByRef, refMatchesContract } from '../src/modules/contractLink';
 import { ProjectCompleteChecklist } from '../components/ProjectCompleteChecklist';
 import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog, TaskSkipReason, TASK_SKIP_REASON_LABEL, ServiceItem} from '../types';
 import { SERVICE_CATALOG, SERVICE_CATEGORIES, SERVICE_CATEGORY_DELIVERY_MODE, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY } from '../constants';
@@ -765,7 +766,7 @@ const Projects = () => {
       : undefined;
     if (direct) return direct.name;
 
-    const contract = contracts.find(c => c.id === project.contractRef || c.contractNo === project.contractRef);
+    const contract = findContractByRef(contracts, project.contractRef);
     if (contract?.customerId) {
       const viaContract = customers.find(c => c.id === contract.customerId);
       if (viaContract) return viaContract.name;
@@ -1181,7 +1182,7 @@ const Projects = () => {
     const sourceSignalId = isIntelFollowUpProject ? projectCaps.sourceRef : '';
     const sourceSignal = sourceSignalId ? marketSignals.find(s => s.id === sourceSignalId) : undefined;
     const selectedCustomerId = followUpCustomerBinding[project.id] || project.customerId || '';
-    const linkedContract = contracts.find(c => c.id === project.contractRef || c.contractNo === project.contractRef);
+    const linkedContract = findContractByRef(contracts, project.contractRef);
     const linkedCustomer = selectedCustomerId
       ? customers.find(customer => customer.id === selectedCustomerId)
       : linkedContract?.customerId
@@ -1191,7 +1192,7 @@ const Projects = () => {
       .filter(issue => {
         if (issue.projectId) return issue.projectId === project.id;
         if (issue.contractId && linkedContract?.id) return issue.contractId === linkedContract.id;
-        if (issue.contractRef) return issue.contractRef === linkedContract?.id || issue.contractRef === linkedContract?.contractNo;
+        if (issue.contractRef) return refMatchesContract(issue.contractRef, linkedContract);
         return false;
       })
       .sort((a, b) => {
