@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { buildLessonDoc, isLessonWorthKeeping } from '../src/modules/knowledge/lessons';
 import { findContractByRef, findProjectByContract } from '../src/modules/contractLink';
+import { auditStatusLabel, auditSeverityLabel, auditSeverityFull, FIELD } from '../src/modules/labels';
 import { SampleTr } from '../components/SampleRow';
 import { AuditEvidence, AuditIssue, KnowledgeDoc } from '../types';
 import {
@@ -1185,9 +1186,9 @@ const Audit = () => {
   const getSeverityBadge = (severity: string) => {
     switch (severity) {
       case 'Major':
-        return <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-bold border border-red-200">严重</span>;
+        return <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-bold border border-red-200">{auditSeverityLabel(severity)}</span>;
       case 'Minor':
-        return <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs font-medium border border-orange-200">一般</span>;
+        return <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs font-medium border border-orange-200">{auditSeverityLabel(severity)}</span>;
       case 'Observation':
         return <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium border border-blue-200">观察</span>;
       default:
@@ -1195,20 +1196,23 @@ const Audit = () => {
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'Open':
-        return <span className="text-sm text-red-600 font-medium">待整改</span>;
-      case 'Rectifying':
-        return <span className="text-sm text-orange-600 font-medium">整改中</span>;
-      case 'Verifying':
-        return <span className="text-sm text-blue-600 font-medium">待验证</span>;
-      case 'Closed':
-        return <span className="text-sm text-green-600 font-medium flex items-center"><CheckCircle className="w-3 h-3 mr-1" />已关闭</span>;
-      default:
-        return status;
-    }
+  /*
+    文案一律引 labels.ts，这里只决定配色。
+    2026-09-17 之前手机分支另写了一套，把四态压成两态 ——
+    「待整改」（等对方改）和「待验证」（对方改完了等我方验）
+    都被显示成「整改中」，而这两件事是两个不同的人在等。
+    default 原来直接把英文枚举值吐给用户看。
+  */
+  const STATUS_TONE: Record<string, string> = {
+    Open: 'text-red-600', Rectifying: 'text-orange-600',
+    Verifying: 'text-blue-600', Closed: 'text-green-600'
   };
+  const getStatusBadge = (status: string) => (
+    <span className={`text-sm font-medium ${STATUS_TONE[status] || 'text-gray-500'} ${status === 'Closed' ? 'flex items-center' : ''}`}>
+      {status === 'Closed' && <CheckCircle className="w-3 h-3 mr-1" />}
+      {auditStatusLabel(status)}
+    </span>
+  );
 
   return (
     <div className="p-6 animate-in fade-in duration-500 space-y-6">
@@ -1449,7 +1453,8 @@ const Audit = () => {
           <div className="flex space-x-2">
             {['All', 'Open', 'Closed'].map(status => (
               <button key={status} onClick={() => setFilterStatus(status as 'All' | 'Open' | 'Closed')} className={`px-4 py-1.5 text-sm font-bold rounded-xl transition-all ${filterStatus === status ? 'bg-gray-900 text-white shadow-md' : 'text-gray-500 hover:bg-gray-100'}`}>
-                {status === 'All' ? '全部' : status === 'Open' ? '未完成' : '已归档'}
+                {/* Closed 只是「已关闭」。归档是另一件事（合同/模板才有归档） */}
+                {status === 'All' ? '全部' : status === 'Open' ? '未关闭' : auditStatusLabel('Closed')}
               </button>
             ))}
           </div>
@@ -1487,7 +1492,10 @@ const Audit = () => {
               </div>
               <p className="mt-1 line-clamp-2 text-[12px] font-bold text-gray-600">{issue.findings}</p>
               <p className="mt-1 text-[11px] font-bold text-gray-500">
-                {issue.status === 'Closed' ? '已关闭' : `整改中 · 期限 ${issue.deadline || '未定'}`}
+                {/* 原来除 Closed 外一律显示「整改中」，把「待整改」「待验证」的含义改了 */}
+                {issue.status === 'Closed'
+                  ? auditStatusLabel(issue.status)
+                  : `${auditStatusLabel(issue.status)} · ${FIELD.auditDeadlineShort} ${issue.deadline || '未定'}`}
               </p>
             </button>
           )} />

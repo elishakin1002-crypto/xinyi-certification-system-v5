@@ -16,6 +16,7 @@ import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
 import { SearchInput, EmptyState, FilterSelect, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 import { groupIndustry, INDUSTRY_GROUPS, INDUSTRY_GROUP_META, IndustryGroup } from '../src/modules/industry';
+import { auditSeverityLabel, auditStatusLabel } from '../src/modules/labels';
 
 const Customers = () => {
   const { toggleReceivableStatus, customers, updateCustomer, addCustomer, addCustomerFollowUp, checkActionPermission, contracts, projects, auditIssues, addReminder, runSystemScans, generateAuditPlan, updateCertificateAuditStatus, scheduleRenewalFollowUp, currentUser, knowledgeDocs, addKnowledgeDoc, visibleReminders } = useApp();
@@ -1441,8 +1442,8 @@ const Customers = () => {
                                                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                                         <div className="min-w-0">
                                                             <div className="flex flex-wrap items-center gap-2">
-                                                                <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${severityTone}`}>{issue.severity}</span>
-                                                                <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${statusTone}`}>{issue.status}</span>
+                                                                <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${severityTone}`}>{auditSeverityLabel(issue.severity)}</span>
+                                                                <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${statusTone}`}>{auditStatusLabel(issue.status)}</span>
                                                                 {issue.rectificationTaskId && <span className="text-[11px] font-black px-2 py-1 rounded-full border border-indigo-100 bg-indigo-50 text-indigo-700">已挂整改任务</span>}
                                                             </div>
                                                             <div className="text-sm font-bold text-gray-900 mt-2 line-clamp-2">{issue.findings}</div>
@@ -1647,7 +1648,19 @@ const Customers = () => {
                                                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                                                         <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-3">
                                                             <div className="text-[11px] font-bold text-indigo-500 uppercase">下一个监管节点</div>
-                                                            <div className="mt-1 text-sm font-black text-indigo-900">{nextAuditNode ? getAuditNodeLabel(nextAuditNode.type) : '已全部完成'}</div>
+                                                            {/*
+                                                              先判"有没有计划"，再判"做完没做完"。
+                                                              原来只要没有下一个节点就说「已全部完成」——
+                                                              而**根本没生成监管计划**的证书也没有下一个节点，
+                                                              于是同一张卡上方写「已全部完成」、下方写「暂无监管计划」，
+                                                              自己跟自己矛盾（字段排查 C09）。
+                                                              这和「零任务的项目显示任务已全部完成」是同一个错。
+                                                            */}
+                                                            <div className="mt-1 text-sm font-black text-indigo-900">{
+                                                              !sortedAuditPlan.length ? '尚未生成监管计划'
+                                                                : nextAuditNode ? getAuditNodeLabel(nextAuditNode.type)
+                                                                : '已全部完成'
+                                                            }</div>
                                                             <div className="text-[11px] text-indigo-600 mt-1">{nextAuditNode?.plannedDate || '—'}</div>
                                                         </div>
                                                         <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3">

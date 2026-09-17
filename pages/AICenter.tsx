@@ -44,7 +44,7 @@ const AICenter = () => {
     const nextPanel = (panelFromState || panelFromQuery) as 'training-data' | 'model-status' | 'security' | 'members' | '';
     if (!nextPanel) return;
     setActivePanel(nextPanel);
-    if (nextPanel === 'training-data') setDashboardFocusLabel('AI 训练数据');
+    if (nextPanel === 'training-data') setDashboardFocusLabel('AI 可引用资料');
     else if (nextPanel === 'model-status') setDashboardFocusLabel('模型状态与运行健康度');
     else if (nextPanel === 'security') setDashboardFocusLabel('安全与隐私策略');
     else if (nextPanel === 'members') setDashboardFocusLabel('成员与岗位治理');
@@ -88,8 +88,13 @@ const AICenter = () => {
                   <Database className="w-6 h-6 text-white" />
               </div>
               <div>
-                  <h3 className="text-lg font-bold">管理 AI 训练数据</h3>
-                  <p className="text-indigo-100 text-sm opacity-90">想让 AI 更懂公司业务？请前往知识中心上传资料。</p>
+                  {/*
+                    「训练数据」会被理解成模型被拿这些资料训练过。
+                    实际上这个入口只是跳到知识中心的"允许 AI 引用"筛选 ——
+                    许可开启 ≠ 已读取 ≠ 已建索引 ≠ 已训练模型（字段排查 C11）。
+                  */}
+                  <h3 className="text-lg font-bold">管理 AI 可引用资料</h3>
+                  <p className="text-indigo-100 text-sm opacity-90">想让 AI 回答时能引用公司资料？请前往知识中心上传并勾选「允许 AI 引用」。</p>
               </div>
           </div>
           <ArrowRight className="w-6 h-6 text-white" />
@@ -99,10 +104,31 @@ const AICenter = () => {
           
           {/* Status Panel */}
           <div className={`bg-white p-6 rounded-xl shadow-sm border ${activePanel === 'model-status' ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-gray-100'}`}>
+              {/*
+                ── 这一块叫「能力说明」，不叫「健康度」（2026-09-17 改）────────
+
+                原来标题是「系统健康度与模型状态」，下面三行分别固定写着
+                「已激活」「运行中」「就绪」，还配着会呼吸的绿点 ——
+                **但这三个值是写死的文案，没有读任何探测结果。**
+
+                也就是说：模型挂了、Key 过期了、语音接口被浏览器禁了，
+                这一屏照样三个绿点。而它偏偏长得像在报告当前事实。
+
+                这和「没有正在生效的登录」「0 次越权请求」是同一条：
+                **不知道的事不能显示成一个让人放心的结论。**
+
+                真要做健康度，得读 /api/ai/selftest（它会真的发一次请求）。
+                那是功能改动，不在上线前这个节骨眼上做 ——
+                所以先把话说准：这里描述的是"配置成什么样"，不是"现在好不好"。
+              */}
               <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
                   <Activity className="w-5 h-5 mr-2 text-blue-600" />
-                  系统健康度与模型状态
+                  AI 能力说明
               </h3>
+              <p className="text-xs text-gray-500 -mt-2 mb-4">
+                  下面写的是<b>系统配置成什么样</b>，不是实时健康检查结果。
+                  要确认模型此刻是否可用，用下方的「AI 自检」。
+              </p>
               <div className="space-y-4">
                   <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg border border-green-100">
                       <div>
@@ -112,8 +138,8 @@ const AICenter = () => {
                           </p>
                           <p className="text-xs text-gray-500">全部使用国内模型服务商，数据不出境</p>
                       </div>
-                      <div className="text-green-600 text-xs font-bold px-2 py-1 bg-white rounded border border-green-200">
-                          已激活
+                      <div className="text-gray-600 text-xs font-bold px-2 py-1 bg-white rounded border border-gray-200">
+                          配置如此
                       </div>
                   </div>
                   
@@ -123,8 +149,8 @@ const AICenter = () => {
                           <p className="text-xs text-gray-500">按内容类型自动选择：文字走文本模型，扫描件走视觉模型</p>
                       </div>
                       <div className="flex items-center space-x-2">
-                          <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                          <span className="text-gray-600 text-sm font-medium">运行中</span>
+                          <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
+                          <span className="text-gray-600 text-sm font-medium">未检测</span>
                       </div>
                   </div>
                   
@@ -134,8 +160,8 @@ const AICenter = () => {
                           <p className="text-xs text-gray-500">Web Speech API (本地处理)</p>
                       </div>
                       <div className="flex items-center space-x-2">
-                          <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                          <span className="text-gray-600 text-sm font-medium">就绪</span>
+                          <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
+                          <span className="text-gray-600 text-sm font-medium">未检测</span>
                       </div>
                   </div>
               </div>

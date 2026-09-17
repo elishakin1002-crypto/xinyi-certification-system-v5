@@ -5,6 +5,7 @@ import { guessCompanyFromContractTitle } from '../src/modules/companyFromTitle';
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { isMyContract } from '../src/modules/ownership';
+import { RiskBadge } from '../src/ui/statusBadge';
 import { findProjectByContract } from '../src/modules/contractLink';
 import { SampleTr } from '../components/SampleRow';
 import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search, FileSpreadsheet, Sparkles} from 'lucide-react';
@@ -1416,7 +1417,7 @@ const Contracts = () => {
                             </td> 
                             <td className={tdClass}> 
                                 <div className="flex space-x-2"> 
-                                    {contract.archiveStatus === ARCHIVE_STATUS.ARCHIVED ? ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-gray-100 text-gray-600 border border-gray-200"> <Archive className="w-3 h-3 mr-1" /> 已归档 </span> ) : ( <> {contract.riskLevel === 'High' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-red-100 text-red-700 border border-red-200"> <ShieldAlert className="w-3 h-3 mr-1" /> 高风险 </span> )} {contract.riskLevel === 'Medium' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-orange-100 text-orange-700 border border-orange-200"> <AlertTriangle className="w-3 h-3 mr-1" /> 中风险 </span> )} {contract.riskLevel === 'Low' && ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-green-100 text-green-700 border border-green-200"> <ShieldCheck className="w-3 h-3 mr-1" /> 正常 </span> )} </> )} 
+                                    {contract.archiveStatus === ARCHIVE_STATUS.ARCHIVED ? ( <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold uppercase tracking-tight bg-gray-100 text-gray-600 border border-gray-200"> <Archive className="w-3 h-3 mr-1" /> 已归档 </span> ) : ( <> <RiskBadge level={contract.riskLevel} /> </> )} 
                                 </div> 
                             </td> 
                             <td className={`${tdClass} text-center w-24`} onClick={(e) => e.stopPropagation()}>
@@ -1605,9 +1606,9 @@ const Contracts = () => {
                               <div className="font-bold text-gray-900 truncate text-sm">{contract.title}</div>
                               <div className="text-sm text-gray-500 truncate mt-0.5">{contract.customerName}</div>
                           </div>
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-tight ${contract.riskLevel === 'High' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                              {contract.riskLevel === 'High' ? '高风险' : '正常'}
-                          </span>
+                          {/* 手机端原来只判 High，中风险合同在这里显示「正常」——
+                              风险提示凭空消失。改用和桌面同一个组件。 */}
+                          <RiskBadge level={contract.riskLevel} />
                       </div>
                       <div className="flex justify-between items-center text-xs mb-2">
                           <span className="font-mono font-black text-gray-900">{maskAmount(contract.amount)}</span>

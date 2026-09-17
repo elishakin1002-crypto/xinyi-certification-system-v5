@@ -153,7 +153,11 @@ const AuthAuditLogs: React.FC = () => {
             <SampleList items={latestLogs} sample={SAMPLE_AUDIT_LOG} render={log => (
               <div key={log.id} className="px-4 py-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-black text-gray-900">{String((log as any).action || '—')}</span>
+                  {/* 手机端原来直接吐 USER_CREATE 这种内部代码 —— 桌面早就有中文映射，
+                      只是这一处没用它。日常列表不该要求人去理解操作码。 */}
+                  <span className="text-sm font-black text-gray-900">
+                    {actionLabels[String((log as any).action || '')] || String((log as any).action || '—')}
+                  </span>
                   <span className={`rounded-md px-2 py-0.5 text-[10px] font-black ${
                     String((log as any).result || '').includes('拒') || (log as any).ok === false
                       ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'

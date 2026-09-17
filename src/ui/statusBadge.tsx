@@ -9,6 +9,7 @@ import React from 'react';
 import { Status } from '../../types';
 import { Badge, Tone } from './index';
 import { TERM_PROJECT, TERM_CONTRACT } from '../modules/glossary';
+import { contractRiskLabel, contractRiskTone } from '../modules/labels';
 
 export type StatusDomain = 'lead' | 'project' | 'contract';
 
@@ -65,9 +66,24 @@ export const StatusBadge: React.FC<{ status: Status; domain: StatusDomain; class
 );
 
 /** 风险等级徽章（客户 riskStatus / 合同 riskLevel 共用） */
-export const RiskBadge: React.FC<{ level?: string; className?: string }> = ({ level, className }) => {
-  const normalized = String(level || '').toLowerCase();
-  const tone: Tone = normalized === 'high' ? 'red' : normalized === 'medium' || normalized === 'mid' ? 'amber' : 'emerald';
-  const label = normalized === 'high' ? '高风险' : normalized === 'medium' || normalized === 'mid' ? '中风险' : '低风险';
-  return <Badge tone={tone} className={className}>{label}</Badge>;
-};
+/*
+  ── 认不出来的值不许显示成「低风险」（2026-09-17 修）────────────
+
+  这个组件原来写的是「不是 high 也不是 medium，就是低风险」，
+  而且**没有任何页面在用它** —— 合同页桌面和手机各写了一套三元表达式，
+  手机那套只判 High，于是**同一份中风险合同在手机上显示「正常」**，
+  风险提示凭空消失（字段排查 C19）。
+
+  两个错叠在一起：
+    1. 两处各写一套 → 手机那套漏了 Medium
+    2. 兜底回退成绿色的「低风险」→ 没评估过的合同看起来像已确认安全
+
+  第 2 条和「没有正在生效的登录」「0 次越权请求」是同一条规矩：
+  **别把"不知道"说成一个让人放心的结论。**
+  所以缺值显示「未评估」，配中性灰，不给绿色。
+
+  口径收在 src/modules/labels.ts，页面只能调它，不能自己写字面量。
+*/
+export const RiskBadge: React.FC<{ level?: string; className?: string }> = ({ level, className }) => (
+  <Badge tone={contractRiskTone(level) as Tone} className={className}>{contractRiskLabel(level)}</Badge>
+);

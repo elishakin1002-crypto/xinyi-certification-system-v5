@@ -33,6 +33,7 @@ import { PROJECT_TYPE_META } from '../types';
 // 术语只有一份定义，见 src/modules/glossary.ts
 import { TERM_PROJECT, TERM_TASK } from '../src/modules/glossary';
 import { SERVICE_GROUPS, GROUP_TO_CATALOG_CATEGORY, type ServiceGroup } from '../src/modules/serviceLine';
+import { auditSeverityLabel, auditStatusLabel, taskStatusLabel, noNextTaskReason } from '../src/modules/labels';
 
 const normalizeServiceToken = (value: string) => (value || '')
   .toUpperCase()
@@ -1302,7 +1303,15 @@ const Projects = () => {
             </div>
             {(() => {
               const next = getNextTask(project);
-              if (!next) return <Badge tone="emerald">任务已全部完成</Badge>;
+              /*
+                零任务、全跳过、真做完，是三件事 —— 不能都说成「任务已全部完成」。
+                口径和列表那一栏共用 noNextTaskReason（原来两处各写各的，这处是错的）。
+                只有"真做完"才给绿色；另外两种是待办，给中性色。
+              */
+              if (!next) {
+                const why = noNextTaskReason(project.tasks);
+                return <Badge tone={why === '所有任务已完成' ? 'emerald' : 'gray'}>{why}</Badge>;
+              }
               const canComplete = checkActionPermission('TASK_COMPLETE', project).allowed;
               return (
                 <div className="flex items-center gap-2 shrink-0">
@@ -2151,9 +2160,9 @@ const Projects = () => {
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${severityTone}`}>{issue.severity}</span>
-                        <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${statusTone}`}>{issue.status}</span>
-                        {linkedTask && <span className="text-[11px] font-black px-2 py-1 rounded-full border border-indigo-100 bg-indigo-50 text-indigo-700">任务：{linkedTask.status === 'Completed' ? '已完成' : '进行中'}</span>}
+                        <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${severityTone}`}>{auditSeverityLabel(issue.severity)}</span>
+                        <span className={`text-[11px] font-black px-2 py-1 rounded-full border ${statusTone}`}>{auditStatusLabel(issue.status)}</span>
+                        {linkedTask && <span className="text-[11px] font-black px-2 py-1 rounded-full border border-indigo-100 bg-indigo-50 text-indigo-700">任务：{taskStatusLabel(linkedTask.status)}</span>}
                       </div>
                       <div className="text-sm font-bold text-gray-900 mt-2 line-clamp-2">{issue.findings}</div>
                       <div className="text-[11px] text-gray-500 mt-2 flex flex-wrap gap-x-4 gap-y-1">
@@ -2591,7 +2600,7 @@ const Projects = () => {
                   <option value="">请选择任务</option>
                   {allTasks.map(task => (
                     <option key={task.id} value={task.id}>
-                      {task.title}（{task.status === TASK_STATUS.COMPLETED ? '已完成' : '进行中'}）
+                      {task.title}（{taskStatusLabel(task.status)}）
                     </option>
                   ))}
                 </select>
@@ -3048,10 +3057,7 @@ const Projects = () => {
                                   </div>
                                 );
                                 const next = getNextTask(project);
-                                if (!next) return <span className="text-xs text-gray-400">{
-                                  !(project.tasks || []).length ? '尚未安排任务' :
-                                  project.tasks.some(t => t.status === 'Skipped') ? '无待办任务（含已跳过）' : '所有任务已完成'
-                                }</span>;
+                                if (!next) return <span className="text-xs text-gray-400">{noNextTaskReason(project.tasks)}</span>;
                                 const overdue = isOverdueTask(next);
                                 return (
                                   <div className="min-w-0">

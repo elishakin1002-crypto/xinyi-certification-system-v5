@@ -19,6 +19,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { adviseIntake } from '../src/modules/knowledge/intake';
 import { APP_ROUTES } from '../src/routes';
+import { auditSeverityLabel, auditStatusLabel } from '../src/modules/labels';
 
 const Knowledge = () => {
   const { knowledgeDocs, auditIssues, addKnowledgeDoc, deleteKnowledgeDoc, updateKnowledgeDoc, currentUser, activeRole, backfillPdcaForPaidContracts } = useApp();
@@ -467,7 +468,7 @@ const Knowledge = () => {
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center space-x-4">
               <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600"><BrainCircuit className="w-6 h-6" /></div>
               <div>
-                  <p className="text-xs text-gray-400 font-bold uppercase">AI 权限已开文档</p>
+                  <p className="text-xs text-gray-400 font-bold uppercase">允许 AI 引用的文档</p>
                   <div className="flex items-center space-x-2">
                       <p className="text-2xl font-black text-gray-900">{learnedDocsCount}</p>
                       <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">RAG Ready</span>
@@ -579,7 +580,7 @@ const Knowledge = () => {
                   {/* AI Status Badge */}
                   <div className="absolute top-4 right-4">
                       {doc.aiVisible ? (
-                          <div className="flex items-center space-x-1 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-100" title="AI 已学习 (可引用)">
+                          <div className="flex items-center space-x-1 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-100" title="允许 AI 引用这份资料（只是许可，不代表已读取或已建索引）">
                               <BrainCircuit className="w-3 h-3 text-indigo-600" />
                               <span className="text-[10px] font-bold text-indigo-600">AI</span>
                           </div>
@@ -608,7 +609,7 @@ const Knowledge = () => {
                       <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-bold">
                           <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">审计经验</span>
                           <span className="px-2 py-0.5 rounded-full bg-white text-gray-600 border border-gray-200">证据 {(linkedAudit.evidences || []).length} 份</span>
-                          <span className="px-2 py-0.5 rounded-full bg-white text-gray-600 border border-gray-200">状态 {linkedAudit.status}</span>
+                          <span className="px-2 py-0.5 rounded-full bg-white text-gray-600 border border-gray-200">状态 {auditStatusLabel(linkedAudit.status)}</span>
                       </div>
                   )}
                   
@@ -745,7 +746,8 @@ const Knowledge = () => {
                           />
                           <label htmlFor="aiVisible" className="flex-1 cursor-pointer select-none">
                               <div className={`text-sm font-bold ${aiVisible ? 'text-indigo-900' : 'text-gray-700'}`}>
-                                  {aiVisible ? '允许 AI 读取并学习 (RAG)' : '不让 AI 读这份（人照常能看）'}
+                                  {/* 「学习」会被理解成模型被训练过。实际只是一个可见性许可 */}
+                                  {aiVisible ? '允许 AI 引用这份资料' : '不让 AI 读这份（人照常能看）'}
                               </div>
                               <div className="text-[10px] text-gray-500 mt-0.5">
                                   {aiVisible ? 'AI 助手可以引用此文档回答问题' : '🔒 仅用于存储，AI 助手无法访问内容'}
@@ -863,11 +865,11 @@ const Knowledge = () => {
                                           </div>
                                           <div className="rounded-xl bg-white border border-indigo-100 px-3 py-3">
                                               <div className="text-gray-400">状态</div>
-                                              <div className="font-black text-gray-900 mt-1">{linkedPreviewAudit.status}</div>
+                                              <div className="font-black text-gray-900 mt-1">{auditStatusLabel(linkedPreviewAudit.status)}</div>
                                           </div>
                                           <div className="rounded-xl bg-white border border-indigo-100 px-3 py-3">
                                               <div className="text-gray-400">严重度</div>
-                                              <div className="font-black text-gray-900 mt-1">{linkedPreviewAudit.severity}</div>
+                                              <div className="font-black text-gray-900 mt-1">{auditSeverityLabel(linkedPreviewAudit.severity)}</div>
                                           </div>
                                           <div className="rounded-xl bg-white border border-indigo-100 px-3 py-3">
                                               <div className="text-gray-400">证据数</div>
