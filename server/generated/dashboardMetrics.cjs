@@ -89,6 +89,18 @@ var isOverdue = (t, now = Date.now()) => {
   return endOfDueDay < now;
 };
 
+// src/modules/ownership.ts
+var UNOWNED_LABELS = ["\u5F85\u5B9A", "\u5F85\u6307\u6D3E", "\u672A\u6307\u6D3E", "\u5F85\u5206\u914D", "\u65E0", "-", "\u2014"];
+var isUnownedName = (name) => {
+  const v = String(name ?? "").trim();
+  return v === "" || UNOWNED_LABELS.includes(v);
+};
+var isUnownedProject = (project) => {
+  if (!project) return false;
+  if (String(project.ownerUserId ?? "").trim()) return false;
+  return isUnownedName(project.manager);
+};
+
 // src/modules/glossary.ts
 var TERM_PROJECT = {
   /**
@@ -109,6 +121,26 @@ var TERM_PROJECT = {
    * 同一页两个词，人会以为是两种状态。
    */
   completed: "\u5DF2\u7ED3\u9879",
+  /*
+      ── 上面两条是**数量**的说法，下面两条是**状态**的说法 ──────────
+      卡片写「进行中项目 9」，表格那一列写的是单个项目的状态。
+      两者必须同根，否则人按「进行中」筛出来，每一行却写着别的词。
+  
+      2026-09-17 在真界面上读到的就是这个：
+        状态筛选下拉：进行中 / 已完成
+        列表状态列：  执行中 / 已结项
+        统计卡：      进行中项目
+      三处、两套词。而「已结项」这条上面早就拍过板了，
+      只是筛选下拉没跟上 —— 又一次「改一处漏一处」。
+    */
+  /** 单个项目的状态标签。口径同 active，只是这里说的是一个项目而不是一堆 */
+  statusActive: "\u8FDB\u884C\u4E2D",
+  /** 单个项目的状态标签。口径同 completed */
+  statusCompleted: "\u5DF2\u7ED3\u9879",
+  /** 口径：status === Risk。项目被标了风险，和「有逾期任务」是两回事 */
+  statusRisk: "\u98CE\u9669",
+  /** 口径：status === Pending。立了项但还没开始排任务 */
+  statusPending: "\u5F85\u542F\u52A8",
   /** 进行中、且名下有逾期任务的项目。口径：Active && tasks.some(isOverdue) */
   withOverdueTask: "\u6709\u903E\u671F\u4EFB\u52A1\u7684\u9879\u76EE",
   /**
@@ -372,7 +404,7 @@ var buildBossMetrics = (inputs, monthKey) => {
 var buildManagerMetrics = (inputs) => {
   const now = nowDate();
   const activeProjects = inputs.projects.filter(isLiveProject);
-  const unassigned = activeProjects.filter((p) => !String(p.manager || "").trim());
+  const unassigned = activeProjects.filter((p) => isUnownedProject(p));
   const openTasks = openTasksOf(inputs.projects);
   const overdueTasks = openTasks.filter((t) => isOverdue(t, now.getTime()));
   const dueSoonTasks = openTasks.filter((t) => {

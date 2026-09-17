@@ -176,3 +176,27 @@ test('「与我相关」必须承认它混着无人认领的项目 —— 不许
   assert.match(page, /viewScope === 'related' && unclaimedInView > 0/,
     '那条提示要么没挂条件，要么条件不对 —— 全公司视角下再提示一遍是噪音');
 });
+
+test('总助的「待指派负责人」必须数得到「待指派」 —— 这张卡就是为它存在的', () => {
+  /*
+    2026-09-17 交叉复核时读到：总助工作台「待指派负责人 0」，
+    而库里躺着一个负责人是「待指派」的项目。
+
+    真因：dashboardMetrics 里写的是
+        activeProjects.filter(p => !String(p.manager || '').trim())
+    只认**空字符串**。于是**这张专门用来发现"没人认领的项目"的卡片，
+    恰恰看不见没人认领的项目** —— 嘉力那个项目（manager='待指派'）
+    在这张卡上永远是 0。
+    而新手引导还在教总助「『待指派负责人』不为零，先处理这个」。
+
+    2026-09-15 已经为这件事收口出 isUnownedProject，这个文件漏掉了。
+    所以盯的是「有没有走那份收口」，不是盯某一句写法。
+  */
+  const src = stripComments(fs.readFileSync(path.join(root, 'services/dashboardMetrics.ts'), 'utf8'));
+  assert.match(src, /from '\.\.\/src\/modules\/ownership'/,
+    'dashboardMetrics 没引 ownership.ts —— 多半又自己判了一遍空');
+  assert.ok(!/!String\(p\.manager \|\| ''\)\.trim\(\)/.test(src),
+    "dashboardMetrics 里还留着 `!String(p.manager||'').trim()` —— 它只认空字符串，认不出「待指派」");
+  assert.match(src, /unassigned = activeProjects\.filter\(p => isUnownedProject/,
+    '「待指派负责人」那张卡没有走 isUnownedProject');
+});

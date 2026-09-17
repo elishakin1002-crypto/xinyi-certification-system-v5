@@ -57,6 +57,23 @@ const KIND_LABEL: Record<string, string> = {
 
 const num = (v: unknown) => Number(v || 0).toLocaleString('zh-CN');
 
+/*
+  取不到 ≠ 零。
+
+  2026-09-17：系统管理员的运维台上写着「0 个 7 天内被拦的越权请求」，
+  真实数字是 340 —— 服务端那三条 SQL 是坏的（少了 FROM、列名写错），
+  safe() 按设计返回 null（它的注释写着"前端显示暂不可用"），
+  而前端的 num() 是 `Number(v || 0)`，把 null 渲染成了 0。
+  同一块里还写着「没有活跃会话」，而当时就有人登录着。
+
+  在**安全面板**上，「0 次越权」和「我不知道有没有越权」是两件相反的事：
+  前者让人放心，后者要人去查。显示成前者是最坏的一种错。
+  这和 2026-09-15 那次「没有正在生效的登录」是同一条：
+  **别把看不到说成没有。**
+*/
+const numOr = (v: unknown, dash = '—') =>
+  v === null || v === undefined ? dash : Number(v).toLocaleString('zh-CN');
+
 const Card: React.FC<{ title: string; icon: React.ReactNode; tone?: 'normal' | 'alert'; children: React.ReactNode; action?: React.ReactNode; dataOnboard?: string }> =
   ({ title, icon, tone = 'normal', children, action, dataOnboard }) => (
   <div data-onboard={dataOnboard} className={`bg-white rounded-2xl border p-5 ${tone === 'alert' ? 'border-red-200' : 'border-gray-100'}`}>
@@ -306,22 +323,34 @@ const SysAdminBoard: React.FC = () => {
 
         {/* 安全 */}
         <Card title="安全" icon={<ShieldCheck className="w-4 h-4" />}>
+          {!sec ? (
+            /*
+              整块取不到时，把这件事本身说出来，不要用零和空列表糊过去。
+              安全面板上的「0」会让人放心地走开 —— 而此刻真相是「不知道」。
+            */
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              这一块的数据这次没取到（不是「没有」）。服务端日志里搜
+              <code className="mx-1 font-mono">[sysadminOverview] 安全</code>
+              能看到失败原因。在修好之前，<b>不要把这里当成「没有越权、没人登录」</b>。
+            </p>
+          ) : (
+          <>
           <div className="flex items-end gap-8 mb-4">
             <Stat
               label="7 天内被拦的越权请求"
-              value={num(sec?.deniedRecent?.n)}
-              tone={(Number(sec?.deniedRecent?.n) || 0) > 0 ? 'alert' : 'muted'}
+              value={numOr(sec.deniedRecent?.n)}
+              tone={(Number(sec.deniedRecent?.n) || 0) > 0 ? 'alert' : 'muted'}
             />
-            <Stat label="停用账号" value={num(sec?.accounts.disabled)} tone="muted" />
+            <Stat label="停用账号" value={numOr(sec.accounts?.disabled)} tone="muted" />
             <Stat
               label="已过期"
-              value={num(sec?.accounts.expired)}
-              tone={(Number(sec?.accounts.expired) || 0) > 0 ? 'alert' : 'muted'}
+              value={numOr(sec.accounts?.expired)}
+              tone={(Number(sec.accounts?.expired) || 0) > 0 ? 'alert' : 'muted'}
             />
           </div>
           <p className="text-[10px] font-black text-gray-400 tracking-widest mb-1.5">当前登录</p>
           <div className="space-y-1 max-h-40 overflow-y-auto">
-            {!sec?.sessions?.length ? (
+            {!sec.sessions?.length ? (
               <p className="text-xs text-gray-400">没有活跃会话</p>
             ) : sec.sessions.map((s, i) => (
               <div key={i} className="flex items-center justify-between text-xs">
@@ -330,6 +359,8 @@ const SysAdminBoard: React.FC = () => {
               </div>
             ))}
           </div>
+          </>
+          )}
           <button
             onClick={() => navigate('/auth-audit')}
             className="mt-3 text-[11px] font-bold text-blue-600 hover:text-blue-700"

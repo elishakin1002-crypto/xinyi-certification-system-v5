@@ -114,16 +114,18 @@ router.get('/api/admin/sysadmin-overview', requireOpsRole, async (req, res) => {
             FROM auth_sessions s JOIN auth_users u ON u.id = s.user_id
            WHERE s.expires_at > NOW()
            ORDER BY s.created_at DESC LIMIT 20`),
+        // 漏过 FROM（2026-09-17）：整条 SQL 报错 → safe() 吞掉 → 整个「安全」块变 null
         accounts: await one(`
           SELECT COUNT(*)::int AS total,
                  COUNT(*) FILTER (WHERE must_change_password)::int AS pending_password,
                  COUNT(*) FILTER (WHERE status = 'disabled')::int AS disabled,
                  COUNT(*) FILTER (WHERE account_expires_at IS NOT NULL
-                                    AND account_expires_at < CURRENT_DATE)::int AS expired`),
+                                    AND account_expires_at < CURRENT_DATE)::int AS expired
+            FROM auth_users`),
         // 被服务端授权拦下来的请求：突然变多说明要么有人在试探，要么权限配错了
         deniedRecent: await one(`
           SELECT COUNT(*)::int AS n FROM business_events
-           WHERE created_at >= NOW() - INTERVAL '7 days'
+           WHERE occurred_at >= NOW() - INTERVAL '7 days'
              AND (event_type ILIKE '%denied%' OR event_type ILIKE '%forbidden%')`),
       }), '安全'),
 
@@ -139,7 +141,8 @@ router.get('/api/admin/sysadmin-overview', requireOpsRole, async (req, res) => {
       // ── 版本与迁移 ─────────────────────────────────────────
       safe(async () => ({
         applied: (await one(`SELECT COUNT(*)::int AS n FROM schema_migrations`)).n,
-        latest: (await one(`SELECT MAX(id) AS id FROM schema_migrations`)).id,
+        // 主键叫 version 不叫 id（2026-09-17 修）
+        latest: (await one(`SELECT MAX(version) AS version FROM schema_migrations`)).version,
       }), '迁移'),
     ]);
 

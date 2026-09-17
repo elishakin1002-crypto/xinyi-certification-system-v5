@@ -2,6 +2,7 @@ import { Contract, Customer, Lead, Project, ProjectTask, ProjectWorkLog, RoleID,
 import { APP_ROUTES } from '../src/routes';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
 import { isOpenTask, isOverdue } from '../src/modules/taskFlow';
+import { isUnownedProject } from '../src/modules/ownership';
 // 术语只有一份定义，见 src/modules/glossary.ts（口径也写在那里）
 import { TERM_PROJECT, TERM_TASK, TERM_RECEIVABLE } from '../src/modules/glossary';
 // 「我该做什么」只算一次，见 src/modules/myWork.ts
@@ -384,8 +385,22 @@ const buildManagerMetrics = (inputs: Inputs): RoleDashboardMetrics => {
   // 和老板那套用同一个口径 —— 两边数字对不上是这个项目最高频的 bug 形态
   const activeProjects = inputs.projects.filter(isLiveProject);
 
-  // 没写负责人的项目 —— 这是她最该先处理的一类：没人认领就没人推进
-  const unassigned = activeProjects.filter(p => !String(p.manager || '').trim());
+  /*
+    没人认领的项目 —— 这是她最该先处理的一类：没人认领就没人推进。
+
+    口径必须走 ownership.ts，不许在这里自己判空。
+    2026-09-17 跑交叉复核时这张卡显示 0，而库里明明躺着一个负责人是
+    「待指派」的项目 —— 因为这里原来写的是
+        !String(p.manager || '').trim()
+    只认**空字符串**。于是**这张专门用来发现"没人认领的项目"的卡片，
+    恰恰看不见没人认领的项目**；而新手引导还在教总助
+    「『待指派负责人』不为零，先处理这个」（steps.ts）。
+
+    这就是嘉力那次的同款：判空写成枚举几个已知的词，别人换个说法就漏。
+    2026-09-15 已经为此收口出 isUnownedProject，这个文件当时漏掉了 ——
+    「改一处漏一处」。
+  */
+  const unassigned = activeProjects.filter(p => isUnownedProject(p as any));
 
   const openTasks = openTasksOf(inputs.projects);
   const overdueTasks = openTasks.filter(t => isOverdue(t, now.getTime()));   // 同上：一份实现
