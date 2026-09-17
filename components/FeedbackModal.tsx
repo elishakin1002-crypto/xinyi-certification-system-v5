@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { MessageSquare, X, Send, Loader2, CheckCircle2 } from 'lucide-react';
+import { feedbackKindLabel, feedbackSeverityLabel } from '../src/modules/labels';
 
 /**
  * 问题反馈弹窗。
@@ -26,17 +27,18 @@ import { MessageSquare, X, Send, Loader2, CheckCircle2 } from 'lucide-react';
 type Kind = 'bug' | 'confused' | 'wrong' | 'improve';
 type Severity = 'blocked' | 'annoying' | 'later';
 
+// 文案引 labels.ts —— 管理端读的是同一份，不会再出现"用户说很烦、管理员看到有点烦"
 const KINDS: Array<{ id: Kind; label: string; hint: string }> = [
-  { id: 'bug', label: '系统出错了', hint: '报错、白屏、点了没反应' },
-  { id: 'confused', label: '我不知道怎么操作', hint: '找不到入口、不确定该填什么' },
-  { id: 'wrong', label: '能用，但结果不对', hint: '数字对不上、显示的不是我要的' },
-  { id: 'improve', label: '希望这样改', hint: '现在能用，但很别扭' },
+  { id: 'bug', label: feedbackKindLabel('bug'), hint: '报错、白屏、点了没反应' },
+  { id: 'confused', label: feedbackKindLabel('confused'), hint: '找不到入口、不确定该填什么' },
+  { id: 'wrong', label: feedbackKindLabel('wrong'), hint: '数字对不上、显示的不是我要的' },
+  { id: 'improve', label: feedbackKindLabel('improve'), hint: '现在能用，但很别扭' },
 ];
 
 const SEVERITIES: Array<{ id: Severity; label: string }> = [
-  { id: 'blocked', label: '挡住干活了' },
-  { id: 'annoying', label: '能绕过去，但烦' },
-  { id: 'later', label: '不急' },
+  { id: 'blocked', label: feedbackSeverityLabel('blocked') },
+  { id: 'annoying', label: feedbackSeverityLabel('annoying') },
+  { id: 'later', label: feedbackSeverityLabel('later') },
 ];
 
 type Props = { open: boolean; onClose: () => void };

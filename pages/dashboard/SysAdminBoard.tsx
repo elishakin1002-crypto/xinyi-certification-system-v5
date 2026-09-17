@@ -20,6 +20,7 @@ import {
   RefreshCw, ShieldCheck, Sliders, Users, Wrench, MessageSquare
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { FEEDBACK_KIND_LABEL, FEEDBACK_SEVERITY_LABEL } from '../../src/modules/labels';
 
 type Overview = {
   errors: { today: { kinds: number; occurrences: number; unhandled: number };
@@ -41,12 +42,13 @@ type FeedbackRow = {
   intent: string; actual: string; route: string; user_name: string;
 };
 
-const FB_KIND: Record<string, string> = {
-  bug: '出错了', confused: '不会用', wrong: '结果不对', improve: '希望改进',
-};
-const FB_SEV: Record<string, string> = {
-  blocked: '挡住干活了', annoying: '有点烦', later: '不急',
-};
+/*
+  管理端必须显示用户当时选中的那句话。
+  原来这里另写了一套（「有点烦」对应用户选的「能绕过去，但烦」），
+  **把用户的判断在传递过程中改小了** —— 管理员会因此排低优先级。
+*/
+const FB_KIND = FEEDBACK_KIND_LABEL as Record<string, string>;
+const FB_SEV = FEEDBACK_SEVERITY_LABEL as Record<string, string>;
 const FB_STATUS: Record<string, string> = {
   ack: '已看到', doing: '处理中', done: '已解决', wontfix: '暂不处理',
 };
@@ -193,7 +195,9 @@ const SysAdminBoard: React.FC = () => {
 
         <Card title="待改密码" icon={<KeyRound className="w-4 h-4" />}>
           <Stat
-            label="还没首次登录的账号"
+            /* 数的是 must_change_password：重置过密码的人也会被算进来，
+               和"还没首次登录"不是一回事（字段排查 C14）。员工页对同一含义已叫「需改密」 */
+            label="待修改密码账号"
             value={sec?.accounts.pending_password ?? '—'}
             tone={(sec?.accounts.pending_password || 0) > 0 ? 'normal' : 'muted'}
           />

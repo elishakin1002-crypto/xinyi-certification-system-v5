@@ -548,7 +548,14 @@ const buildSalesMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetri
   });
 
   const staleLeads = myLeadSet.filter(l => diffDays(l.lastContact, now) < -7);
-  const hotLeads = myLeadSet.filter(l => l.intent === 'High' && l.status !== Status.Converted).slice(0, 5);
+  /*
+    数量和展示条数要分开。
+    原来这里直接 slice(0,5)，于是「即将成交客户」这张**数量卡**
+    超过 5 条也永远显示 5 —— 销售看不出实际有多少（字段排查 C15）。
+    截断只该发生在列表渲染那一步。
+  */
+  const hotLeadsAll = myLeadSet.filter(l => l.intent === 'High' && l.status !== Status.Converted);
+  const hotLeads = hotLeadsAll.slice(0, 5);
   const sleepingCustomers = inputs.customers.filter(c => {
     const last = (c.followUpRecords || []).filter(r => String(r.operator || '') === me).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
     if (!last) return false;
@@ -591,15 +598,25 @@ const buildSalesMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetri
       { id: 'sales-conversion', title: '个人转化率（线索→营收项目）', value: rate(myMonthLeadRevenueProjects.length, myMonthLeads), route: `${APP_ROUTES.LEADS}?owner=me&filter=conversion` }
     ],
     middleCards: [
-      { id: 'sales-hot', title: '即将成交客户', value: String(hotLeads.length), route: `${APP_ROUTES.LEADS}?owner=me&intent=high` },
+      /*
+        判据只是「意向=High 且尚未转化」，既没有报价、也没有预计成交日。
+        叫「即将成交」是替销售下了一个系统并不知道的结论（C15）。
+      */
+      { id: 'sales-hot', title: '高意向未转化线索', value: String(hotLeadsAll.length), route: `${APP_ROUTES.LEADS}?owner=me&intent=high` },
       { id: 'sales-stale', title: '超过7天未跟进', value: String(staleLeads.length), route: `${APP_ROUTES.LEADS}?owner=me&stale=7d` },
       { id: 'sales-sleeping', title: '沉睡客户（30天）', value: String(sleepingCustomers.length), route: `${APP_ROUTES.CUSTOMERS}?owner=me&filter=sleeping30` },
       { id: 'sales-repeat', title: '可复购客户', value: String(repurchaseCustomers.length), route: `${APP_ROUTES.CUSTOMERS}?owner=me&filter=repurchase` },
       { id: 'sales-expiring', title: '合同即将到期', value: String(expiringContracts.length), route: `${APP_ROUTES.CONTRACTS}?owner=me&due=15d` }
     ],
     bottomCards: [
-      { id: 'sales-today-contact', title: '今日必须联系客户', value: String(hotLeads.length), route: `${APP_ROUTES.LEADS}?owner=me&today=contact` },
-      { id: 'sales-pending-quote', title: '待报价客户', value: String(myLeadSet.filter(l => l.status === Status.Pending).length), route: `${APP_ROUTES.LEADS}?owner=me&status=pending` },
+      /*
+        和上面那张**是同一个数组**，只是换了个标题。
+        系统里没有"今日约定联系日期"这个字段，说"今日必须"是编的。
+        真要做这张卡，得先有约定联系日（C15）。
+      */
+      { id: 'sales-today-contact', title: '优先联系线索', value: String(hotLeadsAll.length), route: `${APP_ROUTES.LEADS}?owner=me&today=contact` },
+      /* Pending 在统一的线索状态里就是「跟进中」，没有任何报价判据（C15） */
+      { id: 'sales-pending-quote', title: '跟进中线索', value: String(myLeadSet.filter(l => l.status === Status.Pending).length), route: `${APP_ROUTES.LEADS}?owner=me&status=pending` },
       { id: 'sales-pending-sign', title: '待签合同', value: String(myContracts.filter(c => c.status === Status.Pending).length), route: `${APP_ROUTES.CONTRACTS}?owner=me&status=pending` }
     ],
     listItems: todayActionList
@@ -780,7 +797,12 @@ const buildFinanceMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMet
       { id: 'fin-next30', title: '未来30天预计回款', value: money(expected30), route: `${APP_ROUTES.FINANCE}?range=30d` }
     ],
     middleCards: [
-      { id: 'fin-missing-amt', title: '合同金额缺失项目', value: String(missingContractAmountProjects), route: `${APP_ROUTES.PROJECTS}?filter=missing_contract_amount` },
+      /*
+        判据是 Delivery && project.projectAmount <= 0，**量的是项目金额**，
+        不是合同金额。合同金额可能已经齐全，只是项目额没填 ——
+        两个字段不能混叫（字段排查 C16）。项目详情甚至支持从合同带入金额。
+      */
+      { id: 'fin-missing-amt', title: '待补项目金额', value: String(missingContractAmountProjects), route: `${APP_ROUTES.PROJECTS}?filter=missing_contract_amount` },
       { id: 'fin-rec-no-contract', title: '存在回款但无合同总额', value: String(receivableWithoutContractAmount), route: `${APP_ROUTES.FINANCE}?filter=no_contract_amount` },
       { id: 'fin-uninvoiced', title: '待确认结算单', value: String(draftSettlements), route: `${APP_ROUTES.FINANCE}?tab=settlements&status=draft` },
       { id: 'fin-abnormal', title: '回款进度异常', value: String(abnormalProgress), route: `${APP_ROUTES.FINANCE}?filter=progress_abnormal` }

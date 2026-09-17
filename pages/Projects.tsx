@@ -33,7 +33,7 @@ import { PROJECT_TYPE_META } from '../types';
 // 术语只有一份定义，见 src/modules/glossary.ts
 import { TERM_PROJECT, TERM_TASK } from '../src/modules/glossary';
 import { SERVICE_GROUPS, GROUP_TO_CATALOG_CATEGORY, type ServiceGroup } from '../src/modules/serviceLine';
-import { auditSeverityLabel, auditStatusLabel, taskStatusLabel, noNextTaskReason } from '../src/modules/labels';
+import { auditSeverityLabel, auditStatusLabel, taskStatusLabel, noNextTaskReason, FIELD } from '../src/modules/labels';
 
 const normalizeServiceToken = (value: string) => (value || '')
   .toUpperCase()
@@ -457,7 +457,7 @@ const Projects = () => {
       else if (focus.type === 'completed_7d') setDashboardFocusLabel('我本周完成任务涉及项目');
       else if (focus.type === 'customer_confirm') setDashboardFocusLabel('客户待确认事项');
       else if (focus.type === 'progress_lt_50') setDashboardFocusLabel('服务进度低于 50% 项目');
-      else if (focus.type === 'missing_contract_amount') setDashboardFocusLabel('合同金额缺失项目');
+      else if (focus.type === 'missing_contract_amount') setDashboardFocusLabel('待补项目金额');
       else if (focus.type === 'delay') setDashboardFocusLabel('项目延误清单');
       else if (focus.type === 'logs') setDashboardFocusLabel(focus.metric === 'hours' ? '本周工时日志项目' : '本周日志覆盖项目');
       else if (focus.type === 'busiest_owner') setDashboardFocusLabel('任务堆积最多项目');
@@ -981,7 +981,7 @@ const Projects = () => {
     e.preventDefault();
     const manager = String(formData.manager || '').trim();
     if (!manager) {
-        alert("必须指定执行负责人！");
+        alert(`必须指定${FIELD.projectManager}！`);
         return;
     }
     /*
@@ -995,7 +995,7 @@ const Projects = () => {
       return;
     }
     if (!isValidManager(manager)) {
-      alert('执行负责人请从列表选择（或选择“待指派”）。');
+      alert(`${FIELD.projectManager}请从列表选择（或选择“待指派”）。`);
       return;
     }
     /*
@@ -1575,7 +1575,10 @@ const Projects = () => {
                             <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wider ${
                                 project.costStatus === '已确认' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                             }`}>
-                                {project.costStatus || '待补全'}
+                                {/* 「已确认」在财务那边指结算审核完成（还能点"标记支付"）。
+                                    这里指的是**项目金额**确认，是结项的前置条件。
+                                    同一个词两个意思，加限定词分开（字段排查 B02）。 */}
+                                {project.costStatus === '已确认' ? '金额已确认' : (project.costStatus || '金额待补全')}
                             </span>
                         </h4>
                         <p className="text-xs text-gray-400 mt-1 font-bold">
@@ -1717,8 +1720,15 @@ const Projects = () => {
              <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm space-y-4">
                 <div className="flex justify-between text-sm"> <span className="text-gray-400 font-bold">结算对象:</span> <span className="font-bold text-gray-900">{project.manager}</span> </div>
                 <div className="flex justify-between text-sm"> <span className="text-gray-400 font-bold">规则类型:</span> <span className="font-bold text-gray-900">按回款比例提成</span> </div>
-                <div className="flex justify-between items-center pt-2 border-t border-gray-50"> <span className="text-sm text-gray-400 font-bold">预估金额:</span> <span className="text-lg font-black text-indigo-600 font-mono">10%</span> </div>
-                <p className="text-[10px] text-gray-300 italic">* 提示：点击发起结算即可生成应付单。</p>
+                {/*
+                  原来这一行叫「预估金额」，值却写死成「10%」——
+                  **10% 是比例不是金额**，而且它没有读这个人的提成规则，
+                  任何项目都显示 10%（字段排查 C02）。
+                  在真的能按规则算出元数之前，只说它是参考比例、尚未核算。
+                */}
+                <div className="flex justify-between items-center pt-2 border-t border-gray-50"> <span className="text-sm text-gray-400 font-bold">参考提成比例:</span> <span className="text-lg font-black text-indigo-600 font-mono">10%<span className="text-[10px] font-bold text-gray-400 ml-1">尚未核算</span></span> </div>
+                {/* 发起结算的按钮早就改成「去结算页导入」了，这句提示没跟上 */}
+                <p className="text-[10px] text-gray-300 italic">* 提示：结算单在顾问结算页用 Excel 导入。</p>
              </div>
              )}
              <div className="space-y-3">
@@ -2329,7 +2339,7 @@ const Projects = () => {
                                     {task.category === 'Core'
                                       ? '核心'
                                       : task.category === 'ThirdParty'
-                                      ? '合作'
+                                      ? FIELD.thirdPartyTask
                                       : task.category === 'System'
                                       ? '系统'
                                       : '辅助'}
@@ -2441,7 +2451,7 @@ const Projects = () => {
                                     {task.category === 'Core'
                                       ? '核心'
                                       : task.category === 'ThirdParty'
-                                      ? '合作'
+                                      ? FIELD.thirdPartyTask
                                       : task.category === 'System'
                                       ? '系统'
                                       : '辅助'}
@@ -2924,7 +2934,7 @@ const Projects = () => {
       {filterStatus === 'Overdue' ? <div data-testid="overdue-task-results" className="rounded-2xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-100">
         <h2 className="px-4 py-3 font-bold text-gray-900">有逾期任务的项目</h2>
         {filteredProjects.flatMap(project => (project.tasks || []).filter(isOverdueTask).map(task => <button key={project.id + ':' + task.id} type="button" onClick={() => { selectOverview('All'); openProject(project.id); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center justify-between gap-4">
-          <div><p className="font-bold text-gray-900">{task.title}</p><p className="mt-1 text-xs text-gray-500">{project.name} · 负责人：{task.owner || project.manager}</p></div>
+          <div><p className="font-bold text-gray-900">{task.title}</p><p className="mt-1 text-xs text-gray-500">{project.name} · {FIELD.taskOwner}：{task.owner || `${project.manager}（${FIELD.taskOwnerFallback}）`}</p></div>
           <div className="shrink-0 text-xs text-red-600">截止 {task.deadline}<span className="block mt-1 text-blue-600">查看所属项目 →</span></div>
         </button>))}
         {filteredProjects.length === 0 && <p className="p-6 text-sm text-gray-500">当前范围没有有逾期任务的项目。</p>}
@@ -2968,7 +2978,7 @@ const Projects = () => {
               <div className="flex justify-between items-start mb-2">
                 <div>
                   <h3 className="font-black text-gray-900 text-base">{project.name}</h3>
-                  <p className="text-xs text-gray-500 mt-1">负责人: {project.manager}</p>
+                  <p className="text-xs text-gray-500 mt-1">{FIELD.projectManager}: {project.manager}</p>
                 </div>
                 {getStatusBadge(project.status)}
               </div>
@@ -3006,7 +3016,7 @@ const Projects = () => {
                 <th className="w-10"></th>
                 <th className={`${thClass} whitespace-nowrap`}>项目 / 客户</th>
                 <th className={`${thClass} whitespace-nowrap`}>下一步要做什么</th>
-                <th className={`${thClass} whitespace-nowrap`}>负责人</th>
+                <th className={`${thClass} whitespace-nowrap`}>{FIELD.projectManager}</th>
                 <th className={`${thClass} whitespace-nowrap`}>进度</th>
                 <th className={`${thClass} whitespace-nowrap`}>状态</th>
               </tr>
@@ -3342,7 +3352,10 @@ const Projects = () => {
 
                       <div className="grid grid-cols-2 gap-4">
                           <div>
-                              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">执行负责人</label>
+                              {/* 项目层面统一叫「项目负责人」；任务层面叫「任务执行人」。
+                                  两者可以不是同一个人 —— 同一份合同常有多个服务项
+                                  由不同咨询师负责（字段排查 B01）。 */}
+                              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">{FIELD.projectManager}</label>
                               <select
                                 required
                                 className="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
@@ -3528,7 +3541,7 @@ const Projects = () => {
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">负责人</label>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">{FIELD.projectManager}</label>
                 <select
                   className="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
                   value={assignOwnerUserId}

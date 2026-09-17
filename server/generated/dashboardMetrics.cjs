@@ -531,7 +531,8 @@ var buildSalesMetrics = (inputs, monthKey) => {
     return ownedByUser(p, user);
   });
   const staleLeads = myLeadSet.filter((l) => diffDays(l.lastContact, now) < -7);
-  const hotLeads = myLeadSet.filter((l) => l.intent === "High" && l.status !== "Converted" /* Converted */).slice(0, 5);
+  const hotLeadsAll = myLeadSet.filter((l) => l.intent === "High" && l.status !== "Converted" /* Converted */);
+  const hotLeads = hotLeadsAll.slice(0, 5);
   const sleepingCustomers = inputs.customers.filter((c) => {
     const last = (c.followUpRecords || []).filter((r) => String(r.operator || "") === me).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
     if (!last) return false;
@@ -569,15 +570,25 @@ var buildSalesMetrics = (inputs, monthKey) => {
       { id: "sales-conversion", title: "\u4E2A\u4EBA\u8F6C\u5316\u7387\uFF08\u7EBF\u7D22\u2192\u8425\u6536\u9879\u76EE\uFF09", value: rate(myMonthLeadRevenueProjects.length, myMonthLeads), route: `${APP_ROUTES.LEADS}?owner=me&filter=conversion` }
     ],
     middleCards: [
-      { id: "sales-hot", title: "\u5373\u5C06\u6210\u4EA4\u5BA2\u6237", value: String(hotLeads.length), route: `${APP_ROUTES.LEADS}?owner=me&intent=high` },
+      /*
+        判据只是「意向=High 且尚未转化」，既没有报价、也没有预计成交日。
+        叫「即将成交」是替销售下了一个系统并不知道的结论（C15）。
+      */
+      { id: "sales-hot", title: "\u9AD8\u610F\u5411\u672A\u8F6C\u5316\u7EBF\u7D22", value: String(hotLeadsAll.length), route: `${APP_ROUTES.LEADS}?owner=me&intent=high` },
       { id: "sales-stale", title: "\u8D85\u8FC77\u5929\u672A\u8DDF\u8FDB", value: String(staleLeads.length), route: `${APP_ROUTES.LEADS}?owner=me&stale=7d` },
       { id: "sales-sleeping", title: "\u6C89\u7761\u5BA2\u6237\uFF0830\u5929\uFF09", value: String(sleepingCustomers.length), route: `${APP_ROUTES.CUSTOMERS}?owner=me&filter=sleeping30` },
       { id: "sales-repeat", title: "\u53EF\u590D\u8D2D\u5BA2\u6237", value: String(repurchaseCustomers.length), route: `${APP_ROUTES.CUSTOMERS}?owner=me&filter=repurchase` },
       { id: "sales-expiring", title: "\u5408\u540C\u5373\u5C06\u5230\u671F", value: String(expiringContracts.length), route: `${APP_ROUTES.CONTRACTS}?owner=me&due=15d` }
     ],
     bottomCards: [
-      { id: "sales-today-contact", title: "\u4ECA\u65E5\u5FC5\u987B\u8054\u7CFB\u5BA2\u6237", value: String(hotLeads.length), route: `${APP_ROUTES.LEADS}?owner=me&today=contact` },
-      { id: "sales-pending-quote", title: "\u5F85\u62A5\u4EF7\u5BA2\u6237", value: String(myLeadSet.filter((l) => l.status === "Pending" /* Pending */).length), route: `${APP_ROUTES.LEADS}?owner=me&status=pending` },
+      /*
+        和上面那张**是同一个数组**，只是换了个标题。
+        系统里没有"今日约定联系日期"这个字段，说"今日必须"是编的。
+        真要做这张卡，得先有约定联系日（C15）。
+      */
+      { id: "sales-today-contact", title: "\u4F18\u5148\u8054\u7CFB\u7EBF\u7D22", value: String(hotLeadsAll.length), route: `${APP_ROUTES.LEADS}?owner=me&today=contact` },
+      /* Pending 在统一的线索状态里就是「跟进中」，没有任何报价判据（C15） */
+      { id: "sales-pending-quote", title: "\u8DDF\u8FDB\u4E2D\u7EBF\u7D22", value: String(myLeadSet.filter((l) => l.status === "Pending" /* Pending */).length), route: `${APP_ROUTES.LEADS}?owner=me&status=pending` },
       { id: "sales-pending-sign", title: "\u5F85\u7B7E\u5408\u540C", value: String(myContracts.filter((c) => c.status === "Pending" /* Pending */).length), route: `${APP_ROUTES.CONTRACTS}?owner=me&status=pending` }
     ],
     listItems: todayActionList
@@ -688,7 +699,12 @@ var buildFinanceMetrics = (inputs, monthKey) => {
       { id: "fin-next30", title: "\u672A\u676530\u5929\u9884\u8BA1\u56DE\u6B3E", value: money(expected30), route: `${APP_ROUTES.FINANCE}?range=30d` }
     ],
     middleCards: [
-      { id: "fin-missing-amt", title: "\u5408\u540C\u91D1\u989D\u7F3A\u5931\u9879\u76EE", value: String(missingContractAmountProjects), route: `${APP_ROUTES.PROJECTS}?filter=missing_contract_amount` },
+      /*
+        判据是 Delivery && project.projectAmount <= 0，**量的是项目金额**，
+        不是合同金额。合同金额可能已经齐全，只是项目额没填 ——
+        两个字段不能混叫（字段排查 C16）。项目详情甚至支持从合同带入金额。
+      */
+      { id: "fin-missing-amt", title: "\u5F85\u8865\u9879\u76EE\u91D1\u989D", value: String(missingContractAmountProjects), route: `${APP_ROUTES.PROJECTS}?filter=missing_contract_amount` },
       { id: "fin-rec-no-contract", title: "\u5B58\u5728\u56DE\u6B3E\u4F46\u65E0\u5408\u540C\u603B\u989D", value: String(receivableWithoutContractAmount), route: `${APP_ROUTES.FINANCE}?filter=no_contract_amount` },
       { id: "fin-uninvoiced", title: "\u5F85\u786E\u8BA4\u7ED3\u7B97\u5355", value: String(draftSettlements), route: `${APP_ROUTES.FINANCE}?tab=settlements&status=draft` },
       { id: "fin-abnormal", title: "\u56DE\u6B3E\u8FDB\u5EA6\u5F02\u5E38", value: String(abnormalProgress), route: `${APP_ROUTES.FINANCE}?filter=progress_abnormal` }

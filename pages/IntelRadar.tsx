@@ -11,6 +11,7 @@ import { Calendar, CheckCircle2, FileText, Filter, Flame, Loader2, PlusCircle, R
 import { dataService } from '../services/dataService';
 import { MARKET_SIGNAL_STATUS } from '../src/constants/status.ts';
 import { useLocation } from 'react-router-dom';
+import { intelUrgencyLabel } from '../src/modules/labels';
 
 const badgeClass = (active: boolean) =>
   `px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
@@ -759,7 +760,9 @@ const IntelRadar = () => {
             <div className="p-3 bg-white/20 rounded-xl mr-4"><Target className="w-6 h-6" /></div>
             <div className="min-w-0">
               <div className="text-2xl font-black">{stats.converted}</div>
-              <div className="text-xs opacity-80 font-bold uppercase tracking-tight">已转化为线索</div>
+              {/* 这个动作建的是「跟进项目」，不是销售线索。
+                  建项目 ≠ 已建线索，后者是另一步（字段排查 C06）。 */}
+              <div className="text-xs opacity-80 font-bold uppercase tracking-tight">已转为研判任务</div>
             </div>
           </div>
         </div>
@@ -903,7 +906,7 @@ const IntelRadar = () => {
                               {kindLabel[s.kind]}
                             </span>
                             <span className={`text-[10px] font-black px-2 py-1 rounded-lg border ${urgencyPill(s.urgency)}`}>
-                              {s.urgency === 'high' ? '高紧急' : s.urgency === 'medium' ? '中紧急' : '低紧急'}
+                              紧急度：{intelUrgencyLabel(s.urgency)}
                             </span>
                             {s.serviceCategory && (
                               <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100">
@@ -1004,7 +1007,8 @@ const IntelRadar = () => {
                       {kindLabel[selected.kind]} · {selected.sourceName}
                     </span>
                     <span className={`text-[11px] font-black px-3 py-1.5 rounded-full border ${urgencyPill(selected.urgency)}`}>
-                      紧急度：{selected.urgency}
+                      {/* 详情原来直接把 high/medium/low 吐给用户看 */}
+                      紧急度：{intelUrgencyLabel(selected.urgency)}
                     </span>
                     <span className="text-[11px] font-black px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
                       评分：{selected.score}

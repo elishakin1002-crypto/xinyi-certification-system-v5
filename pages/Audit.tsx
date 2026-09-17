@@ -525,7 +525,7 @@ const Audit = () => {
         {
           id: 'demo-verifying',
           title: '示例验证压力',
-          value: `尾月待验证 ${latestTrendPoint?.待验证 || 0} 项`,
+          value: `尾月发现且仍待验证 ${latestTrendPoint?.待验证 || 0} 项`,
           detail: '这类项通常代表整改动作已做，但验证确认还未完成，最容易卡在“已整改未关单”。',
           tone: 'amber'
         },
@@ -551,7 +551,12 @@ const Audit = () => {
         id: 'trend',
         title: '本月走势',
         value: latestDelta > 0 ? `新增较上月 +${latestDelta}` : latestDelta < 0 ? `新增较上月 ${latestDelta}` : '新增与上月持平',
-        detail: `当前月新增 ${latestTrendPoint?.新增 || 0} 项、关闭 ${latestTrendPoint?.关闭 || 0} 项、待验证 ${latestTrendPoint?.待验证 || 0} 项。`,
+        /*
+          「待验证」那一项是**按发现月份**统计的当前状态，
+          不是"这个月进入待验证的"，也不是月末库存快照 ——
+          真要做月末趋势得有状态变更历史，不能拿当前状态倒填（C18）。
+        */
+        detail: `当前月新增 ${latestTrendPoint?.新增 || 0} 项、关闭 ${latestTrendPoint?.关闭 || 0} 项、本月发现且当前仍待验证 ${latestTrendPoint?.待验证 || 0} 项。`,
         tone: (latestTrendPoint?.待验证 || 0) > 0 ? 'amber' : 'indigo'
       },
       {
@@ -1486,7 +1491,7 @@ const Audit = () => {
                     : issue.severity === 'Minor' ? 'bg-amber-50 text-amber-700'
                     : 'bg-gray-100 text-gray-600'
                 }`}>
-                  {issue.severity === 'Major' ? '严重' : issue.severity === 'Minor' ? '一般' : '观察'}
+                  {auditSeverityLabel(issue.severity)}
                 </span>
                 <span className="truncate text-sm font-black text-gray-900">{issue.customerName}</span>
               </div>
@@ -1662,7 +1667,8 @@ const Audit = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
                 <div>
-                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">严重度评分</label>
+                  {/* 选的是等级不是分值，叫「评分」会和同页的数值型「匹配度」混淆 */}
+                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">严重程度</label>
                   <select className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" value={String(formData.severity || 'Minor')} onChange={e => setFormData({ ...formData, severity: e.target.value as AuditIssue['severity'] })}>
                     <option value="Minor">一般不符合 (Minor)</option>
                     <option value="Major">严重不符合 (Major)</option>
@@ -1679,7 +1685,7 @@ const Audit = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">整改死线</label>
+                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">{FIELD.auditDeadline}</label>
                   <input type="date" className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" value={String(formData.deadline || '')} onChange={e => setFormData({ ...formData, deadline: e.target.value })} />
                 </div>
                 <div>

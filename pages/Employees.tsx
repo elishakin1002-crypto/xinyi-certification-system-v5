@@ -7,6 +7,7 @@ import { SampleTr } from '../components/SampleRow';
 import { EmptyState } from '../src/ui';
 import { RoleID, ActionCode } from '../types';
 import { authService, EmployeeAccount, EmployeeAccountInput } from '../services/authService';
+import { FIELD } from '../src/modules/labels';
 
 type FormState = {
   email: string;
@@ -326,7 +327,9 @@ const Employees: React.FC = () => {
                   onClick={() => setShowDisabled(v => !v)}
                   className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-bold text-gray-600 hover:bg-gray-50"
                 >
-                  {showDisabled ? '只看在职' : '显示已停用'}
+                  {/* 「在职」和「账号启用」不是同一件事：这里只按 status 过滤，
+                      而这一页明确允许兼职和临时合作方（字段排查 C13） */}
+                  {showDisabled ? '只看启用账号' : '显示已停用'}
                 </button>
               )}
             </div>

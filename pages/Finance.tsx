@@ -10,6 +10,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { aiService } from '../services/aiService';
 import { SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 import { isReceivableOverdue } from '../src/modules/glossary';
+import { settlementStatusLabel, FIELD } from '../src/modules/labels';
 
 const Finance = () => {
   const { contracts, settlements, projects, toggleReceivableStatus, rejectReceivable, importSettlements, updateSettlementStatus, vendors } = useApp();
@@ -189,7 +190,7 @@ const Finance = () => {
       return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
     };
 
-    const header = ['到期日', '客户', '合同', '收款节点', '期数', '金额(元)', '状态'];
+    const header = ['到期日', '客户', '合同', FIELD.receivableNode, '期数', '金额(元)', '状态'];
     const rows = filteredReceivables.map(r => [
       r.dueDate || '待定',
       r.customerName,
@@ -308,11 +309,8 @@ const Finance = () => {
       }
   };
 
-  const getSettlementStatusText = (status: Settlement['status']) => {
-    if (status === 'paid') return '已支付';
-    if (status === 'confirmed') return '已确认';
-    return '待支付';
-  };
+  // 口径收在 labels.ts：draft=待确认结算、confirmed=待支付、paid=已支付（B06）
+  const getSettlementStatusText = (status: Settlement['status']) => settlementStatusLabel(status);
 
   const advanceSettlementStatus = (item: Settlement) => {
     const next = item.status === 'draft' ? 'confirmed' : item.status === 'confirmed' ? 'paid' : 'paid';
@@ -469,7 +467,7 @@ const Finance = () => {
                             <tr>
                               <th className={thClass}>应收日期</th>
                               <th className={thClass}>客户名称</th>
-                              <th className={thClass}>款项节点 (摘要)</th>
+                              <th className={thClass}>{FIELD.receivableNode}（摘要）</th>
                               <th className={thClass}>关联合同</th>
                               <th className={`${thClass} text-right`}>应收金额</th>
                               <th className={`${thClass} text-center`}>状态</th>
@@ -619,7 +617,9 @@ const Finance = () => {
                     <div className="p-3 bg-white/20 rounded-xl mr-4"><Clock className="w-6 h-6" /></div>
                     <div className="min-w-0">
                         <div className="text-2xl font-black truncate">¥{pendingSettlement.toLocaleString()}</div>
-                        <div className="text-xs opacity-80 font-bold uppercase tracking-tight">待支付 / 草稿</div>
+                        {/* 这张卡算的是 status !== paid，含待确认和待支付两档 ——
+                            所以它一定大于筛选「待支付」的金额，标题要说清（B06） */}
+                        <div className="text-xs opacity-80 font-bold uppercase tracking-tight">未支付结算金额（含待确认）</div>
                     </div>
                 </div>
             </div>
@@ -631,7 +631,7 @@ const Finance = () => {
                             {['All', 'Internal', 'External'].map(type => ( <button key={type} onClick={() => setSettlementTypeFilter(type as any)} className={`px-3 py-1 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${settlementTypeFilter === type ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`} > {type === 'All' ? '全部' : type === 'Internal' ? '内部提成' : '外包/采购'} </button> ))} 
                         </div>
                         <div className="flex bg-white border border-gray-200 rounded-lg p-0.5 overflow-x-auto no-scrollbar max-w-[240px] md:max-w-none"> 
-                            {['all', 'draft', 'confirmed', 'paid'].map(status => ( <button key={status} onClick={() => setSettlementStatusFilter(status as any)} className={`px-3 py-1 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${settlementStatusFilter === status ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`} > {status === 'all' ? '全部状态' : status === 'draft' ? '待支付' : status === 'confirmed' ? '已确认' : '已支付'} </button> ))} 
+                            {['all', 'draft', 'confirmed', 'paid'].map(status => ( <button key={status} onClick={() => setSettlementStatusFilter(status as any)} className={`px-3 py-1 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${settlementStatusFilter === status ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`} > {status === 'all' ? '全部状态' : settlementStatusLabel(status)} </button> ))} 
                         </div> 
                     </div> 
                     <div className="flex items-center gap-2 w-full md:w-auto">
@@ -685,9 +685,9 @@ const Finance = () => {
                                 <td className={`${tdClass} text-gray-500 text-sm`}>{s.notes || '-'}</td>
                                 <td className={`${tdClass} text-right font-black font-mono text-gray-900 text-base`}>¥{s.amount.toLocaleString()}</td>
                                 <td className={`${tdClass} text-center`}>
-                                  {s.status === 'paid' && <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold uppercase">已支付</span>}
-                                  {s.status === 'confirmed' && <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold uppercase">已确认</span>}
-                                  {s.status === 'draft' && <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold uppercase">待支付</span>}
+                                  {s.status === 'paid' && <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold uppercase">{settlementStatusLabel('paid')}</span>}
+                                  {s.status === 'confirmed' && <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold uppercase">{settlementStatusLabel('confirmed')}</span>}
+                                  {s.status === 'draft' && <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold uppercase">{settlementStatusLabel('draft')}</span>}
                                 </td>
                                 <td className={`${tdClass} text-right`}>
                                   <div className="inline-flex items-center gap-2">

@@ -19,7 +19,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { adviseIntake } from '../src/modules/knowledge/intake';
 import { APP_ROUTES } from '../src/routes';
-import { auditSeverityLabel, auditStatusLabel } from '../src/modules/labels';
+import { auditSeverityLabel, auditStatusLabel, knowledgeCategoryLabel } from '../src/modules/labels';
 
 const Knowledge = () => {
   const { knowledgeDocs, auditIssues, addKnowledgeDoc, deleteKnowledgeDoc, updateKnowledgeDoc, currentUser, activeRole, backfillPdcaForPaidContracts } = useApp();
@@ -686,10 +686,14 @@ const Knowledge = () => {
                             }}
                           >
                               <option value="Company Profile">🏢 公司资料/制度</option>
-                              <option value="Product Service">📦 产品手册</option>
-                              <option value="Standard">⚖️ 行业标准</option>
-                              <option value="Template">📄 文档模板</option>
-                              <option value="Training">🎓 内部培训</option>
+                              {/* 上传时选什么名字，存进去再看就该是什么名字。
+                                  原来上传叫「产品手册/行业标准/内部培训」，
+                                  查看时变成「产品资料/标准法规/培训资料」——
+                                  人会以为存错了地方（字段排查 A04）。 */}
+                              <option value="Product Service">📦 {knowledgeCategoryLabel('Product Service')}</option>
+                              <option value="Standard">⚖️ {knowledgeCategoryLabel('Standard')}</option>
+                              <option value="Template">📄 {knowledgeCategoryLabel('Template')}</option>
+                              <option value="Training">🎓 {knowledgeCategoryLabel('Training')}</option>
                               <option value="PDCA">🧭 客户复盘 (PDCA)</option>
                               <option value="AI生成">🤖 AI交付</option>
                           </select>

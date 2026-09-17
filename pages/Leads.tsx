@@ -31,6 +31,7 @@ import { SearchInput, EmptyState, StatCard, StatGrid, tableHeadClass, thClass, t
 import { SampleTr } from '../components/SampleRow';
 import { IngestionUploader } from '../components/IngestionUploader';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
+import { FIELD } from '../src/modules/labels';
 
 /**
  * 把模型返回的日期规整成 YYYY-MM-DD。
@@ -727,7 +728,7 @@ const Leads = () => {
                                 <h3 className="font-bold text-gray-900">基本信息</h3>
                                 <div className="grid grid-cols-2 gap-4 text-sm">
                                     <div>
-                                      <label className="block text-xs text-gray-400 font-bold uppercase mb-1">联系电话</label>
+                                      <label className="block text-xs text-gray-400 font-bold uppercase mb-1">{FIELD.contactPhone}</label>
                                       {isEditing ? (
                                         <input
                                           className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-indigo-100"
@@ -766,13 +767,13 @@ const Leads = () => {
                                       )}
                                     </div>
                                     <div>
-                                      <label className="block text-xs text-gray-400 font-bold uppercase mb-1">统一信用代码</label>
+                                      <label className="block text-xs text-gray-400 font-bold uppercase mb-1">{FIELD.unifiedSocialCreditCode}</label>
                                       {isEditing ? (
                                         <input
                                           className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-indigo-100"
                                           value={editingLeadData.unifiedSocialCreditCode || ''}
                                           onChange={e => setEditingLeadData({ ...editingLeadData, unifiedSocialCreditCode: e.target.value })}
-                                          placeholder="请输入统一信用代码"
+                                          placeholder={`请输入${FIELD.unifiedSocialCreditCode}`}
                                         />
                                       ) : (
                                         <div className="font-mono text-gray-500">{editingLeadData.unifiedSocialCreditCode || '-'}</div>
@@ -1006,7 +1007,8 @@ const Leads = () => {
                               <input required className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" value={newLead.name} onChange={e => setNewLead({...newLead, name: e.target.value})} />
                           </div>
                           <div>
-                              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">手机号</label>
+                              {/* 编辑页本来就允许座机，字段名叫 mobile 不代表业务只收手机（A06） */}
+                              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">{FIELD.contactPhone}</label>
                               <input className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" value={newLead.mobile} onChange={e => setNewLead({...newLead, mobile: e.target.value})} />
                           </div>
                       </div>

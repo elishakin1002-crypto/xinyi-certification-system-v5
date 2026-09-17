@@ -166,24 +166,33 @@ export const REMINDER_SEVERITY_LABEL = {
 } as const;
 export const reminderSeverityLabel = (v: unknown) => pick(REMINDER_SEVERITY_LABEL, v, '未知');
 
-/** 用户反馈的类别。提交端和管理端必须是同一句话 —— 管理员看到的应当是用户选中的含义 */
+/**
+ * 用户反馈的类别。
+ *
+ * **以提交端的原话为准** —— 管理员看到的必须是用户当时选中的那句话。
+ * 原来提交端写「系统出错了 / 我不知道怎么操作 / 能用，但结果不对 / 希望这样改」，
+ * 管理端另写「出错了 / 不会用 / 结果不对 / 希望改进」，
+ * 同一条反馈在两端读起来不是一回事（字段排查 A09）。
+ */
 export const FEEDBACK_KIND_LABEL = {
-  bug: '系统出错',
-  confused: '操作不清楚',
-  wrong: '结果不对',
-  improve: '改进建议'
+  bug: '系统出错了',
+  confused: '我不知道怎么操作',
+  wrong: '能用，但结果不对',
+  improve: '希望这样改'
 } as const;
 export const feedbackKindLabel = (v: unknown) => pick(FEEDBACK_KIND_LABEL, v, '其他');
 
 /**
  * 反馈紧急程度。
+ *
  * 用户选的是「能绕过去，但烦」，管理端原来显示成「有点烦」——
- * 弱化了影响，管理员会因此排低优先级。
+ * **弱化了影响**，管理员会因此排低优先级。这不是文案偏好问题，
+ * 是把用户的判断在传递过程中改小了。
  */
 export const FEEDBACK_SEVERITY_LABEL = {
-  blocking: '挡住干活',
-  annoying: '能绕过但影响使用',
-  minor: '不急'
+  blocked: '挡住干活了',
+  annoying: '能绕过去，但烦',
+  later: '不急'
 } as const;
 export const feedbackSeverityLabel = (v: unknown) => pick(FEEDBACK_SEVERITY_LABEL, v, '未填');
 
@@ -244,3 +253,25 @@ export const noNextTaskReason = (tasks?: ReadonlyArray<{ status?: string }> | nu
   if (list.some(t => String(t?.status || '') === 'Skipped')) return '无待办任务（含已跳过）';
   return '所有任务已完成';
 };
+
+/* ══════════════════════════════════════════════════════════════
+   结算单
+   ══════════════════════════════════════════════════════════════ */
+
+/**
+ * 结算单状态。
+ *
+ * 2026-09-17 字段排查 B06：`draft` 原来叫「待支付」，`confirmed` 叫「已确认」，
+ * 而卡片上的「待支付 / 草稿」金额算的是 `status !== paid`（两者都含）。
+ * 于是**筛选「待支付」筛出来的金额，比卡片上的「待支付」少一截**，
+ * 人看不出中间还差一道确认。
+ *
+ * 改成按流程说话：待确认结算 → 待支付 → 已支付。
+ * 汇总那张卡叫「未支付结算金额（含待确认）」，一眼能解释为什么它更大。
+ */
+export const SETTLEMENT_STATUS_LABEL = {
+  draft: '待确认结算',
+  confirmed: '待支付',
+  paid: '已支付'
+} as const;
+export const settlementStatusLabel = (v: unknown) => pick(SETTLEMENT_STATUS_LABEL, v, '未知状态');

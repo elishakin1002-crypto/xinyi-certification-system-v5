@@ -35,6 +35,7 @@ import { openDashboardRoute } from '../src/modules/dashboardNavigation';
 // 「这笔应收算不算逾期」只有一个判断，见 src/modules/glossary.ts
 import { isReceivableOverdue } from '../src/modules/glossary';
 import { isMyProject } from '../src/modules/ownership';
+import { reminderSeverityLabel } from '../src/modules/labels';
 
 type ReminderView = 'aggregated' | 'detail';
 type AIBriefKey = 'opportunity' | 'risk' | 'intel';
@@ -920,7 +921,12 @@ const Dashboard = () => {
       return alertAggregatedReminders.slice(0, 12).map(alert => ({
         id: alert.id,
         severity: alert.severity === 'high' ? 'high' : alert.severity === 'medium' ? 'medium' : 'low',
-        severityLabel: alert.severity === 'high' ? '严重' : alert.severity === 'medium' ? '高' : '中低',
+        /*
+          同一个 severity 值，顶栏铃铛显示「紧急/关注/一般」，
+          这里原来显示「严重/高/中低」—— **medium 在一处叫"关注"、
+          在另一处叫"高"**，人根本判断不出哪个更急（字段排查 A08）。
+        */
+        severityLabel: reminderSeverityLabel(alert.severity),
         date: alert.latestDate || '',
         title: alert.mainScene,
         meta: (alert.customerName ? `客户【${alert.customerName}】` : '')

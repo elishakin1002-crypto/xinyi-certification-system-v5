@@ -15,6 +15,7 @@ import { dataService } from '../services/dataService';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { SYSTEM_ROLES , ROLE_TO_PERSONA} from '../constants';
 import { DashboardPersona, RoleID, AggregatedReminder } from '../types';
+import { reminderSeverityLabel } from '../src/modules/labels';
 import {
   buildGlobalSearchGroups,
   buildGlobalSearchHits,
@@ -513,9 +514,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   );
 
   const severityStyle: Record<string, { dot: string; text: string; label: string }> = {
-    high: { dot: 'bg-red-500', text: 'text-red-600', label: '紧急' },
-    medium: { dot: 'bg-amber-500', text: 'text-amber-600', label: '关注' },
-    low: { dot: 'bg-gray-300', text: 'text-gray-400', label: '一般' }
+    high: { dot: 'bg-red-500', text: 'text-red-600', label: reminderSeverityLabel('high') },
+    medium: { dot: 'bg-amber-500', text: 'text-amber-600', label: reminderSeverityLabel('medium') },
+    low: { dot: 'bg-gray-300', text: 'text-gray-400', label: reminderSeverityLabel('low') }
   };
 
   /*

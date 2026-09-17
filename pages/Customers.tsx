@@ -16,7 +16,7 @@ import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
 import { SearchInput, EmptyState, FilterSelect, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 import { groupIndustry, INDUSTRY_GROUPS, INDUSTRY_GROUP_META, IndustryGroup } from '../src/modules/industry';
-import { auditSeverityLabel, auditStatusLabel } from '../src/modules/labels';
+import { auditSeverityLabel, auditStatusLabel, FIELD } from '../src/modules/labels';
 
 const Customers = () => {
   const { toggleReceivableStatus, customers, updateCustomer, addCustomer, addCustomerFollowUp, checkActionPermission, contracts, projects, auditIssues, addReminder, runSystemScans, generateAuditPlan, updateCertificateAuditStatus, scheduleRenewalFollowUp, currentUser, knowledgeDocs, addKnowledgeDoc, visibleReminders } = useApp();
@@ -414,6 +414,12 @@ const Customers = () => {
       totalAmount,
       lastProjectType: editingData?.lastProjectType || latestContract?.serviceLine || latestContract?.title || '暂无',
       lastProjectAt: editingData?.lastProjectAt || latestContract?.signDate || '-',
+      /*
+        这两项到底来自真实项目记录，还是回退到了最近一份合同？
+        标题要跟着来源走 —— 签合同不等于该服务已交付、已验证、已完成，
+        原来两种情况都叫「最近项目 (Verified)」（字段排查 C10）。
+      */
+      lastProjectIsReal: Boolean(editingData?.lastProjectType || editingData?.lastProjectAt),
       nextOpportunity: editingData?.nextOpportunity || (expiringCert ? `${expiringCert.name}续证` : '待评估'),
       level
     };
@@ -1215,7 +1221,12 @@ const Customers = () => {
                                             )}
                                         </div>
                                         <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100">
-                                            <div className="text-xs font-bold text-blue-400 uppercase mb-1">最近项目 (Verified)</div>
+                                            {/* 没有真实项目记录时会回退到最近一份合同的服务名和签订日 ——
+                                                签合同不等于该服务已交付、已验证、已完成（字段排查 C10）。
+                                                所以标题跟着数据来源走，Verified 去掉。 */}
+                                            <div className="text-xs font-bold text-blue-400 uppercase mb-1">
+                                                {pdcaSummary.lastProjectIsReal ? '最近项目' : '最近签约服务'}
+                                            </div>
                                             <div className="font-bold text-blue-900 text-sm truncate">{pdcaSummary.lastProjectType}</div>
                                             <div className="text-xs text-blue-500 mt-1">{pdcaSummary.lastProjectAt}</div>
                                         </div>
@@ -1297,8 +1308,10 @@ const Customers = () => {
                                                             <div className="text-sm font-bold text-gray-800 truncate">{doc.title}</div>
                                                             <div className="text-[11px] text-gray-400">{doc.updatedAt || '-'}</div>
                                                         </div>
+                                                        {/* 这是「已存进知识中心」，不是合同/模板那种"退出活跃列表"的归档。
+                                                            保存资料、停止活跃使用、完成整改是三件事（字段排查 B03）。 */}
                                                         <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full border border-indigo-100">
-                                                            已归档
+                                                            已存入知识库
                                                         </span>
                                                     </div>
                                                 ))}
@@ -1889,7 +1902,7 @@ const Customers = () => {
                                             { label: '法定代表人', field: 'legalRepresentative' },
                                             { label: '注册资本', field: 'registeredCapital' },
                                             { label: '成立日期', field: 'foundingDate' },
-                                            { label: '信用代码', field: 'unifiedSocialCreditCode' },
+                                            { label: FIELD.unifiedSocialCreditCode, field: 'unifiedSocialCreditCode' },
                                             // 新增字段
                                             { label: '注册地址', field: 'registeredAddress' },
                                             { label: '企业类型', field: 'companyType' },
