@@ -199,6 +199,14 @@ export const STATUS_FILTERS = [
 
 /** 列表范围筛选 */
 export const SCOPE_FILTERS = [
-  { value: 'related' as const, label: '与我相关', title: '我负责、我负责其中服务项、或有任务在我名下的项目' },
+  /*
+    这句话必须**把兜底也说出来**。
+    2026-09-17 Codex 交叉复核指出：总经理/总助/销售/财务打开「与我相关」，
+    都会看到那个无负责人的项目，而这条提示把判据完整列了三条、独独漏了第四条，
+    于是它是一句**可以被界面证伪的话**。
+    兜底本身要留（无主项目藏起来会安静烂掉，见 src/modules/ownership.ts），
+    但留着就得承认它在。
+  */
+  { value: 'related' as const, label: '与我相关', title: '我负责、我负责其中服务项、或有任务在我名下的项目；外加还没人认领的项目（它对所有人可见，否则谁都看不到它）' },
   { value: 'all' as const, label: '全公司', title: '公司全部项目（只读，用于了解别人的交付进度）' }
 ];

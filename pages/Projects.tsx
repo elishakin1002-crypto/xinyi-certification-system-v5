@@ -718,6 +718,16 @@ const Projects = () => {
       return p.name.includes(q) || p.manager.includes(q);
     }), [projects, filterStatus, activeRole, viewScope, modeScope, searchTerm, dashboardFocus, currentUser.name, projectWorkLogs]);
 
+  /*
+    当前这一屏里有几个是没人认领的。
+    只在「与我相关」下有意义 —— 全公司视角本来就该看到所有项目，
+    那时候再提示一遍就是噪音。
+  */
+  const unclaimedInView = useMemo(
+    () => filteredProjects.filter(p => isUnownedProject(p as any)).length,
+    [filteredProjects]
+  );
+
   /**
    * 同样的条件下，全公司有多少个 —— 用来判断「是真没有，还是我在看自己那一档」。
    *
@@ -2840,6 +2850,22 @@ const Projects = () => {
           </span>
           <span className="font-bold text-gray-700">{filterStatus === 'Overdue' ? `共 ${filteredProjects.reduce((n, p) => n + (p.tasks || []).filter(isOverdueTask).length, 0)} 项逾期任务 · 涉及 ${filteredProjects.length} 个项目` : `共 ${filteredProjects.length} 个项目`}</span>
         </div>
+        {/*
+          「与我相关」里混着没人认领的项目 —— 这一行把它说破。
+
+          2026-09-17 Codex 交叉复核：五个跟那个项目毫无关系的角色，
+          打开「与我相关」都看到它，卡片也把它算进「进行中项目 1」。
+          兜底是对的（无主项目藏起来会安静烂掉），
+          但人看到一个不是自己的项目躺在「与我相关」里，只会以为系统算错了。
+          所以不是藏起来，是**说清楚它为什么在这儿、该怎么处理**。
+        */}
+        {viewScope === 'related' && unclaimedInView > 0 && (
+          <div className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+            其中 <b>{unclaimedInView}</b> 个还没人认领（负责人是「待指派」）。
+            无人认领的项目对所有人可见 —— 否则它谁都看不到，会一直烂在那儿。
+            看到了就指个负责人，它就只出现在那个人的列表里了。
+          </div>
+        )}
 
         {/*
           「与我相关」是默认值，而默认值最容易把人骗了：

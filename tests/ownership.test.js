@@ -149,3 +149,30 @@ test('「无主」的说法只能在一个地方加', () => {
     '这些文件自己又列了一份"无主"同义词表：\n  ' + offenders.join('\n  ')
     + '\n  请改成引 src/modules/ownership.ts —— 加词只加那一处。');
 });
+
+test('「与我相关」必须承认它混着无人认领的项目 —— 不许只列三条判据', () => {
+  /*
+    2026-09-17 Codex 交叉复核指出：总经理/系统管理员/总助/销售/财务
+    五个跟那个项目毫无关系的角色，打开「与我相关」都看到它，
+    卡片也把它算进「进行中项目 1」。
+
+    兜底本身是对的（无主项目藏起来会安静烂掉，就是嘉力那次），
+    错的是那句提示 —— 它把判据完整列了三条、独独漏了第四条，
+    于是它是一句**可以被界面当场证伪的话**。
+
+    这条测试盯两件事：
+      1. 提示文案必须提到「还没人认领」
+      2. 列表里必须有那条说破它的提示，且只在「与我相关」下出现
+    —— 只改文案不加提示，人还是会以为系统算错了。
+  */
+  const filters = stripComments(fs.readFileSync(path.join(root, 'src/modules/projectCategory.ts'), 'utf8'));
+  const related = filters.split('\n').find(l => l.includes("value: 'related'")) || '';
+  assert.match(related, /认领/,
+    '「与我相关」的说明没提无人认领的项目，而界面里确实会出现 —— 这句话可以被当场证伪');
+
+  const page = stripComments(fs.readFileSync(path.join(root, 'pages/Projects.tsx'), 'utf8'));
+  assert.match(page, /unclaimedInView/,
+    '项目管理页没有统计「这一屏里有几个没人认领」');
+  assert.match(page, /viewScope === 'related' && unclaimedInView > 0/,
+    '那条提示要么没挂条件，要么条件不对 —— 全公司视角下再提示一遍是噪音');
+});
