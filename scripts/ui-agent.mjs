@@ -112,7 +112,31 @@ export const open = async () => {
   const errors = [];
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
   page.on('pageerror', e => errors.push('未捕获异常: ' + String(e).slice(0, 200)));
-  return { browser, context, page, errors };
+
+  /*
+    原生对话框（alert / confirm）要记下来。
+
+    2026-09-17 按钮清点把线索页的「筛出重点线索（90天内到期）」
+    判成哑巴。其实它是好的 —— 它弹了一句
+    「当前没有满足"90天内到期"的重点线索。」
+    但那是 window.alert：**不进 document.body.innerText**，
+    而且 Playwright 默认会自动关掉它，于是脚本什么都没看见。
+
+    这是这轮清点第 5 个假阴性来源（前四个：只读 main、
+    算上了隐藏的手机端按钮、上一个弹窗没关干净、等待时间不够）。
+    每一个都会把好按钮报成坏按钮 —— 而一份"已清点"却判错的报告，
+    比没清点更害人。
+
+    confirm 一律 dismiss（选"取消"）：这一轮只看"点了有没有反应"，
+    不该顺手替人确认删除。
+  */
+  const dialogs = [];
+  page.on('dialog', async (d) => {
+    dialogs.push(`${d.type()}: ${d.message().slice(0, 160)}`);
+    await d.dismiss().catch(() => {});
+  });
+
+  return { browser, context, page, errors, dialogs };
 };
 
 /**
@@ -186,6 +210,36 @@ export const cards = async (ctx) => ctx.page.evaluate(() => {
 /** 主区域的纯文字，用来做"这一页到底显示了什么"的证据 */
 export const text = async (ctx, max = 1200) =>
   ctx.page.evaluate(n => (document.querySelector('main')?.innerText || '').replace(/\s+/g, ' ').slice(0, n), max);
+
+/**
+ * **整屏**的文字（含弹窗、抽屉、浮层）。
+ *
+ * ── 为什么非有不可（2026-09-17）──────────────────────────────
+ *
+ * 按钮清点那一轮用 text()（只读 <main>）判断"点了有没有反应"，
+ * 报出 165 条「界面无变化」。金恩来问「所有按钮都试过了吗」，
+ * 我回头抽查第一条 —— 线索页的「新增线索」——
+ * **它是好的**：点下去弹出了「客户名称 / 联系人 / 手机号 / 保存线索」。
+ * 只是弹窗渲染在 <main> 之外，text() 看不见。
+ *
+ * 于是那一轮的结论是**系统性偏向假阴性**：
+ * 凡是开弹窗、开抽屉、弹 toast 的按钮，一律被判成"没反应"。
+ * 165 条里有多少是真哑巴，当时根本不知道。
+ *
+ * 这比漏掉一个 bug 更糟 —— 它让一份"已清点"的报告变得不能用。
+ */
+export const screenText = async (ctx, max = 4000) =>
+  ctx.page.evaluate(n => (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, n), max);
+
+/**
+ * 当前屏上的浮层（弹窗/抽屉/确认框）文字摘要。
+ * 用来回答"点完到底弹出了什么"，而不是只回答"变没变"。
+ */
+export const overlays = async (ctx) => ctx.page.evaluate(() =>
+  [...document.querySelectorAll('[role=dialog], [data-dismiss-layer], .fixed')]
+    .map(e => (e.innerText || '').replace(/\s+/g, ' ').trim())
+    .filter(t => t && t.length > 2)
+    .slice(0, 5));
 
 /** 列表行数 */
 export const rows = async (ctx) => ctx.page.locator('tbody tr').count();
