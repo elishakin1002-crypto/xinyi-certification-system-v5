@@ -72,6 +72,43 @@ test('被淘汰的说法不许出现在界面文案里', () => {
     + '\n\n术语表在 src/modules/glossary.ts，一个概念只留一个词。');
 });
 
+test('项目状态只有一套词 —— 筛选、列表、卡片必须说同一个词', () => {
+  /*
+    2026-09-17 在真界面上读到的：
+      状态筛选下拉：进行中 / 已完成
+      列表状态列：  执行中 / 已结项
+      统计卡：      进行中项目
+    三处、两套词。人按「进行中」筛，筛出来每一行写着「执行中」；
+    按「已完成」筛，筛出来每一行写着「已结项」。
+    而「已结项」这条术语表上面早就拍过板（连理由都写了），
+    只是筛选下拉没跟上 —— 又一次「改一处漏一处」。
+
+    这里不能用 DEPRECATED_TERMS 一刀切禁「执行中」：
+    **合同**那边说「执行中」是它自己的一套，内部一致，是对的。
+    所以钉的是「项目状态的两个出口必须引术语表」，
+    而不是「这个词全站不许出现」。
+  */
+  const 出口 = ['src/ui/statusBadge.tsx', 'src/modules/projectCategory.ts'];
+  const 项目态字面量 = /['`](执行中|已完成|进行中|已结项)['`]/;
+  const offenders = [];
+  for (const rel of 出口) {
+    const src = stripComments(fs.readFileSync(path.join(root, rel), 'utf8'));
+    src.split('\n').forEach((line, i) => {
+      if (项目态字面量.test(line)) offenders.push(`${rel}:${i + 1}  ${line.trim().slice(0, 90)}`);
+    });
+  }
+  assert.deepEqual(offenders, [],
+    '项目状态文案在这里写了字面量，术语表就管不到了：\n  ' + offenders.join('\n  ')
+    + '\n\n改成引 TERM_PROJECT.statusActive / statusCompleted（src/modules/glossary.ts）。');
+
+  // 光禁字面量不够，还要确认它们真的引了术语表
+  for (const rel of 出口) {
+    const src = fs.readFileSync(path.join(root, rel), 'utf8');
+    assert.match(src, /TERM_PROJECT\.status(Active|Completed)/,
+      `${rel} 没有引 TERM_PROJECT 的状态词 —— 多半又自己写了一套`);
+  }
+});
+
 test('工作台卡片标题要引术语常量，不许再各写各的字符串', () => {
   /*
     这条是"机制"那一半：只禁止旧词不够 —— 下次有人写「在办项目」，

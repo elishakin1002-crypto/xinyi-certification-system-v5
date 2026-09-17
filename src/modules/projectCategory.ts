@@ -1,4 +1,5 @@
 import { Project, ProjectCategory, ProjectMode } from '../../types';
+import { TERM_PROJECT } from './glossary';
 
 /**
  * 项目分类：只写这一份。
@@ -185,9 +186,15 @@ export const buildCategoryFilters = (hasLegacyFollowUp: boolean): readonly {
 
 /** 列表状态筛选。默认「全部状态」 */
 export const STATUS_FILTERS = [
-  { value: 'All' as const, label: '全部状态', title: '进行中和已完成都显示' },
-  { value: 'Active' as const, label: '进行中', title: '还没结项的' },
-  { value: 'Completed' as const, label: '已完成', title: '已经结项的' }
+  /*
+    文案一律引术语表，不许在这里写字面量。
+    2026-09-17 读真界面时发现这里写着「已完成」，而列表那一列写「已结项」——
+    术语表早就拍板用「已结项」（连理由都写了：结项是有仪式的动作），
+    只有这个下拉没跟上。人按「已完成」筛，筛出来每行都写「已结项」。
+  */
+  { value: 'All' as const, label: '全部状态', title: `${TERM_PROJECT.statusActive}和${TERM_PROJECT.statusCompleted}都显示` },
+  { value: 'Active' as const, label: TERM_PROJECT.statusActive, title: '还没结项的' },
+  { value: 'Completed' as const, label: TERM_PROJECT.statusCompleted, title: '已经结项的' }
 ];
 
 /** 列表范围筛选 */

@@ -8,6 +8,7 @@
 import React from 'react';
 import { Status } from '../../types';
 import { Badge, Tone } from './index';
+import { TERM_PROJECT, TERM_CONTRACT } from '../modules/glossary';
 
 export type StatusDomain = 'lead' | 'project' | 'contract';
 
@@ -29,17 +30,24 @@ const LABEL_BY_DOMAIN: Record<StatusDomain, Partial<Record<Status, string>>> = {
     [Status.Risk]: '高风险',
     [Status.Lost]: '已丢失'
   },
+  /*
+    项目和合同**故意用不同的词**（项目「进行中/已结项」、合同「执行中/已完成」），
+    理由写在术语表里。但两边都必须引常量：
+    2026-09-17 之前这里项目写「执行中」，而筛选下拉和统计卡写「进行中」，
+    人按「进行中」筛出来，每一行却写着「执行中」。
+    写字面量就没有任何机制拦得住下一个人再造一个说法。
+  */
   project: {
-    [Status.Active]: '执行中',
-    [Status.Completed]: '已结项',
-    [Status.Risk]: '风险',
-    [Status.Pending]: '待启动'
+    [Status.Active]: TERM_PROJECT.statusActive,
+    [Status.Completed]: TERM_PROJECT.statusCompleted,
+    [Status.Risk]: TERM_PROJECT.statusRisk,
+    [Status.Pending]: TERM_PROJECT.statusPending
   },
   contract: {
-    [Status.Active]: '执行中',
-    [Status.Completed]: '已完成',
-    [Status.Risk]: '风险',
-    [Status.Pending]: '待生效'
+    [Status.Active]: TERM_CONTRACT.statusActive,
+    [Status.Completed]: TERM_CONTRACT.statusCompleted,
+    [Status.Risk]: TERM_CONTRACT.statusRisk,
+    [Status.Pending]: TERM_CONTRACT.statusPending
   }
 };
 
