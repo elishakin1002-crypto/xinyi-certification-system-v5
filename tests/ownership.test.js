@@ -200,3 +200,34 @@ test('总助的「待指派负责人」必须数得到「待指派」 —— 这
   assert.match(src, /unassigned = activeProjects\.filter\(p => isUnownedProject/,
     '「待指派负责人」那张卡没有走 isUnownedProject');
 });
+
+test('占位词不是员工 —— 「人均」和「有活在手的人」不许把「待指派」算进去', () => {
+  /*
+    2026-09-17 Codex 交叉复核：
+      总助工作台「各负责人进行中项目」把「待指派」列成一个人
+      「有活在手的人 3」，真人只有 2 个
+      总经理工作台「人均进行中项目 3.00」＝ 9 ÷ 3（把占位词算作一人）
+      真实承载量是 8 个已认领项目 ÷ 2 人 = 4.00
+
+    它的原话：「标题写『人均』，不应默默把占位词当员工。」
+    后果是总助据此判断谁该加活谁该减活 —— 多出来的那个"人"
+    会让她**低估每个人的实际承载**。
+
+    原来两处都只挡空字符串（`.filter(Boolean)` / `if (!owner) return`），
+    还是嘉力那次的同款判空。盯的是"有没有走 ownership.ts 那份收口"。
+  */
+  const src = stripComments(fs.readFileSync(path.join(root, 'services/dashboardMetrics.ts'), 'utf8'));
+
+  assert.match(src, /isUnownedName/,
+    'dashboardMetrics 没用 isUnownedName —— 占位词会被当成员工名');
+
+  // 分母：真人
+  assert.match(src, /owners = Array\.from\(new Set\(\s*claimedProjects/,
+    '「人均」的分母还在从全部进行中项目里取名字，占位词会混进来');
+  // 分子：已认领的项目
+  assert.match(src, /avgInProgress = owners\.length > 0 \? claimedProjects\.length/,
+    '「人均」的分子还是全部进行中项目 —— 没人认领的不该摊到真人头上');
+  // 负责人分布
+  assert.match(src, /if \(!owner \|\| isUnownedName\(owner\)\) return;/,
+    '「谁手上活多少」还会把「待指派」列成一行');
+});

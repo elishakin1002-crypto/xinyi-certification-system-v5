@@ -337,8 +337,11 @@ var buildBossMetrics = (inputs, monthKey) => {
     const latest = Math.max(...dates);
     return (now.getTime() - latest) / (24 * 3600 * 1e3) > 45;
   }).length;
-  const owners = Array.from(new Set(activeProjects.map((p) => String(p.manager || "").trim()).filter(Boolean)));
-  const avgInProgress = owners.length > 0 ? activeProjects.length / owners.length : 0;
+  const claimedProjects = activeProjects.filter((p) => !isUnownedProject(p));
+  const owners = Array.from(new Set(
+    claimedProjects.map((p) => String(p.manager || "").trim()).filter((name) => name && !isUnownedName(name))
+  ));
+  const avgInProgress = owners.length > 0 ? claimedProjects.length / owners.length : 0;
   const openTasks = openTasksOf(inputs.projects);
   const delayedTasks = openTasks.filter((t) => isOverdue(t, now.getTime()));
   const delayedProjects = activeProjects.filter((p) => (p.tasks || []).some((t) => isOpenTask(t) && isOverdue(t, now.getTime())));
@@ -419,8 +422,9 @@ var buildManagerMetrics = (inputs) => {
   );
   const loadByOwner = /* @__PURE__ */ new Map();
   activeProjects.forEach((p) => {
+    if (isUnownedProject(p)) return;
     const owner = String(p.manager || "").trim();
-    if (!owner) return;
+    if (!owner || isUnownedName(owner)) return;
     loadByOwner.set(owner, (loadByOwner.get(owner) || 0) + 1);
   });
   const loads = Array.from(loadByOwner.entries()).sort((a, b) => b[1] - a[1]);

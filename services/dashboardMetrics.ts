@@ -2,7 +2,7 @@ import { Contract, Customer, Lead, Project, ProjectTask, ProjectWorkLog, RoleID,
 import { APP_ROUTES } from '../src/routes';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
 import { isOpenTask, isOverdue } from '../src/modules/taskFlow';
-import { isUnownedProject } from '../src/modules/ownership';
+import { isUnownedProject, isUnownedName } from '../src/modules/ownership';
 // 术语只有一份定义，见 src/modules/glossary.ts（口径也写在那里）
 import { TERM_PROJECT, TERM_TASK, TERM_RECEIVABLE } from '../src/modules/glossary';
 // 「我该做什么」只算一次，见 src/modules/myWork.ts
@@ -270,8 +270,22 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
     return (now.getTime() - latest) / (24 * 3600 * 1000) > 45;
   }).length;
 
-  const owners = Array.from(new Set(activeProjects.map(p => String(p.manager || '').trim()).filter(Boolean)));
-  const avgInProgress = owners.length > 0 ? activeProjects.length / owners.length : 0;
+  /*
+    「人均」的分母只能是**真人**，分子只能是**已认领的项目**。
+
+    2026-09-17 Codex 交叉复核：界面显示 3.00 —— 9 个项目除以
+    「验收顾问、黄佳佳、待指派」三个"人"。而「待指派」是占位词不是员工。
+    真实承载量是 8 个已认领项目 ÷ 2 个人 = 4.00，差了整整一档。
+    它的原话很准：「标题写『人均』，不应默默把占位词当员工。」
+
+    原来只挡空字符串（`.filter(Boolean)`），这是嘉力那次的同款判空 ——
+    收口在 ownership.ts，这里跟着走。
+  */
+  const claimedProjects = activeProjects.filter(p => !isUnownedProject(p as any));
+  const owners = Array.from(new Set(
+    claimedProjects.map(p => String(p.manager || '').trim()).filter(name => name && !isUnownedName(name))
+  ));
+  const avgInProgress = owners.length > 0 ? claimedProjects.length / owners.length : 0;
   const openTasks = openTasksOf(inputs.projects);
   const delayedTasks = openTasks.filter(t => isOverdue(t, now.getTime()));   // 判逾期只用 taskFlow.isOverdue 一份
   /** 进行中、且名下有逾期任务的项目 —— 口径见 glossary 的 TERM_PROJECT.withOverdueTask */
@@ -429,10 +443,18 @@ const buildManagerMetrics = (inputs: Inputs): RoleDashboardMetrics => {
     可能是 5 个人各 3-4 个（正常），也可能是 1 个人扛 11 个、
     另外 4 个人各 0 个（要立刻调）。平均值恰好把这两种情况混成一个数。
   */
+  /*
+    「谁手上活多少」「有活在手的人」只数真人。
+    2026-09-17 之前「待指派」会作为一行出现在负责人列表里，
+    并把「有活在手的人」从 2 抬到 3 —— 总助据此判断谁该加活、谁该减活，
+    多出来的那个"人"会让她低估每个人的实际承载。
+    没人认领的项目归「待指派负责人」那张卡管，不该混进人头统计。
+  */
   const loadByOwner = new Map<string, number>();
   activeProjects.forEach(p => {
+    if (isUnownedProject(p as any)) return;
     const owner = String(p.manager || '').trim();
-    if (!owner) return;
+    if (!owner || isUnownedName(owner)) return;
     loadByOwner.set(owner, (loadByOwner.get(owner) || 0) + 1);
   });
   const loads = Array.from(loadByOwner.entries()).sort((a, b) => b[1] - a[1]);

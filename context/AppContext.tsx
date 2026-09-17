@@ -5,7 +5,7 @@ import { judgeDuplicate } from '../src/modules/customerIdentity';
 import { isUnownedName } from '../src/modules/ownership';
 import { findContractByRef, findProjectByContract } from '../src/modules/contractLink';
 import { Lead, Customer, Contract, ContractAttachment, Project, Settlement, Reminder, AuditIssue, Status, KnowledgeDoc, Vendor, ProjectTask, ServiceItem, RoleID, DashboardPersona, TaskTemplate, UserProfile, PermissionCode, FollowUpRecord, AuditNode, StrategicTask, Receivable, CertificateDetail, ProjectCategory, AIDecisionLog, AIAction, ActionCode, AIAllowedAction, AggregatedReminder, ReminderSeverity, ImportRecord, MarketSignal, ProjectWorkLog } from '../types';
-import { MOCK_LEADS, MOCK_CUSTOMERS, MOCK_CONTRACTS, MOCK_PROJECTS, MOCK_SETTLEMENTS, MOCK_AUDITS, MOCK_DOCS, MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG, ROLE_TO_PERSONA, PERSONA_TO_ROLE } from '../constants';
+import { MOCK_VENDORS, TASK_TEMPLATES, DEFAULT_USER_PROFILE, DEFAULT_USER_PROFILES, ROLE_PERMISSIONS, SERVICE_WORKFLOW_TEMPLATES, DEFAULT_SERVICE_WORKFLOW_BY_CATEGORY, SERVICE_CATEGORY_DELIVERY_MODE, SERVICE_CATALOG, ROLE_TO_PERSONA, PERSONA_TO_ROLE } from '../constants';
 import { dataService } from '../services/dataService';
 import { aiService } from '../services/aiService';
 import { importService } from '../services/importService';
@@ -275,11 +275,36 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     if (String(import.meta.env?.VITE_DEMO_SEED_ENABLED || '').trim() === '1') seedDemoData();
     return 1;
   });
-  const [leads, setLeads] = useState<Lead[]>(() => dataService.get('leads_v8', MOCK_LEADS));
-  const [customers, setCustomers] = useState<Customer[]>(() => dataService.get('customers_v8', MOCK_CUSTOMERS));
-  const [contracts, setContracts] = useState<Contract[]>(() => dataService.get('contracts_v8', MOCK_CONTRACTS));
+  /*
+    ── 数据没拿到时，兜底必须是空数组，不许是虚构公司 ──────────────
+    （2026-09-17，Codex 数据交叉复核发现）
+
+    症状：销售打开客户管理，看到「科诺华科技（深圳）有限公司 / 陈爱丽 /
+    累计合作金额 ¥50,000」，而库里只有浙江嘉力一个客户、一份 ¥18,000 合同。
+    换任何其它角色看同一页，显示的都是真实的嘉力。
+    这条假记录**没有「样例」标签**，进统计、能点开、和真客户混在一起。
+
+    真因就是这几行：`dataService.get('customers_v8', MOCK_CUSTOMERS)` ——
+    第二个参数是"取不到时用什么"。取不到时它就把 constants.ts 里那三家
+    演示公司当成真客户渲染出来。
+
+    销售会照着这条记录去联系一家不存在的公司，或者据此估客户价值。
+    这比空白页坏得多：空白页只是没信息，假客户是**错信息**。
+
+    这个项目本来有正规的样例机制（SampleList + 「样例 · 不是真实数据」标签，
+    见 src/modules/onboarding/sampleRecords.ts）—— 那条路会明说这是示例。
+    MOCK_* 这条路绕过了它。
+
+    注意 MOCK_SETTLEMENTS / MOCK_AUDITS / MOCK_DOCS / MOCK_VENDORS
+    早就被人清空了，只剩这三个 —— 又一次「改一处漏一处」。
+    常量本身不能删（sampleRecords 要拿它们拼带标签的示例行），
+    所以改的是**不许再拿它们当兜底**。
+  */
+  const [leads, setLeads] = useState<Lead[]>(() => dataService.get<Lead[]>('leads_v8', []));
+  const [customers, setCustomers] = useState<Customer[]>(() => dataService.get<Customer[]>('customers_v8', []));
+  const [contracts, setContracts] = useState<Contract[]>(() => dataService.get<Contract[]>('contracts_v8', []));
   const [projects, setProjects] = useState<Project[]>(() => {
-    const stored = dataService.get<any[]>('projects_v8', MOCK_PROJECTS as any);
+    const stored = dataService.get<any[]>('projects_v8', []);
     const arr = Array.isArray(stored) ? stored : [];
     return arr.map(p => {
       const projectCategory = (p as any).projectCategory || 'Delivery';
@@ -309,10 +334,10 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     }) as Project[];
   });
   const [aiDecisionLogs, setAiDecisionLogs] = useState<AIDecisionLog[]>(() => dataService.get('ai_decision_logs_v1', dataService.get('aiDecisionLogs_v1', [])));
-  const [settlements, setSettlements] = useState<Settlement[]>(() => dataService.get('settlements_v8', MOCK_SETTLEMENTS));
+  const [settlements, setSettlements] = useState<Settlement[]>(() => dataService.get<Settlement[]>('settlements_v8', []));
   const [reminders, setReminders] = useState<Reminder[]>(() => dataService.get('reminders_v8', []));
-  const [auditIssues, setAuditIssues] = useState<AuditIssue[]>(() => dataService.get('audit_issues_v1', dataService.get('auditIssues_v1', MOCK_AUDITS)));
-  const [knowledgeDocs, setKnowledgeDocs] = useState<KnowledgeDoc[]>(() => dataService.get('knowledge_docs_v8', dataService.get('knowledgeDocs_v8', MOCK_DOCS)));
+  const [auditIssues, setAuditIssues] = useState<AuditIssue[]>(() => dataService.get<AuditIssue[]>('audit_issues_v1', dataService.get<AuditIssue[]>('auditIssues_v1', [])));
+  const [knowledgeDocs, setKnowledgeDocs] = useState<KnowledgeDoc[]>(() => dataService.get<KnowledgeDoc[]>('knowledge_docs_v8', dataService.get<KnowledgeDoc[]>('knowledgeDocs_v8', [])));
   const [marketSignals, setMarketSignals] = useState<MarketSignal[]>(() => dataService.get('market_signals_v1', dataService.get('marketSignals_v1', [])));
   const [projectWorkLogs, setProjectWorkLogs] = useState<ProjectWorkLog[]>(() => dataService.get('project_work_logs_v1', []));
   const [vendors] = useState<Vendor[]>(MOCK_VENDORS);
