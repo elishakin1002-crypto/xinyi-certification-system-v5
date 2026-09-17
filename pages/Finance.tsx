@@ -601,7 +601,18 @@ const Finance = () => {
                     <div className="p-3 bg-emerald-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><CheckCircle className="w-6 h-6 text-emerald-600" /></div>
                     <div className="min-w-0">
                         <div className="text-2xl font-black text-gray-900 truncate">¥{totalSettled.toLocaleString()}</div>
-                        <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">已支付结算 (YTD)</div>
+                        {/*
+                          ── 不叫 YTD（2026-09-17 改名）──────────────────────
+
+                          YTD 是"本年截至今天"，而这个数
+                          （totalSettled）只是把**当前筛选结果**里 paid 的加起来，
+                          没有任何年份条件 —— 去年的记录照样算进去。
+                          财务拿它当"今年一共付了多少"，跨年之后就会偏。
+
+                          它确实跟着筛选走（类型、状态、搜索都会影响），
+                          所以按它实际的样子命名。
+                        */}
+                        <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">已支付结算（当前筛选）</div>
                     </div>
                 </div>
                 <div className="bg-gradient-to-br from-amber-500 to-orange-600 p-5 rounded-2xl shadow-lg flex items-center text-white">

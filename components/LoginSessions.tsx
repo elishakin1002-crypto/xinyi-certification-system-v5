@@ -159,12 +159,22 @@ export const LoginSessions: React.FC<{
         <h2 className="text-base font-black text-gray-900">
           {all ? '谁在哪登录着' : '我的登录设备'}
         </h2>
-        <button
-          onClick={load}
-          className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50"
-        >
-          <RefreshCw className="w-3.5 h-3.5" /> 刷新
-        </button>
+        {/*
+          没权限时不给「刷新」（2026-09-17 加）。
+
+          总助能进审计日志页，但 /api/auth/sessions 只对总经理和系统管理员开放。
+          于是她看到一个「刷新」按钮，点一次 403 一次，**永远不可能成功**。
+          一个注定失败的按钮比没有按钮更糟 —— 她会以为是系统坏了，
+          或者以为自己点得不对，反复点。
+        */}
+        {!error && (
+          <button
+            onClick={load}
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> 刷新
+          </button>
+        )}
       </div>
       <p className="text-xs font-bold text-gray-400 mb-4">
         {all
@@ -180,6 +190,23 @@ export const LoginSessions: React.FC<{
         <p className="flex items-center gap-2 py-6 justify-center text-sm font-bold text-gray-400">
           <Loader2 className="w-4 h-4 animate-spin" /> 读取中
         </p>
+      ) : error ? (
+        /*
+          ── 读不到 ≠ 没有（2026-09-17 修）────────────────────────────
+
+          原来只要 list 是空的就说「没有正在生效的登录」。
+          而总助读这个接口会 403，list 自然是空，于是她那一屏上
+          同时出现两句自相矛盾的话：
+
+              只有总经理和系统管理员能看全部登录设备   ← 对
+              没有正在生效的登录。                     ← 假的
+
+          「没有」是一句**关于事实的断言**，而这里的真相是"我看不到"。
+          安全相关的页面上说假话尤其要不得：她可能据此认为没人登着。
+
+          出错时只说出错，不要顺带断言一个我们并不知道的事实。
+        */
+        null
       ) : list.length === 0 ? (
         <p className="py-6 text-center text-sm font-bold text-gray-400">没有正在生效的登录。</p>
       ) : (

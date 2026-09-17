@@ -614,7 +614,7 @@ var buildFinanceMetrics = (inputs, monthKey) => {
   const expected30 = receivables.filter((r) => r.status !== "paid" && diffDays(r.dueDate, now) >= 0 && diffDays(r.dueDate, now) <= 30).reduce((acc, r) => acc + r.amount, 0);
   const missingContractAmountProjects = inputs.projects.filter((p) => p.projectCategory === "Delivery" && Number(p.projectAmount || 0) <= 0).length;
   const receivableWithoutContractAmount = inputs.contracts.filter((c) => Number(c.amount || 0) <= 0 && (c.receivables || []).some((r) => Number(r.amount || 0) > 0)).length;
-  const uninvoiced = inputs.settlements.filter((s) => s.status === "draft").length;
+  const draftSettlements = inputs.settlements.filter((s) => s.status === "draft").length;
   const abnormalProgress = inputs.contracts.filter((c) => {
     const total = Number(c.amount || 0);
     const paid = contractPaidAmount(c);
@@ -654,7 +654,7 @@ var buildFinanceMetrics = (inputs, monthKey) => {
     middleCards: [
       { id: "fin-missing-amt", title: "\u5408\u540C\u91D1\u989D\u7F3A\u5931\u9879\u76EE", value: String(missingContractAmountProjects), route: `${APP_ROUTES.PROJECTS}?filter=missing_contract_amount` },
       { id: "fin-rec-no-contract", title: "\u5B58\u5728\u56DE\u6B3E\u4F46\u65E0\u5408\u540C\u603B\u989D", value: String(receivableWithoutContractAmount), route: `${APP_ROUTES.FINANCE}?filter=no_contract_amount` },
-      { id: "fin-uninvoiced", title: "\u672A\u5F00\u7968\u9879\u76EE", value: String(uninvoiced), route: `${APP_ROUTES.FINANCE}?filter=uninvoiced` },
+      { id: "fin-uninvoiced", title: "\u5F85\u786E\u8BA4\u7ED3\u7B97\u5355", value: String(draftSettlements), route: `${APP_ROUTES.FINANCE}?tab=settlements&status=draft` },
       { id: "fin-abnormal", title: "\u56DE\u6B3E\u8FDB\u5EA6\u5F02\u5E38", value: String(abnormalProgress), route: `${APP_ROUTES.FINANCE}?filter=progress_abnormal` }
     ],
     bottomCards: [

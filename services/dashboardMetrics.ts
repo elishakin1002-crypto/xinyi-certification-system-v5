@@ -687,7 +687,22 @@ const buildFinanceMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMet
 
   const missingContractAmountProjects = inputs.projects.filter(p => p.projectCategory === 'Delivery' && Number(p.projectAmount || 0) <= 0).length;
   const receivableWithoutContractAmount = inputs.contracts.filter(c => Number(c.amount || 0) <= 0 && (c.receivables || []).some(r => Number(r.amount || 0) > 0)).length;
-  const uninvoiced = inputs.settlements.filter(s => s.status === 'draft').length;
+  /*
+    ── 这个数是「结算草稿」，不是「未开票」（2026-09-17 改名）────────
+
+    它数的是 settlements 里 status === 'draft' 的条数：
+    既没有判断发票，也没有按项目去重，更没有"项目"这个维度。
+    而卡片原来叫「未开票项目」—— 财务照这个数字去催开票，
+    催的是一批根本还没确认的结算单。
+
+    这个系统里**没有发票字段**（Settlement 类型里只有
+    type/beneficiary/contractRef/month/amount/status/notes），
+    所以真正的"未开票"现在算不出来。算不出来就别起那个名字。
+    真要做，得先有发票数据，不能拿草稿顶替。
+
+    Codex 2026-09-16 排查出来的，我核过代码属实。
+  */
+  const draftSettlements = inputs.settlements.filter(s => s.status === 'draft').length;
   const abnormalProgress = inputs.contracts.filter(c => {
     const total = Number(c.amount || 0);
     const paid = contractPaidAmount(c);
@@ -730,7 +745,7 @@ const buildFinanceMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMet
     middleCards: [
       { id: 'fin-missing-amt', title: '合同金额缺失项目', value: String(missingContractAmountProjects), route: `${APP_ROUTES.PROJECTS}?filter=missing_contract_amount` },
       { id: 'fin-rec-no-contract', title: '存在回款但无合同总额', value: String(receivableWithoutContractAmount), route: `${APP_ROUTES.FINANCE}?filter=no_contract_amount` },
-      { id: 'fin-uninvoiced', title: '未开票项目', value: String(uninvoiced), route: `${APP_ROUTES.FINANCE}?filter=uninvoiced` },
+      { id: 'fin-uninvoiced', title: '待确认结算单', value: String(draftSettlements), route: `${APP_ROUTES.FINANCE}?tab=settlements&status=draft` },
       { id: 'fin-abnormal', title: '回款进度异常', value: String(abnormalProgress), route: `${APP_ROUTES.FINANCE}?filter=progress_abnormal` }
     ],
     bottomCards: [

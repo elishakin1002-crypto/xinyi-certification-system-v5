@@ -723,12 +723,31 @@ const Dashboard = () => {
       subtitle: '本月完成且计入营收口径'
     },
     {
+      /*
+        ── 没有营收就显示 0，不许拿签约额顶替（2026-09-17 修）──────────
+
+        这张卡原来是：营收为 0 时，**大数字直接换成本月新增合同金额**，
+        只在下面一行小字写「暂以新增合同金额占位」。
+
+        老板扫四张卡时看的是标题和大数字。标题写「本月营收项目**金额**」，
+        数字却是**还没交付的签约额** —— 这两件事在现金流上差着整个交付周期。
+        这个月签了 50 万一分钱没做，卡片会显示「本月营收项目金额 ¥500,000」。
+
+        Codex 2026-09-16 排查时的原话很准：
+        「没有营收项目不等于可以拿尚未交付的签约额充数。」
+
+        零就是零。签约额是另一件事，放副标题里做参考，不占那个大数字。
+        这和「已立项徽章要真查项目」「统计卡不许读冗余字段」是同一条规矩：
+        **界面上那个数字必须就是它名字说的那个东西。**
+      */
       id: 'boss-revenue-amount',
       title: '本月营收项目金额',
-      value: revenueAmountThisMonth > 0 ? money(revenueAmountThisMonth) : money(monthContractAmount),
-      route: revenueAmountThisMonth > 0 ? '/projects?status=completed&mode=delivery&field=amount' : '/contracts?month=this',
+      value: money(revenueAmountThisMonth),
+      route: '/projects?status=completed&mode=delivery&field=amount',
       tone: 'blue',
-      subtitle: revenueAmountThisMonth > 0 ? '按项目金额汇总' : '暂以新增合同金额占位'
+      subtitle: revenueAmountThisMonth > 0
+        ? '按已结项的交付项目金额汇总'
+        : `本月还没有结项的营收项目${monthContractAmount > 0 ? `（新签合同 ${money(monthContractAmount)}，尚未交付）` : ''}`
     },
     {
       id: 'boss-overdue-amount',
