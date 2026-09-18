@@ -13,7 +13,16 @@ import process from 'node:process';
 import pg from 'pg';
 import { loadEnv, maskUrl } from './lib/backupCommon.mjs';
 
-const TEST_DB = 'xinyi_test';
+/*
+  库名可以覆盖，因为 e2e 用的是另一个库（xinyi_e2e_test），CI 里同样要现建现迁移。
+  但**必须以 _test 结尾** —— 和 tests/helpers/testDb.js 的 assertTestDb 同一条防线：
+  这个脚本会 CREATE/DROP DATABASE，把它指到生产库上就是一条命令毁掉一切。
+*/
+const TEST_DB = process.env.XINYI_TEST_DB_NAME || 'xinyi_test';
+if (!/^[a-z0-9_]+_test$/.test(TEST_DB)) {
+  console.error(`⛔ 拒绝操作库 "${TEST_DB}"：库名必须是小写字母/数字/下划线，且以 _test 结尾。`);
+  process.exit(1);
+}
 const reset = process.argv.includes('--reset');
 
 const testUrlFrom = (base) => base.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB}$1`);

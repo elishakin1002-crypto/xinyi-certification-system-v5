@@ -24,6 +24,27 @@ const main = async () => {
   const require = createRequire(import.meta.url);
   const url = require('../tests/helpers/testDb').testEnv().XINYI_DB_URL || '';
   if (!url) {
+    /*
+      没有测试库时，测试**不会报错**，只会整体落到文件回退路径上 ——
+      也就是「测试全绿，但测的不是生产走的那条路」。本机偶尔这样还能接受
+      （开发者自己看得到上面那行提示），**在 CI 里则是致命的**：
+      没人看日志，只看那个绿勾。
+
+      2026-09-18 实测：CI 从来没有数据库，这行提示每次都打，
+      而下面 63 条要连库的用例全部 ECONNREFUSED 挂掉 ——
+      挂掉反而是运气好，它们要是"温和降级"就会假绿到上线那天。
+
+      所以把「必须有库」做成显式开关：CI 里置 1，缺库直接红。
+      不靠人记得看日志（见 CLAUDE.md 二点五之四）。
+    */
+    if (String(process.env.XINYI_REQUIRE_TEST_DB || '') === '1') {
+      console.error(
+        '⛔ XINYI_REQUIRE_TEST_DB=1 但没找到测试库地址。\n' +
+        '   这个环境要求测试跑在真的 PostgreSQL 上，不许退到文件回退路径。\n' +
+        '   请设置 XINYI_TEST_DB_URL（或 XINYI_DB_URL），并先跑 npm run test:db:setup。'
+      );
+      process.exit(1);
+    }
     console.log('未配置测试库，跳过清理（测试会落到文件回退路径）。');
     return;
   }

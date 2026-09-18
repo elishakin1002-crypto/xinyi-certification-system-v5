@@ -16,6 +16,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # ── 为什么 CI 里要起一个真的 PostgreSQL（2026-09-18）────────────────
+    #
+    # 在这之前 CI 里没有任何数据库。后果不是"少测了一点"，是**测错了对象**：
+    # tests/helpers/testDb.js 解析不到库地址时返回空串，于是所有用例整体落到
+    # **文件回退路径**上 —— 而生产跑的是 PostgreSQL。两条完全不同的代码路径。
+    #
+    # 这次把测试真正跑起来之后，63 条用例当场 ECONNREFUSED（pg 拿到空连接串
+    # 会去连默认的 localhost:5432）。挂掉其实是运气好 —— 它们要是"优雅降级"，
+    # 就会一路假绿到上线那天。
+    #
+    # 版本钉死 16，和生产（腾讯云 PG 16）一致：版本不同的话，
+    # CI 绿了也不代表生产不炸（排序规则、JSONB 行为、锁语义都可能不一样）。
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        # 没有健康检查的话，后面的步骤会在库还没起来时就开始连，
+        # 变成那种"偶尔红一次"的假故障 —— 比一直红更难查。
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,7 +66,20 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # 建 xinyi_test 并跑迁移。库名必须以 _test 结尾 ——
+      # tests/helpers/testDb.js 会强制校验，这是"测试连上生产库"那次事故之后加的闸。
+      - name: Prepare test database
+        env:
+          # 基准地址；脚本把库名换成 xinyi_test 后建库 + 迁移。
+          XINYI_DB_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: npm run test:db:setup
+
       - name: Test
+        env:
+          # resolveTestDbUrl() 优先认这个，不用再从基准地址推导。
+          XINYI_TEST_DB_URL: postgres://postgres:postgres@localhost:5432/xinyi_test
+          # 缺库时直接红，不许静悄悄退回文件回退路径（见 scripts/test-db-reset.mjs）。
+          XINYI_REQUIRE_TEST_DB: '1'
         run: npm run test
 
       - name: Build
@@ -99,5 +141,17 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      # e2e 用的是**另一个**库（playwright.config.ts 里的 xinyi_e2e_test），
+      # 和单元测试的 xinyi_test 分开，免得两边互相清数据。
+      - name: Prepare e2e database
+        env:
+          XINYI_DB_URL: postgres://postgres:postgres@localhost:5432/postgres
+          XINYI_TEST_DB_NAME: xinyi_e2e_test
+        run: npm run test:db:setup
+
       - name: E2E smoke
+        env:
+          # 不设的话 playwright.config.ts 会退到默认的 postgres://postgres@localhost/xinyi_dev，
+          # 那个地址在 CI 里没有密码、库也不存在。
+          E2E_DB_URL: postgres://postgres:postgres@localhost:5432/xinyi_e2e_test
         run: npm run e2e
