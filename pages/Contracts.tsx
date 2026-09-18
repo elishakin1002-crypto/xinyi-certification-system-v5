@@ -1068,6 +1068,22 @@ const Contracts = () => {
     return true;
   };
   const normalizedContractQuery = searchTerm.trim().toLowerCase();
+  /*
+    同样的筛选条件下，全公司有几份 —— 用来判断「是真没有，还是我在看自己那一档」。
+    只有在「与我相关」筛出 0 条时才用得上，所以不必在意它多算一遍。
+  */
+  const matchesExceptScope = (c: Contract) => {
+    const isArchived = c.archiveStatus === ARCHIVE_STATUS.ARCHIVED;
+    const hasOverdue = (c.receivables || []).some(r => r.status === RECEIVABLE_STATUS.OVERDUE);
+    const isRisk = !isArchived && (c.riskLevel === 'High' || c.status === Status.Risk || hasOverdue);
+    const isActive = !isArchived && !isRisk && c.status === Status.Active;
+    if (filterStatus === 'all') return !isArchived;
+    if (filterStatus === 'archived') return isArchived;
+    if (filterStatus === 'risk') return isRisk;
+    return isActive;
+  };
+  const companyWideContracts = contracts.filter(matchesExceptScope).length;
+
   const filteredContracts = contracts.filter(c => {
     /*
       ── 「与我相关 / 全公司」是筛选，不是权限（2026-09-12 改）────────
@@ -1395,6 +1411,31 @@ const Contracts = () => {
         )}
       </div>
       
+      {/*
+        「与我相关」是默认值，而默认值最容易把人骗了。
+        2026-09-18 我自己在验收时就栽了一次：总助刚归档完一份合同，
+        去「已归档」里找 —— **找不到**，因为范围默认是"与我相关"，
+        而她不是那份合同的归属人。空白页什么都不说，
+        人只会以为"归档把合同弄丢了"。
+
+        项目管理 2026-09-15 已经为同一个失败模式加过这一行，
+        合同管理漏了 —— 又一次「改一处漏一处」。
+        条件和那边保持一致：只在「我的是 0、公司的不是 0」时出现，并直接给按钮。
+      */}
+      {contractScope === 'related' && filteredContracts.length === 0 && companyWideContracts > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-bold text-amber-800">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>你名下没有符合条件的合同，全公司还有 {companyWideContracts} 份。</span>
+          <button
+            type="button"
+            onClick={() => setContractScope('all')}
+            className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-black text-white hover:bg-amber-700"
+          >
+            看全公司
+          </button>
+        </div>
+      )}
+
       <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <table className="w-full text-sm text-left">
             <thead className={tableHeadClass}>
