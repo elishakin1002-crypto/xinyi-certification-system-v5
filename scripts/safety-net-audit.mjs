@@ -153,12 +153,27 @@ const GATES = [
     name: '端到端（合同主线）',
     cmd: 'npx playwright test e2e/smoke.spec.ts --project=chromium -g "contract entry"',
     slow: true,
-    bug: '把「录入合同」按钮的文案改掉 —— 模拟有人改了界面没改测试',
-    mutate: () => patch('pages/Contracts.tsx', (s) => {
-      const from = '录入合同';
-      if ((s.match(new RegExp(from, 'g')) || []).length < 1) throw new Error('找不到「录入合同」');
-      return s.replace(from, '录入合同变异');   // 只换第一处就够
-    })
+    bug: '把「录入合同」按钮的文案改成「新增合同」—— 模拟有人改了界面没改测试',
+    /*
+      ⚠️ 这个变异点第一版是错的，值得留着当教训（2026-09-18）：
+
+      第一版写的是 `s.replace('录入合同', '录入合同变异')`，两个毛病叠在一起：
+        1. 只替换**第一处**，而第一处出现在 1286 行的**注释**里 —— 界面没变
+        2. 就算改对了地方，e2e 用的是 `/录入合同/` **正则包含匹配**，
+           「录入合同变异」照样能匹配上
+
+      于是脚本报「e2e 闸门失效」。**那是误报** —— 闸门是好的，错的是变异点。
+      一个用来验别人的工具，自己出了一模一样的毛病（看起来在检查，其实没有）。
+
+      所以现在：锚点带上按钮的 class，保证唯一命中（replaceOnce 会强制），
+      新文案也不含原文案，正则匹配不上。
+    */
+    mutate: () => patch('pages/Contracts.tsx', (s) => replaceOnce(
+      s,
+      '<Plus className="w-4 h-4 mr-2" /> 录入合同',
+      '<Plus className="w-4 h-4 mr-2" /> 新增合同',
+      '合同页「录入合同」按钮'
+    ))
   }
 ];
 
