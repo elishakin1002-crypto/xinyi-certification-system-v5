@@ -35,6 +35,61 @@ const router = express.Router();
   写到项目上就是脏数据。**不认识的一律拒绝，不静默改写** ——
   静默改写会让调用方以为自己传对了。
 */
+/*
+  金额和日期的边界校验（2026-09-18 补，边界输入那一轮查出来的）。
+
+  实测这三条以前全都放行：
+    · projectAmount: -5000    → HTTP 201，库里存成 -500000 分
+      负数项目金额会直接污染营收、回款率、人均产值 —— 而且不报错
+    · projectAmount: 9e15     → HTTP 201
+      **×100 之后超出 JS 安全整数范围**（MAX_SAFE_INTEGER ≈ 9.007e15），
+      存进去那一刻算术就已经不准了，后面每一次加减都在放大误差
+    · deadline: '不是日期'     → HTTP **500**
+      而这个项目自己写过：「500 和 400 是两件事：400 是『你传的不对』，
+      500 是『服务端自己崩了』，后者意味着未捕获异常，可能已经写了半截数据」
+      （见本文件里项目名校验那段）。实测这次没写半截，但状态码在撒谎。
+
+  上界只设**技术上界**，不替业务定「一个项目最多值多少钱」——
+  那是金总的事，我不知道。超出安全整数是硬边界，不是主观判断。
+*/
+const AMOUNT_MAX_YUAN = Math.floor(Number.MAX_SAFE_INTEGER / 100);   // ×100 存「分」之后还安全的上限
+
+const rejectBadAmount = (amount, res, 字段名 = '项目金额') => {
+  if (amount === undefined || amount === null || amount === '') return false;
+  const n = Number(amount);
+  if (!Number.isFinite(n)) {
+    sendFail(res, ERROR_CODES.PARAM_ERROR, `${字段名}不是一个数字：「${String(amount).slice(0, 30)}」`, {}, 400);
+    return true;
+  }
+  if (n < 0) {
+    sendFail(res, ERROR_CODES.PARAM_ERROR,
+      `${字段名}不能是负数（收到 ${n}）。负数会算进营收和回款率，而且不会报错。`, {}, 400);
+    return true;
+  }
+  if (n > AMOUNT_MAX_YUAN) {
+    sendFail(res, ERROR_CODES.PARAM_ERROR,
+      `${字段名}超出可精确表示的范围（上限约 ${AMOUNT_MAX_YUAN} 元）。`
+      + '金额在库里以「分」存储，再大的数存进去那一刻就已经不准了 —— 多半是多打了几个零。', {}, 400);
+    return true;
+  }
+  return false;
+};
+
+/**
+ * 日期必须是能解析的 YYYY-MM-DD。
+ * 不合法就 400 并说清该填什么 —— 不能让它走到仓储层炸成 500。
+ */
+const rejectBadDate = (value, res, 字段名 = '交付截止日期') => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return false;                       // 不填是允许的
+  if (!/^\d{4}-\d{2}-\d{2}/.test(raw) || Number.isNaN(Date.parse(raw))) {
+    sendFail(res, ERROR_CODES.PARAM_ERROR,
+      `${字段名}格式不对：「${raw.slice(0, 30)}」。要 2026-09-30 这样的年-月-日。`, {}, 400);
+    return true;
+  }
+  return false;
+};
+
 const PROJECT_STATUS_VALUES = Object.values(PROJECT_STATUS);
 const rejectBadProjectStatus = (status, res) => {
   if (status === undefined || status === null) return false;
@@ -168,6 +223,8 @@ router.post('/api/projects',
     return sendFail(res, ERROR_CODES.PARAM_ERROR, '项目名称不能为空 —— 列表里会是一行空白，谁也认不出这是什么活。', {}, 400);
   }
   if (rejectBadProjectStatus(raw.status, res)) return undefined;
+  if (rejectBadAmount(raw.projectAmount, res)) return undefined;
+  if (rejectBadDate(raw.deadline, res)) return undefined;
   const tasks = (Array.isArray(raw.tasks) ? raw.tasks : []).map(normTask);
   const project = await projectRepo.create({
     status: 'Active', projectCategory: 'Delivery', projectType: 'Self-Operated',
@@ -187,8 +244,10 @@ router.patch('/api/projects/:id',
   if (updates.status === 'Completed') {
     return sendFail(res, ERROR_CODES.PARAM_ERROR, '完成项目请调用 /api/projects/:id/complete（含级联）', {}, 400);
   }
-  // 建的时候拦了，改的时候也得拦 —— 否则绕一步 PATCH 就把脏状态写回去了
+  // 建的时候拦了，改的时候也得拦 —— 否则绕一步 PATCH 就把脏数据写回去了
   if (rejectBadProjectStatus(updates.status, res)) return undefined;
+  if (rejectBadAmount(updates.projectAmount, res)) return undefined;
+  if (rejectBadDate(updates.deadline, res)) return undefined;
   if (Array.isArray(updates.tasks)) updates.progress = calcProgress(updates.tasks);
   const project = await projectRepo.update(req.params.id, updates);
   sendSuccess(res, { project }, 'success');
