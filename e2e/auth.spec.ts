@@ -1,5 +1,25 @@
 import { expect, test } from '@playwright/test';
 
+/*
+  ── 每个用例先把新手引导按掉（2026-09-18 补）─────────────────────
+
+  e2e 每次都是全新的 localStorage，于是「新手引导」判定为没看过、
+  自动铺一层全屏遮罩（`.fixed.inset-0 z-[70]`）—— 后面所有点击全部超时。
+
+  core-flows.spec 2026-09-14 已经为此加过同样一行，**smoke 和 auth 漏了**。
+  之前没暴露，是因为这两个 spec 更早就挂在登录页上了
+  （playwright.config 没覆盖 VITE_AUTH_REQUIRED，继承了 .env.local）——
+  一个问题盖住另一个问题。
+
+  下面那条 tests/e2e-hygiene.test.js 会保证新写的 spec 不会再漏。
+*/
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('xinyi_disable_onboarding', '1');
+  });
+});
+
+
 test('auth-required mode redirects to login and signs in with seeded employee', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('xinyi_auth_required', '1');

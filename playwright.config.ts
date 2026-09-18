@@ -5,6 +5,42 @@ const backendPort = Number(process.env.E2E_BACKEND_PORT || 3101);
 const baseURL = process.env.E2E_BASE_URL || `http://127.0.0.1:${frontendPort}`;
 
 /*
+  ── e2e 的环境开关必须显式钉死，不能继承 .env.local（2026-09-18）──
+
+  这些灰度开关（线索/客户/合同/项目走不走 PG）**测试进程读不到
+  .env.local，服务端却读得到** —— 于是本机跑 e2e 时两边对不上：
+  服务端按 PG 路径跑，测试却按"没开灰度"来断言，必然红。
+  CI 没有 .env.local，两边都是关的，所以 CI 绿、本机红。
+
+  **本机和 CI 跑的不是同一条路** —— 这正是这个项目写过的那句
+  「测试全绿，但生产走的是另一条没测过的路」。
+  鉴权那两个开关也是同一个问题，一起钉在这里。
+
+  ⚠️ 现在钉成「关」，是为了先让本机和 CI 一致、e2e 能跑起来。
+  但**生产跑的是 PG 那条路**，所以 e2e 目前并没有覆盖生产的真实路径。
+  这一条记在 docs/上线前验收总计划.md 的「没做的」里，上线后补。
+*/
+const E2E_ENV = {
+  VITE_AUTH_REQUIRED: '0',
+  XINYI_SESSION_AUTH_REQUIRED: '0',
+  VITE_LEADS_API_ENABLED: '0',
+  VITE_LEADS_API_READ_ENABLED: '0',
+  VITE_CUSTOMERS_API_ENABLED: '0',
+  VITE_CUSTOMERS_API_READ_ENABLED: '0',
+  VITE_CONTRACTS_API_READ_ENABLED: '0',
+  VITE_CONTRACTS_API_WRITE_ENABLED: '0',
+  VITE_PROJECTS_API_READ_ENABLED: '0',
+  VITE_PROJECTS_API_WRITE_ENABLED: '0',
+} as const;
+
+/*
+  同一份开关同时喂给**测试进程**和**被测服务**。
+  只喂一边就是上面那个 bug 的来源。
+*/
+for (const [k, v] of Object.entries(E2E_ENV)) process.env[k] = v;
+const e2eEnvPrefix = Object.entries(E2E_ENV).map(([k, v]) => `${k}=${v}`).join(' ');
+
+/*
   ── e2e 必须用自己的库（2026-09-14）──────────────────────────
 
   原来这里没指定数据库，于是 e2e 起的服务读 .env.local，**打在开发库上**。
@@ -44,7 +80,24 @@ export default defineConfig({
   webServer: process.env.E2E_SKIP_WEB_SERVER
     ? undefined
     : {
-        command: `INTEL_CRON_ENABLED=false PORT=${backendPort} VITE_DEV_PORT=${frontendPort} VITE_API_PORT=${backendPort} XINYI_DB_URL=${e2eDbUrl} DATABASE_URL=${e2eDbUrl} AUTH_STORE_PATH=.runtime/e2e-auth-store.json XINYI_AUTH_SEED_ADMIN_PASSWORD=local-test-password npm run dev`,
+        /*
+          ── 鉴权模式必须显式钉死，不能继承 .env.local（2026-09-18 修）──
+
+          smoke.spec 假设「免登录直接进工作台」，auth.spec 则自己用
+          localStorage 的 xinyi_auth_required 打开鉴权 —— 这是设计。
+
+          但这里没有覆盖 VITE_AUTH_REQUIRED，`npm run dev` 会读 .env.local。
+          于是本机（.env.local 里 VITE_AUTH_REQUIRED=1）跑 e2e，
+          前端全局要求登录，**smoke 的 9 条全部挂在登录页**；
+          而 CI 没有 .env.local（gitignore），鉴权是关的，全绿。
+
+          **本机和 CI 跑的不是同一条路** —— 这正是这个项目写过的那句
+          「测试全绿，但生产走的是另一条没测过的路」。
+          后果是本机根本跑不了 e2e，而 e2e 恰恰是上线前最该反复跑的那个。
+
+          所以这里把两个开关都显式置 0：auth.spec 需要鉴权时自己打开。
+        */
+        command: `INTEL_CRON_ENABLED=false PORT=${backendPort} VITE_DEV_PORT=${frontendPort} VITE_API_PORT=${backendPort} XINYI_DB_URL=${e2eDbUrl} DATABASE_URL=${e2eDbUrl} AUTH_STORE_PATH=.runtime/e2e-auth-store.json XINYI_AUTH_SEED_ADMIN_PASSWORD=local-test-password ${e2eEnvPrefix} npm run dev`,
         url: baseURL,
         reuseExistingServer: process.env.E2E_REUSE_EXISTING_SERVER === '1',
         timeout: 120_000

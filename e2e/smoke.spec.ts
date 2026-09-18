@@ -1,5 +1,25 @@
 import { expect, Page, test } from '@playwright/test';
 
+/*
+  ── 每个用例先把新手引导按掉（2026-09-18 补）─────────────────────
+
+  e2e 每次都是全新的 localStorage，于是「新手引导」判定为没看过、
+  自动铺一层全屏遮罩（`.fixed.inset-0 z-[70]`）—— 后面所有点击全部超时。
+
+  core-flows.spec 2026-09-14 已经为此加过同样一行，**smoke 和 auth 漏了**。
+  之前没暴露，是因为这两个 spec 更早就挂在登录页上了
+  （playwright.config 没覆盖 VITE_AUTH_REQUIRED，继承了 .env.local）——
+  一个问题盖住另一个问题。
+
+  下面那条 tests/e2e-hygiene.test.js 会保证新写的 spec 不会再漏。
+*/
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('xinyi_disable_onboarding', '1');
+  });
+});
+
+
 const ignoredConsolePatterns = [
   /favicon/i,
   /cdn.*source map/i,
@@ -90,7 +110,12 @@ test('core business routes render their entry pages', async ({ page }) => {
     { path: '/#/leads', title: '线索公海' },
     { path: '/#/customers', title: '客户管理' },
     { path: '/#/contracts', title: '合同管理' },
-    { path: '/#/projects', title: '交付工作台' },
+    /*
+      2026-09-18 修：这里原来写「交付工作台」，而页面标题早就是「项目管理」。
+      过时的断言之所以九天没人发现，见本文件里「线索能转成客户」那条上面的说明
+      —— CI 两周没跑、本机 e2e 又跑不起来。
+    */
+    { path: '/#/projects', title: '项目管理' },
     { path: '/#/finance', title: '财务中心' }
   ];
 
@@ -186,7 +211,7 @@ test('project create can use API write gray rollout', async ({ page }) => {
   }
   await expect(page.locator('body')).toContainText(projectName);
 
-  await page.getByPlaceholder('搜索项目...').fill(projectName);
+  await page.getByPlaceholder('搜索项目…').fill(projectName);
   await page.locator('tr').filter({ hasText: projectName }).click();
   const expandedProject = page.locator('tr').filter({ hasText: '交付任务流水线' });
 
@@ -215,7 +240,7 @@ test('project create can use API write gray rollout', async ({ page }) => {
     await expect.poll(() => sawCompletionTransaction).toBe(true);
   }
   await page.getByRole('button', { name: /全部项目/ }).first().click();
-  await page.getByPlaceholder('搜索项目...').fill(projectName);
+  await page.getByPlaceholder('搜索项目…').fill(projectName);
   const projectRow = page.locator('tr').filter({ hasText: projectName }).first();
   const reopenButton = page.getByRole('button', { name: /重新打开项目/ }).first();
   if (await reopenButton.count() === 0) {
@@ -318,7 +343,21 @@ test('contract entry links customer, delivery project, and receivable ledger', a
   pageErrors.assertClean();
 });
 
-test('lead can be converted into a follow-up project', async ({ page }) => {
+/*
+  ── 这条测试 2026-09-18 重写 ──────────────────────────────────
+
+  原来测的是「生成跟进项目」，而那个功能 **2026-09-09 被刻意删掉了** ——
+  它会在没人点任何按钮的情况下自动建项目、把线索锁成「已转化」
+  （见 context/AppContext.tsx 里那段说明）。删得对，但**测试没跟着改**。
+
+  之所以九天没人发现：CI 最后一次运行是 2026-09-04（而且是红的），
+  本机 e2e 又因为继承 .env.local 的鉴权开关全挂在登录页 ——
+  两个问题互相掩盖，安全网整整两周是断的。
+
+  现在改成测**真实存在的那条路**：线索 → 转为客户。
+  那是销售真正要走的一步（2026-09-18 才补上前端入口）。
+*/
+test('线索能转成客户 —— 销售主线的第一个交接点', async ({ page }) => {
   const pageErrors = collectPageErrors(page);
   const stamp = Date.now();
   const leadCompany = `E2E线索客户-${stamp}`;
@@ -347,10 +386,31 @@ test('lead can be converted into a follow-up project', async ({ page }) => {
 
   await expect(page.locator('body')).toContainText(leadCompany);
   await page.locator('tr').filter({ hasText: leadCompany }).click();
-  await page.getByRole('button', { name: /生成跟进项目/ }).click();
 
+  /*
+    smoke 这一档跑的是**灰度开关全关**的配置（见 playwright.config.ts），
+    线索只存在于前端内存里、服务端没有 —— 所以这里只能验到"入口在不在"
+    和"确认文案说没说清后果"，验不了服务端级联那一段。
+
+    完整链路（建客户 + 线索标记已转化 + 客户管理立刻看得到）由两处兜着：
+      · tests/lead-to-customer-chain.test.js（钉住接口、前端调用、重拉、文案）
+      · 真环境手工复验（2026-09-18，三看全过）
+    e2e 覆盖不到生产的 PG 路径，这一条记在 docs/上线前验收总计划.md。
+  */
+  const 转客户 = page.getByRole('button', { name: /转为客户/ });
+  await expect(转客户).toBeVisible();
+
+  // 不可撤销的动作必须先确认，而且确认框要说清后果
+  let 确认文案 = '';
+  page.once('dialog', async d => { 确认文案 = d.message(); await d.dismiss(); });
+  await 转客户.click();
+  await page.waitForTimeout(1200);
+  expect(确认文案, '转客户没有确认框 —— 这是不可撤销的动作').toContain('转成客户');
+  expect(确认文案, '确认框没说清这一步不能撤销').toContain('不能撤销');
+  expect(确认文案, '确认框没说清转完之后东西去哪了').toContain('客户管理');
+
+  // 点了「取消」就该什么都没发生
   await expect(page.locator('body')).toContainText(leadCompany);
-  await expect(page.locator('body')).toContainText('跟进项目');
 
   pageErrors.assertClean();
 });
@@ -400,7 +460,7 @@ test('lead create, search, detail edit, and follow-up preserve current UI contra
   await expect(page.locator('body')).toContainText('线索公海');
   await expect(page.getByRole('button', { name: /筛出重点线索/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /新增线索/ })).toBeVisible();
-  await expect(page.getByPlaceholder('搜索线索...')).toBeVisible();
+  await expect(page.getByPlaceholder('搜索线索…')).toBeVisible();
   if (expectLeadApiRead) {
     await expect.poll(() => leadApiReads).toBeGreaterThanOrEqual(1);
   }
@@ -409,13 +469,18 @@ test('lead create, search, detail edit, and follow-up preserve current UI contra
   const createLeadForm = page.locator('form').filter({ hasText: '保存线索' });
   await expect(createLeadForm).toContainText('客户名称');
   await expect(createLeadForm).toContainText('联系人');
-  await expect(createLeadForm).toContainText('手机号');
+  /*
+    2026-09-18 按术语表改名：同一个 mobile 字段，新建叫「手机号」、
+    编辑叫「联系电话」，而编辑页本来就允许座机 —— 字段排查 A06。
+    统一成「联系电话（手机或座机）」，口径在 src/modules/labels.ts 的 FIELD。
+  */
+  await expect(createLeadForm).toContainText('联系电话');
   await createLeadForm.locator('input').nth(0).fill(leadCompany);
   await createLeadForm.locator('input').nth(1).fill(contactName);
   await createLeadForm.locator('input').nth(2).fill('13800000000');
   await createLeadForm.getByRole('button', { name: /保存线索/ }).click();
 
-  await page.getByPlaceholder('搜索线索...').fill(leadCompany);
+  await page.getByPlaceholder('搜索线索…').fill(leadCompany);
   await expect(page.locator('body')).toContainText(leadCompany);
   await expect(page.locator('body')).toContainText(contactName);
 
@@ -425,7 +490,9 @@ test('lead create, search, detail edit, and follow-up preserve current UI contra
   await expect(detail).toContainText('基本信息');
   await expect(detail).toContainText('工商注册信息');
   await expect(detail).toContainText('跟进记录');
-  await expect(detail.getByRole('button', { name: /生成跟进项目/ })).toBeVisible();
+  // 「生成跟进项目」2026-09-09 已删（会自动建项目并锁死线索）。
+  // 线索详情里真正的下一步是「转为客户」。
+  await expect(detail.getByRole('button', { name: /转为客户/ })).toBeVisible();
 
   await detail.getByRole('button', { name: /^编辑$/ }).click();
   await detail.locator('input').first().fill(updatedCompany);
@@ -491,7 +558,7 @@ test('customer create, search, detail edit, and follow-up preserve current UI co
   await page.goto('/#/customers');
   await expect(page.locator('body')).toContainText('客户管理');
   await expect(page.getByRole('button', { name: /新建客户/ })).toBeVisible();
-  await expect(page.getByPlaceholder('搜索客户...')).toBeVisible();
+  await expect(page.getByPlaceholder('搜索客户…')).toBeVisible();
   if (expectCustomerApiRead) {
     await expect.poll(() => customerApiReads).toBeGreaterThanOrEqual(1);
   }
@@ -508,7 +575,7 @@ test('customer create, search, detail edit, and follow-up preserve current UI co
   await detail.getByPlaceholder('手机号/电话').first().fill('13900000000');
   await detail.getByRole('button', { name: /保存/ }).click();
 
-  await page.getByPlaceholder('搜索客户...').fill(customerName);
+  await page.getByPlaceholder('搜索客户…').fill(customerName);
   await expect(page.locator('body')).toContainText(customerName);
   await expect(page.locator('body')).toContainText(contactName);
 
