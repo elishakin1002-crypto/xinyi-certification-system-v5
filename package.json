@@ -86,6 +86,7 @@
     "clean:knowledge": "node scripts/clean-knowledge.mjs",
     "sync:from-prod": "node scripts/sync-from-prod.mjs",
     "qa:supervisor": "node tools/qa-supervisor/server.mjs",
+    "audit:safety-nets": "node scripts/safety-net-audit.mjs",
     "contract": "node scripts/data-contract.mjs",
     "contract:update": "node scripts/data-contract.mjs --write"
   },
