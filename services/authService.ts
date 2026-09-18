@@ -111,10 +111,31 @@ export const authService = {
       credentials: 'include'
     });
   },
-  listAssignableUsers: async (): Promise<AuthUser[]> => {
-    // Managers retain account-expiry data; colleagues get only the directory.
-    let res = await fetch('/api/auth/users', { credentials: 'include' });
-    if (res.status === 403) res = await fetch('/api/auth/directory', { credentials: 'include' });
+  /**
+   * 花名册。管理角色拿完整账号信息（含账号有效期），其他人只拿通讯录。
+   *
+   * ── 为什么不再「先试再降级」（2026-09-18）──────────────────────
+   *
+   * 原来的写法是：先请求 /api/auth/users，**403 了再**去要 /api/auth/directory。
+   * 功能是对的（降级确实生效），但代价是：
+   * **每一个顾问、每一次刷新、每一个页面，控制台都留一条红色 403。**
+   *
+   * 这个项目自己写过这条规矩：
+   * 「一个永远消不掉的红，会让人不再信任所有的红。」
+   * 真出事那天，那条真的报错会被埋在一堆常驻 403 里。
+   *
+   * 改成**先问自己有没有权限**（调用方传 canViewEmployees），
+   * 没权限就直接走通讯录 —— 一次请求，零噪音。
+   * 仍然保留 403 兜底：权限判断和服务端万一不一致时不能把功能弄丢
+   * （这个项目权限有三份定义，不一致是发生过的）。
+   */
+  listAssignableUsers: async (canViewEmployees = false): Promise<AuthUser[]> => {
+    const endpoint = canViewEmployees ? '/api/auth/users' : '/api/auth/directory';
+    let res = await fetch(endpoint, { credentials: 'include' });
+    // 兜底：三份权限定义万一对不上，宁可多一次请求也不能让花名册空掉
+    if (res.status === 403 && canViewEmployees) {
+      res = await fetch('/api/auth/directory', { credentials: 'include' });
+    }
     const body = await parseJson<{ users: AuthUser[] }>(res);
     return body.data.users;
   },

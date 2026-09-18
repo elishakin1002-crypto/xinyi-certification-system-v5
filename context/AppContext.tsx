@@ -878,7 +878,15 @@ export const AppProvider: React.FC<{ children: ReactNode; authenticatedUser?: Us
     let cancelled = false;
     const hydrateProfilesFromAuth = async () => {
       try {
-        const accounts = await authService.listAssignableUsers();
+        /*
+          先问自己有没有 EMPLOYEE_VIEW，再决定要完整账号还是通讯录。
+          原来是"先试 /api/auth/users，403 再降级"——功能没问题，
+          但每个顾问每次刷新都会在控制台留一条红色 403，
+          真报错就被埋在里面了。
+        */
+        const accounts = await authService.listAssignableUsers(
+          checkActionPermission('EMPLOYEE_VIEW', {}).allowed
+        );
         if (cancelled || !Array.isArray(accounts) || accounts.length === 0) return;
         setUserProfiles(accounts.map((a: any) => ({
           id: a.id,

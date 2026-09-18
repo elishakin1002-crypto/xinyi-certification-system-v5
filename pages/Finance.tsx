@@ -11,7 +11,7 @@ import { aiService } from '../services/aiService';
 import { SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 import { isReceivableOverdue } from '../src/modules/glossary';
 import { settlementStatusLabel, FIELD } from '../src/modules/labels';
-import { collectionProgress } from '../src/modules/cashBasis';
+import { collectionProgress, collectionOnDue } from '../src/modules/cashBasis';
 
 const Finance = () => {
   const { contracts, settlements, projects, toggleReceivableStatus, rejectReceivable, importSettlements, updateSettlementStatus, vendors } = useApp();
@@ -240,6 +240,15 @@ const Finance = () => {
   */
   const 回款进度 = collectionProgress(contracts);
   const collectionRate = (回款进度.rate ?? 0) * 100;
+  /*
+    催收效果 —— 已经到期的钱收上来多少（2026-09-18 补）。
+
+    光看「回款率」（已收 ÷ 合同总额）会误判：昨天刚签的合同显示 0%，
+    那是正常的（钱还没到期），不是催收出了问题。
+    成熟系统一定是成对的：一个看**进度**，一个看**催收**。
+    这一个把未到期的钱排除在分母外，所以它跌下来就一定是真的该收没收到。
+  */
+  const 催收 = collectionOnDue(contracts);
   const filteredSettlements = settlements
     .filter(s => settlementTypeFilter === 'All' || s.type === settlementTypeFilter)
     .filter(s => settlementStatusFilter === 'all' || s.status === settlementStatusFilter)
@@ -434,7 +443,23 @@ const Finance = () => {
                         <div className="text-2xl font-black text-gray-900 truncate">¥{totalReceived.toLocaleString()}</div>
                         <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">
                           实际已到账 · 回款率 {回款进度.rate === null ? '—' : `${collectionRate.toFixed(1)}%`}
-                          <span className="ml-1 normal-case font-normal text-gray-400">（已收 ÷ 合同总额）</span>
+                          <span className="ml-1 normal-case font-normal text-gray-400">（已收 ÷ 合同总额，看进度）</span>
+                        </div>
+                        {/*
+                          两个指标成对显示，各答一个问题（行业标准做法）：
+                            回款率   已收 ÷ 合同总额     → 这单收了多少（进度）
+                            催收率   已收 ÷ 已到期应收   → 该收的收上来没有（催收效果）
+                          只看前者会误判：刚签的合同 0% 是正常的，钱还没到期。
+                        */}
+                        <div className="mt-1 text-[11px] font-bold">
+                          {催收.rate === null ? (
+                            <span className="text-gray-400">还没有任何一笔到期 —— 催收这一项现在无从谈起。</span>
+                          ) : (
+                            <span className={催收.overdue > 0 ? 'text-amber-700' : 'text-emerald-700'}>
+                              已到期的 ¥{催收.due.toLocaleString()} 里收到 {(催收.rate * 100).toFixed(1)}%
+                              {催收.overdue > 0 && <>，<b>还差 ¥{催收.overdue.toLocaleString()} 该收没收到</b></>}
+                            </span>
+                          )}
                         </div>
                         {回款进度.planGap > 0 && (
                           <div className="mt-1 text-[11px] text-amber-700">

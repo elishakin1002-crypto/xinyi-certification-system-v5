@@ -139,3 +139,61 @@ export const collectionProgress = (contracts: ReadonlyArray<ContractLike> | null
     rate: contractTotal > 0 ? received / contractTotal : null
   };
 };
+
+/**
+ * 催收效果 —— **已经到期的钱，收上来多少**。
+ *
+ * ══════════════════════════════════════════════════════════════
+ * 为什么光有「回款率」不够（2026-09-18）
+ * ══════════════════════════════════════════════════════════════
+ *
+ * 金恩来：「我不专业，不懂财务，你要以成熟先进的做法为参考。」
+ *
+ * 查了一下，行业里「回款率」其实是两个指标，答的是两个问题：
+ *
+ *   合同回款率 = 已收 ÷ 合同总额     → 这单**收了多少**（进度）
+ *   期间回款率 = 已收 ÷ 已到期应收   → 该收的**收上来没有**（催收效果）
+ *
+ * 工程、咨询这类按合同分期收款的行业，前者是标准的进度口径 ——
+ * 所以 collectionProgress 用合同总额当分母是对的。
+ *
+ * **但只有前者会误判。** 昨天刚签的合同显示 0%，那是正常的
+ * （钱还没到期），不是催收出了问题；而一份到期三个月还没收的合同，
+ * 可能因为合同额大、进度看着也才 40%，混在一堆里看不出来。
+ *
+ * 成熟系统一定是成对的：一个看进度，一个看催收。
+ * 这个函数补的是后者 —— **未到期的钱不进分母**，
+ * 所以它跌下来就一定是真的该收没收到。
+ */
+export const collectionOnDue = (
+  contracts: ReadonlyArray<ContractLike> | null | undefined,
+  today = new Date().toISOString().slice(0, 10)
+) => {
+  /*
+    「已到期」用 `due < today`，**不含今天**。
+
+    这个系统早就定过这条规矩，而且两处都在用：
+      · 任务：截止日当天结束才算逾期（src/modules/taskFlow.ts 的 isOverdue）
+      · 应收：`due < today`（src/modules/glossary.ts 的 isReceivableOverdue）
+    第一版我写成 `<=`，于是**今天刚到期的钱当场被算成"该收没收到"** ——
+    同一个系统里两套迟到标准，财务会问"今天到期的凭什么算我没收"。
+
+    没填到期日的不算：没约定就没有迟到，那是资料缺失，该去补。
+  */
+  const list = allReceivables(contracts).filter(r => {
+    const due = String(r?.dueDate || '').trim();
+    return due && due < today;
+  });
+  const 已到期 = list.reduce((acc, r) => acc + num(r.amount), 0);
+  const 已收 = list.filter(isPaid).reduce((acc, r) => acc + num(r.amount), 0);
+  return {
+    /** 到今天为止该收的钱 */
+    due: 已到期,
+    /** 其中已经收到的 */
+    received: 已收,
+    /** 该收没收到的 —— 这个数才是催收要盯的 */
+    overdue: 已到期 - 已收,
+    /** 没有任何一笔到期时返回 null，**不返回 0 也不返回 100%** */
+    rate: 已到期 > 0 ? 已收 / 已到期 : null
+  };
+};
