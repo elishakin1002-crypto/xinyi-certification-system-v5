@@ -1,0 +1,98 @@
+name: 安全网体检
+
+# ── 为什么要定期跑（2026-09-18）──────────────────────────────────
+#
+# CI 全绿只证明「每条命令退出码是 0」，不证明「它们真的在检查东西」。
+# 2026-09-18 一天里连着发现六道闸门「看起来在工作、其实从没执行过」，
+# 每一个都只有在前一个被修好之后才暴露。
+#
+# 这个工作流往每道闸门里塞一个**真出过事**的坏东西，看它红不红。
+# 全绿 = 闸门活着；有一条绿着通过了变异 = 那道闸门已经是摆设。
+#
+# 为什么是定时而不是每次 push：它要把每道闸门跑两遍（基线 + 变异），
+# 十几分钟，挂在每次提交上太重。而闸门失效是**慢慢发生**的，
+# 一周查一次足够早地发现。
+#
+# 这条也是 CLAUDE.md 二点五之二的应用：「有个脚本可以跑」等于没有 ——
+# 所以它必须是定时任务，不能是"记得跑一下"。
+
+on:
+  schedule:
+    # 每周一 早 8:00（UTC 0:00）—— 一周开始时看到结果，有整周时间处理
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    # 和 ci.yml 一样要真的数据库：单元测试那道闸门跑在 PG 上，
+    # 没有库的话它的基线就是红的，变异测试等于没做。
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare test database
+        env:
+          XINYI_DB_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: npm run test:db:setup
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Prepare e2e database
+        env:
+          XINYI_DB_URL: postgres://postgres:postgres@localhost:5432/postgres
+          XINYI_TEST_DB_NAME: xinyi_e2e_test
+        run: npm run test:db:setup
+
+      # 体检脚本要求工作区干净（它会改源文件再还原）。
+      # checkout 出来本来就是干净的，这里显式验一次 ——
+      # 万一哪天前面的步骤留下了文件，要立刻知道，而不是被拒绝跑之后一脸茫然。
+      - name: 确认工作区干净
+        run: git status --porcelain
+
+      - name: 往每道闸门里塞坏东西
+        env:
+          XINYI_TEST_DB_URL: postgres://postgres:postgres@localhost:5432/xinyi_test
+          XINYI_REQUIRE_TEST_DB: '1'
+          E2E_DB_URL: postgres://postgres:postgres@localhost:5432/xinyi_e2e_test
+        run: npm run audit:safety-nets
+
+      # 体检脚本自己会在结束时验还原；这里再验一次是因为
+      # 它异常退出（超时、被杀）时来不及还原，那种情况下
+      # 必须在日志里留下证据，而不是静悄悄地过去。
+      - name: 确认已还原
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "⛔ 体检结束后工作区没还原干净："
+            git status --porcelain
+            exit 1
+          fi
+          echo "✅ 已还原干净"
