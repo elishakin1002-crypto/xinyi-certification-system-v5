@@ -131,12 +131,22 @@ export const open = async () => {
     不该顺手替人确认删除。
   */
   const dialogs = [];
+  /*
+    默认 dismiss（选"取消"）。
+
+    这是个**安全默认值**：清点按钮时不该替人确认删除。
+    但测「确认后会发生什么」这类流程时需要同意 —— 那时把
+    `ctx.acceptDialogs = true` 打开，用完记得关回去。
+    不用 page.once 自己挂：本函数已经挂了一个 on('dialog')，
+    再挂一个会撞成 "Cannot accept dialog which is already handled"。
+  */
+  const ctx = { browser, context, page, errors, dialogs, acceptDialogs: false };
   page.on('dialog', async (d) => {
-    dialogs.push(`${d.type()}: ${d.message().slice(0, 160)}`);
-    await d.dismiss().catch(() => {});
+    dialogs.push(`${d.type()}: ${d.message().slice(0, 300)}`);
+    await (ctx.acceptDialogs ? d.accept() : d.dismiss()).catch(() => {});
   });
 
-  return { browser, context, page, errors, dialogs };
+  return ctx;
 };
 
 /**

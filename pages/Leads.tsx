@@ -32,6 +32,7 @@ import { SampleTr } from '../components/SampleRow';
 import { IngestionUploader } from '../components/IngestionUploader';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { FIELD } from '../src/modules/labels';
+import { leadService } from '../services/leadService';
 
 /**
  * 把模型返回的日期规整成 YYYY-MM-DD。
@@ -49,7 +50,7 @@ const normalizeCertDate = (raw: string): string => {
   return Number.isNaN(Date.parse(iso)) ? '' : iso;
 };
 const Leads = () => {
-  const { leads, addLead, updateLead, addLeadFollowUp, scheduleRenewalFollowUp, importExcel, currentUser } = useApp();
+  const { leads, addLead, updateLead, addLeadFollowUp, scheduleRenewalFollowUp, importExcel, currentUser, checkActionPermission, refreshCustomers } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -358,6 +359,61 @@ const Leads = () => {
    *
    * 现在提醒就挂在这条线索上，人留在线索页 —— 那才是他要干活的地方。
    */
+  /**
+   * 线索 → 客户。
+   *
+   * ── 为什么到 2026-09-18 才有这个按钮 ────────────────────────
+   *
+   * 服务端 `POST /api/leads/:id/convert` 一直都在、权限也早分好了、
+   * 实测调用完全正常。**缺的只是这个按钮。**
+   * 于是销售建完线索后没有任何路径能转客户，只能去客户管理
+   * 把公司名、联系人、电话重新录一遍 —— 而这些线索里全都有。
+   * 连带的：线索页「转化率」和销售工作台「销售转化率」永远是 0。
+   *
+   * 这是走「六条业务主线端到端」时发现的。逐页逐钮清点发现不了它 ——
+   * **每一页单独看都是好的，断的是页面之间那一步。**
+   *
+   * 转完要说清「产生了什么、在哪能看到、下一步去哪」，
+   * 不能只弹一句「操作成功」（项目规矩：文案要说清后果和下一步）。
+   */
+  const [converting, setConverting] = useState(false);
+  const handleConvertToCustomer = async () => {
+    if (!selectedLead || converting) return;
+    const perm = checkActionPermission('LEAD_CONVERT', {});
+    if (!perm.allowed) { alert(`转不了 —— ${perm.reason || '没有这个权限'}`); return; }
+    if (!window.confirm(
+      `把「${selectedLead.company || selectedLead.name}」转成客户？\n\n`
+      + '转完之后：\n'
+      + '· 客户管理里会有这家公司（联系人和电话从线索带过去）\n'
+      + '· 这条线索变成「已转化」，不再出现在跟进列表里\n'
+      + '· 这一步不能撤销'
+    )) return;
+
+    setConverting(true);
+    try {
+      const r = await leadService.convertToCustomer(selectedLead.id);
+      updateLead(selectedLead.id, { status: Status.Converted });
+      /*
+        建客户是**服务端级联**做的，前端手里的 customers 数组不知道多了一条。
+        不重拉的话，跳到客户管理会**看不到刚转的那家** —— 直接打开能看到、
+        F5 能看到，只有刚跳过去那一瞬间没有。
+        这正是这个项目反复出现的那种：后端成功了，界面没变。
+      */
+      await refreshCustomers();
+      alert(
+        `${r.created ? '已新建客户' : '这家公司客户档案本来就有，已关联'}：${r.customer?.name || ''}\n\n`
+        + '下一步：去「客户管理」找到它，建合同。\n'
+        + '这条线索已标成「已转化」，转化率会跟着更新。'
+      );
+      navigate('/customers');
+    } catch (e) {
+      // 失败要说清是哪一步失败，不能只说"失败了"
+      alert(`转客户没成功：${e instanceof Error ? e.message : String(e)}\n\n线索没有被改动，可以再试一次。`);
+    } finally {
+      setConverting(false);
+    }
+  };
+
   const handleScheduleFollowUp = () => {
       if (!selectedLead) return;
       const expiry = editingLeadData?.targetCertExpiryDate || selectedLead.targetCertExpiryDate;
@@ -646,13 +702,24 @@ const Leads = () => {
                                 已转化 (退役)
                             </div>
                         ) : (
-                            <button
-                              onClick={handleScheduleFollowUp}
-                              className="flex-1 md:flex-none px-3 py-2 bg-indigo-600 text-white rounded-xl font-bold shadow-md hover:bg-indigo-700 transition-colors flex items-center justify-center text-xs md:text-sm"
-                            >
-                              <Briefcase className="w-3.5 h-3.5 md:w-4 md:h-4 mr-1.5 md:mr-2" />
-                              排跟进提醒
-                            </button>
+                            <>
+                              <button
+                                onClick={handleConvertToCustomer}
+                                disabled={converting}
+                                title="把这条线索变成正式客户，联系人和电话一起带过去"
+                                className="flex-1 md:flex-none px-3 py-2 bg-emerald-600 text-white rounded-xl font-bold shadow-md hover:bg-emerald-700 disabled:opacity-60 transition-colors flex items-center justify-center text-xs md:text-sm"
+                              >
+                                <Briefcase className="w-3.5 h-3.5 md:w-4 md:h-4 mr-1.5 md:mr-2" />
+                                {converting ? '转换中…' : '转为客户'}
+                              </button>
+                              <button
+                                onClick={handleScheduleFollowUp}
+                                className="flex-1 md:flex-none px-3 py-2 bg-indigo-600 text-white rounded-xl font-bold shadow-md hover:bg-indigo-700 transition-colors flex items-center justify-center text-xs md:text-sm"
+                              >
+                                <Briefcase className="w-3.5 h-3.5 md:w-4 md:h-4 mr-1.5 md:mr-2" />
+                                排跟进提醒
+                              </button>
+                            </>
                         )}
                         {isEditing ? (
                             <button onClick={handleSaveEdit} className="px-3 py-2 bg-blue-600 text-white rounded-xl font-bold shadow-md hover:bg-blue-700 transition-colors flex items-center text-xs md:text-sm"><Save className="w-3.5 h-3.5 md:w-4 md:h-4 mr-1.5 md:mr-2"/> 保存</button>

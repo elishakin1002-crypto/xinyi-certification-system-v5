@@ -176,6 +176,8 @@ export interface AppContextType {
   toggleReceivableStatus: (contractId: string, receivableId: string) => void;
   addReminder: (reminder: Omit<Reminder, 'id' | 'isRead'> & { id?: string }) => void;
   /** 给线索/客户排证书到期跟进（30/15/7 天三条提醒），替代原来的「生成跟进项目」 */
+  /** 从服务端重拉客户列表 —— 服务端级联建了客户之后用，否则界面不会变 */
+  refreshCustomers: () => Promise<void>;
   scheduleRenewalFollowUp: (params: {
     kind: 'lead' | 'customer'; id: string; name: string; expiryDate?: string; owner?: string;
   }) => { ok: boolean; count: number; reason?: string };
@@ -3231,6 +3233,23 @@ ${receivableLines}
     现在关掉开关会**明确报错**，而不是静默走另一套逻辑。
   */
 
+  /*
+    从服务端重拉客户列表。
+
+    ── 为什么要暴露出去（2026-09-18）──────────────────────────────
+    「线索转客户」是**服务端级联**（POST /api/leads/:id/convert 一次建客户
+    + 改线索状态），前端手里的 customers 数组不会自己知道多了一条。
+    结果是：销售点完「转为客户」，跳到客户管理，**看不到刚转的那家** ——
+    直接打开这一页能看到、F5 也能看到，只有刚跳过去那一瞬间没有。
+
+    这正是这个项目反复出现的那一种：**后端成功了，界面没变。**
+    销售的第一反应是「我刚转的客户呢？」，然后再转一次。
+  */
+  const refreshCustomers = async () => {
+    if (!customerService.isReadEnabled()) return;
+    await customerService.listCustomers().then(setCustomers).catch(() => {});
+  };
+
   // 项目完成级联后，从 PG 重拉受影响数据集，让 UI 反映后端权威结果（客户分级/提醒/PDCA/结算草稿）。
   const refreshAfterProjectCompletion = async () => {
     await Promise.all([
@@ -5049,7 +5068,7 @@ ${receivableLines}
       upsertMarketSignals, updateMarketSignal, convertSignalToFollowUpProject, convertIntelProjectToLead, bindFollowUpProjectToCustomer,
       strategicInsight, isAnalyzingStrategy, strategicTasks, runDeepAnalysis, generateStrategicTasksFromInsight, addStrategicTask, updateStrategicTaskStatus, deleteStrategicTask,
       runSystemScans, generateAuditPlan, updateCertificateAuditStatus,
-      toggleReceivableStatus, addReminder, scheduleRenewalFollowUp, dismissReminder, markRemindersRead, markAllRemindersRead, resolveReminders,
+      toggleReceivableStatus, addReminder, refreshCustomers, scheduleRenewalFollowUp, dismissReminder, markRemindersRead, markAllRemindersRead, resolveReminders,
       addKnowledgeDoc, updateCustomer,
       aiDecisionLogs, runProjectDiagnosis, completeProject, reopenProject, updateProjectCost,
       importRecords, importExcel // 暴露新功能
