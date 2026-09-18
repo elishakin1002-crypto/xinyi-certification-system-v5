@@ -164,11 +164,20 @@ const App = () => {
               {/* 自己的登录设备，人人可看，不需要任何额外权限 —— 看的是自己 */}
               <Route path="/my-devices" element={<div className="p-4 md:p-6 max-w-3xl mx-auto"><LoginSessions /></div>} />
               {/*
-                字段档案不加权限 —— 每个人都该能查"这个数字数的是什么"。
+                字段档案对六个角色**全部开放** —— 每个人都该能查"这个数字数的是什么"。
                 它不含任何业务数据，只有口径说明（内容从代码常量生成，
                 见 src/modules/help/fieldDictionary.ts）。
+
+                但「谁都能看」要**显式写出来**，不能靠不写守卫来表达：
+                没有守卫的路由，和「忘了加守卫」长得一模一样，
+                下一个人无法分辨哪个是故意的（CLAUDE.md 二点五之一）。
+                2026-09-18 权限体检就是这么报的：「/glossary 直接输网址即可进入」。
+
+                NAV_KNOWLEDGE 六个角色都有，语义也对得上（同属参考资料）。
+                顺带把「必须先登录」也补上了 —— 原来没守卫时，
+                没登录的人也能打开这一页。
               */}
-              <Route path="/glossary" element={<Glossary />} />
+              <Route path="/glossary" element={<ProtectedRoute permission="NAV_KNOWLEDGE"><Glossary /></ProtectedRoute>} />
             </Routes>
             </PageBoundary>
           </Layout>
