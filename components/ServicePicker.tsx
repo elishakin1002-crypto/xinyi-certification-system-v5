@@ -136,9 +136,10 @@ export const ServicePicker: React.FC<{
   const notYetTaken = aiSuggest.matched.filter(m => !selectedNames.includes(m.name));
 
   return (
-    <div ref={boxRef} className="relative">
+    <div ref={boxRef} data-testid="service-picker" className="relative">
       {/* 已选的摆在最上面 —— 人最想确认的是「我选了什么」 */}
       <div
+        data-testid="service-picker-box"
         className="min-h-[42px] w-full cursor-text rounded-xl border border-gray-200 bg-gray-50 px-2 py-1.5 focus-within:ring-2 focus-within:ring-blue-500/20"
         onClick={() => { decideDirection(); setOpen(true); }}
       >
@@ -226,6 +227,7 @@ export const ServicePicker: React.FC<{
                     <button
                       key={item.id}
                       type="button"
+                      data-testid="service-picker-option"
                       onClick={() => toggle(item.name)}
                       className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-blue-50 ${on ? 'bg-blue-50/60' : ''}`}
                     >

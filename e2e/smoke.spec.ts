@@ -1,4 +1,18 @@
 import { expect, Page, test } from '@playwright/test';
+/*
+  分类名从**定义处**取，不在测试里写死中文。
+
+  2026-09-08 这一类从「交付项目」改名成「客户项目」，而这条断言还写着
+  「交付项目」，整整十天没人知道 —— 因为那段时间 e2e 根本跑不起来。
+  写死文案的断言就是这样：改名的人不会想到去翻 e2e 目录。
+*/
+import { PROJECT_CATEGORY_META } from '../src/modules/projectCategory';
+/*
+  客户名占位符同理：真实的值是「营业执照全称，例如：…」，
+  而这里原来写着「请输入客户名称」—— 一个界面上根本不存在的字符串。
+  e2e/core-flows.spec.ts 早就从常量取了，这份没跟上。
+*/
+import { CUSTOMER_NAME_PLACEHOLDER } from '../src/modules/customerIdentity';
 
 /*
   ── 每个用例先把新手引导按掉（2026-09-18 补）─────────────────────
@@ -304,19 +318,64 @@ test('contract entry links customer, delivery project, and receivable ledger', a
   }
   await page.getByRole('button', { name: /录入合同/ }).click();
 
-  const form = page.locator('form');
-  await form.locator('input[type="text"]').nth(0).fill(contractTitle);
-  await form.locator('input[type="text"]').nth(1).fill(contractNo);
-  await form.locator('input[type="text"]').nth(2).fill(customerName);
-  await form.locator('input[type="text"]').nth(3).fill(contactName);
-  await form.locator('input[type="text"]').nth(4).fill('ISO 9001 认证服务');
-  await form.locator('input[type="number"]').nth(0).fill('12000');
-  await form.locator('input[type="text"]').nth(5).fill('分期付款');
+  /*
+    ── 为什么这一段 2026-09-18 重写（按 data-testid 取，不按位置数）──
 
-  await form.getByRole('button', { name: /添加款项节点/ }).click();
-  await form.locator('input[type="text"]').nth(6).fill(receivableNode);
-  await form.locator('input[type="number"]').nth(1).fill('12000');
-  await form.locator('input[type="date"]').nth(1).fill('2026-05-20');
+    原来是 `form.locator('input[type="text"]').nth(4)` 这样按**出现顺序**数框。
+    这条测试因此静悄悄地和表单脱节了，直到这次 CI 真跑起来才暴露：
+
+      · 「客户名称」那个框是**条件渲染**的（只有选「不绑定客户」才出现），
+        所以框的**总数会随状态变化** —— nth(n) 指向谁，取决于你点了什么；
+      · 原来的第 5 个框「服务项」，在今天的表单里已经不存在了；
+      · 点的按钮写的是「添加款项节点」，界面上其实是「添加回款节点」。
+
+    三处都属于同一个毛病：**测试按「看起来像」来取元素**
+    （CLAUDE.md 二点五之一），别人改表单它就错，而且错得没有任何声音。
+    判据那条写得很准：「这条规则要不要随着别人写新代码而更新？」——
+    按位置取元素，要。所以改成显式锚点 data-testid，
+    pages/Contracts.tsx 里一一对应。
+  */
+  const form = page.locator('form');
+  await form.getByTestId('contract-title').fill(contractTitle);
+  await form.getByTestId('contract-no').fill(contractNo);
+
+  /*
+    客户要**真的建出来**，不能只在合同上写个名字 ——
+    后面 /#/customers 那条断言要的就是「客户档案里确实多了一家」。
+    走的是界面上真实的那条路：找不到 → 直接新建 → 创建并选中。
+  */
+  await form.getByRole('button', { name: /直接新建客户/ }).click();
+  await form.getByTestId('contract-new-customer-name').fill(customerName);
+  await form.getByRole('button', { name: /创建并选中/ }).click();
+
+  /*
+    服务项目是**提交必填**（handleSubmit 里会 alert 拦下来），
+    2026-09-12 从一个自由文本框换成了「从 111 条标准目录多选」。
+    老测试还在往那个已经不存在的文本框里填「ISO 9001 认证服务」——
+    填不进去，于是整条主线两周没被验过。
+
+    这里不挑具体哪一项（挑了就等于把目录内容钉进测试，目录一改又要来修），
+    只取第一条 —— 这条测试要证的是「合同能不能录进去并串起客户/项目/应收」，
+    不是「目录里有没有 ISO 9001」。
+  */
+  await form.getByTestId('service-picker-box').click();
+  await form.getByTestId('service-picker-option').first().click();
+  /*
+    下拉是靠一层铺满屏幕的 data-dismiss-layer 收起的；不收起来，它会挡住后面所有的点击。
+    必须**限定在这个选择器里面**取那一层 —— 录入合同的弹窗自己也有一层，
+    页面上同时有两个，不限定的话 Playwright 直接报 strict mode violation。
+  */
+  await form.getByTestId('service-picker').locator('[data-dismiss-layer="1"]').click();
+
+  await form.getByTestId('contract-contact').fill(contactName);
+  await form.getByTestId('contract-sign-date').fill('2026-05-01');
+  await form.getByTestId('contract-amount').fill('12000');
+  await form.getByTestId('contract-payment-method').fill('分期付款');
+
+  await form.getByRole('button', { name: /添加回款节点/ }).click();
+  await form.getByTestId('receivable-node').fill(receivableNode);
+  await form.getByTestId('receivable-amount').fill('12000');
+  await form.getByTestId('receivable-due').fill('2026-05-20');
 
   page.once('dialog', async (dialog) => {
     await dialog.accept();
@@ -334,7 +393,7 @@ test('contract entry links customer, delivery project, and receivable ledger', a
 
   await page.goto('/#/projects');
   await expect(page.locator('body')).toContainText(customerName);
-  await expect(page.locator('body')).toContainText('交付项目');
+  await expect(page.locator('body')).toContainText(PROJECT_CATEGORY_META.Delivery.label);
 
   await page.goto('/#/finance');
   await expect(page.locator('body')).toContainText(customerName);
@@ -344,7 +403,15 @@ test('contract entry links customer, delivery project, and receivable ledger', a
   if (expectContractsApiWrite) {
     await expect.poll(() => contractTransactionWrites).toBeGreaterThanOrEqual(2);
   }
-  await expect(receivableRow).toContainText('已核销');
+  /*
+    「已核销」是**手机卡片**当年的说法，2026-09-16 已经统一成桌面的「已到账」
+    （同一个状态两个词，财务分不清是不是同一件事）。
+    这条 e2e 还写着旧词，同样是那两周没人跑它的产物。
+
+    不另外抽常量：tests/receivable-status-label.test.js 已经把这件事钉死了 ——
+    它明确断言「已核销」不许再出现。文案要是再改，那条先红。
+  */
+  await expect(receivableRow).toContainText('已到账');
 
   pageErrors.assertClean();
 });
@@ -571,12 +638,12 @@ test('customer create, search, detail edit, and follow-up preserve current UI co
 
   await page.getByRole('button', { name: /新建客户/ }).click();
   const detail = page.locator('div.fixed.inset-0').filter({ hasText: '客户关系档案' }).filter({ hasText: '跟进记录' });
-  await expect(detail.getByPlaceholder('请输入客户名称')).toBeVisible();
+  await expect(detail.getByPlaceholder(CUSTOMER_NAME_PLACEHOLDER)).toBeVisible();
   await expect(detail).toContainText('联系人与电话');
   await expect(detail.getByPlaceholder('联系人姓名')).toBeVisible();
   await expect(detail.getByPlaceholder('手机号/电话')).toBeVisible();
 
-  await detail.getByPlaceholder('请输入客户名称').fill(customerName);
+  await detail.getByPlaceholder(CUSTOMER_NAME_PLACEHOLDER).fill(customerName);
   await detail.getByPlaceholder('联系人姓名').first().fill(contactName);
   await detail.getByPlaceholder('手机号/电话').first().fill('13900000000');
   await detail.getByRole('button', { name: /保存/ }).click();
@@ -592,10 +659,19 @@ test('customer create, search, detail edit, and follow-up preserve current UI co
   await expect(reopenedDetail).toContainText('联系人与电话');
   await expect(reopenedDetail).toContainText('工商主体信息');
   await expect(reopenedDetail.getByRole('button', { name: /新建合同/ }).first()).toBeVisible();
-  await expect(reopenedDetail.getByRole('button', { name: /生成跟进项目/ })).toBeVisible();
+  /*
+    「生成跟进项目」**2026-09-09 被刻意删掉了** —— 它会在没人点任何按钮的情况下
+    偷偷建项目，线上 15 个假项目就是这么来的（见 CLAUDE.md「提醒就是提醒」）。
+    替代它的是「排跟进提醒」：只排 30/15/7 天三条提醒，不建任何项目。
+
+    线索那条测试当时改了，客户这条漏了 —— 于是这条 e2e 一直在断言
+    「那个被删掉的按钮必须存在」。tests/project-category.test.js 已经在
+    源码层面钉住了文案，这里跟它对齐。
+  */
+  await expect(reopenedDetail.getByRole('button', { name: /排跟进提醒/ })).toBeVisible();
 
   await reopenedDetail.getByRole('button', { name: /编辑/ }).click();
-  await reopenedDetail.getByPlaceholder('请输入客户名称').fill(updatedCustomerName);
+  await reopenedDetail.getByPlaceholder(CUSTOMER_NAME_PLACEHOLDER).fill(updatedCustomerName);
   await reopenedDetail.getByRole('button', { name: /保存/ }).click();
   await expect(reopenedDetail).toContainText(updatedCustomerName);
 

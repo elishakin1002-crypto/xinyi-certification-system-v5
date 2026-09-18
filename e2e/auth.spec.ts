@@ -35,7 +35,12 @@ test('auth-required mode redirects to login and signs in with seeded employee', 
   await expect(page.locator('body')).toContainText('工作台');
   await expect(page.locator('body')).toContainText('系统管理员');
 
-  await page.getByRole('button', { name: '身份：系统管理员' }).click();
+  /*
+    头像按钮的无障碍名 2026 年改过：「身份：X」→「账号菜单：X，当前视角 Y」。
+    这条 e2e 还按旧名字找，于是点不到 —— 一直等到 30 秒超时。
+    用正则只认「账号菜单」这个稳定部分，名字和视角都不写死。
+  */
+  await page.getByRole('button', { name: /账号菜单/ }).click();
   await expect(page.getByText('切换当前用户')).toHaveCount(0);
 });
 
@@ -61,7 +66,12 @@ test('admin can open employee accounts page and create an employee account', asy
   await page.getByRole('button', { name: /新建员工/ }).click();
   await page.getByLabel('姓名').fill(employeeName);
   await page.getByLabel('邮箱').fill(employeeEmail);
-  await page.getByLabel('账号').fill(employeeUsername);
+  /*
+    必须 exact —— getByLabel 默认是**包含匹配**，而页头那个按钮的
+    无障碍名里正好也有「账号」两个字（账号菜单：…），
+    于是一个 fill 同时命中 4 个元素，Playwright 直接报 strict mode violation。
+  */
+  await page.getByLabel('账号', { exact: true }).fill(employeeUsername);
   await page.getByLabel('临时密码').fill('employee-pass-123');
   await page.getByLabel('岗位标签').fill('测试员工');
   await page.getByRole('button', { name: /^保存$/ }).click();
