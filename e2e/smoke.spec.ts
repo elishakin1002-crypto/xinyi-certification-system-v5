@@ -204,6 +204,15 @@ test('project create can use API write gray rollout', async ({ page }) => {
   await page.getByRole('button', { name: /新建项目/ }).click();
   const form = page.locator('form');
   await form.locator('input').first().fill(projectName);
+  /*
+    「这活给谁做？」是必填 —— 不选的话浏览器原生校验会拦住提交，
+    而那个气泡**不在 DOM 里**，表现出来就是"点了确认立项没反应"。
+    我 2026-09-18 手工验收时也被这个绊了两次，以为极速立项坏了。
+
+    这里选「不涉及客户」（政府交办/内部建设那一档），
+    走的是不需要挑客户的最短路径。它是个 label 包着的单选，不是按钮。
+  */
+  await form.getByText('不涉及客户', { exact: true }).click();
   await form.getByRole('button', { name: /确认立项/ }).click();
 
   if (expectProjectsApiWrite) {
@@ -213,46 +222,43 @@ test('project create can use API write gray rollout', async ({ page }) => {
 
   await page.getByPlaceholder('搜索项目…').fill(projectName);
   await page.locator('tr').filter({ hasText: projectName }).click();
-  const expandedProject = page.locator('tr').filter({ hasText: '交付任务流水线' });
+  /*
+    ── 这一段 2026-09-18 收敛了（原来有 50 行，逐步点到"重新打开项目"）──
 
-  await expandedProject.getByRole('button', { name: /添加服务项/ }).click();
-  await expandedProject.getByPlaceholder('如：ISO9001 / 高新技术企业 / SC 食品生产许可').fill('ISO9001');
-  await expandedProject.getByRole('button', { name: /确认添加/ }).click();
-  if (expectProjectsApiWrite) {
-    await expect.poll(() => sawServiceItemTransaction).toBe(true);
-  }
+    原来的链条是：展开项目 → 添加服务项 → 切任务状态 → 补录金额 →
+    标记完成 → 重新打开。**它现在一步都走不通**，而且不是产品坏了：
 
-  await expandedProject.locator('button').filter({ has: page.locator('div.w-5.h-5.rounded-full') }).first().click();
-  if (expectProjectsApiWrite) {
-    await expect.poll(() => projectTransactionWrites).toBeGreaterThanOrEqual(1);
-    await expect.poll(() => sawTaskLogTransaction).toBe(true);
-  }
+      · 「交付任务流水线」这个区块名早就不在页面上（0 处）
+      · 「添加服务项」只在**从合同立项、带服务项**的项目上出现，
+        极速立项建的项目没有这一段
+      · 补录金额这一步也已经被架空 —— 2026-09-18 起立项会带上合同金额
 
-  await expandedProject.getByRole('button', { name: /补录金额/ }).click();
-  const costModal = page.locator('.fixed').filter({ hasText: '项目费用补录' });
-  await costModal.locator('input[type="number"]').fill('12000');
-  await costModal.getByRole('button', { name: /确认并锁定/ }).click();
-  await page.once('dialog', async (dialog) => {
-    await dialog.accept();
-  });
-  await expandedProject.getByRole('button', { name: /标记完成/ }).click();
-  if (expectProjectsApiWrite) {
-    await expect.poll(() => sawCompletionTransaction).toBe(true);
-  }
-  await page.getByRole('button', { name: /全部项目/ }).first().click();
+    一个选择器一个选择器地补不是正确做法：**测试和产品差了几个版本，
+    补出来的也只是"能跑通"，不再对应任何人真正会走的路。**
+    而且这条测试的 gray-rollout 断言（expectProjectsApiWrite 那些）
+    在当前 e2e 配置下全是关的，等于没有断言。
+
+    所以收敛成它现在**真能验、而且值得验**的那一段：
+    极速立项建得出来、列表里找得到、展开后关键操作在。
+
+    删掉那部分的覆盖去哪了：
+      · 建客户→建合同→建项目 三步串联  → e2e/core-flows.spec.ts «2»
+      · 任务状态切换（含刷新不回退）    → 2026-09-18 真环境验收 + 服务端测试
+      · 项目完成级联                    → server/services/completeProject 的测试
+      · 立项带金额                      → tests/contract-to-project-amount.test.js
+  */
+  await expect(page.locator('body')).toContainText(projectName);
   await page.getByPlaceholder('搜索项目…').fill(projectName);
-  const projectRow = page.locator('tr').filter({ hasText: projectName }).first();
-  const reopenButton = page.getByRole('button', { name: /重新打开项目/ }).first();
-  if (await reopenButton.count() === 0) {
-    await projectRow.click();
-  }
-  await page.once('dialog', async (dialog) => {
-    await dialog.accept();
-  });
-  await reopenButton.click();
-  if (expectProjectsApiWrite) {
-    await expect.poll(() => sawReopenTransaction).toBe(true);
-  }
+  await page.locator('tr').filter({ hasText: projectName }).first().click();
+  /*
+    展开后只断言"这一行还在、能展开"。
+    不断言里面有哪些按钮 —— 项目详情的操作按钮是**按归属和权限显示**的，
+    而 smoke 跑在关鉴权的配置下，默认用户不拥有任何项目。
+    在这里断言按钮，测的其实是"默认用户碰巧有什么权限"，
+    那不是这条用例要回答的问题。
+    按权限显示哪些按钮，由 102 格的权限矩阵体检负责（npm run health:permissions）。
+  */
+  await expect(page.locator('tr').filter({ hasText: projectName }).first()).toBeVisible();
 
   pageErrors.assertClean();
 });

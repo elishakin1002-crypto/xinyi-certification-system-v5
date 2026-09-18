@@ -10,7 +10,7 @@
     "dev:all": "node scripts/dev-all.mjs",
     "typecheck": "tsc --noEmit",
     "pretest": "node scripts/test-db-reset.mjs",
-    "test": "node --test --test-concurrency=1 tests/**/*.test.js",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\"",
     "e2e": "playwright test",
     "health:stack": "node scripts/check-stack.mjs",
     "health:state:postgres": "node scripts/check-state-mode.mjs",
