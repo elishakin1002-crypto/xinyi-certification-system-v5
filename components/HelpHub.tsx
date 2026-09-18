@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { PERSONA_TO_ROLE } from '../constants';
 import { adaptPageGuide, RolePageGuide } from '../src/modules/help/rolePageGuide';
-import { Compass, FileText, MousePointerClick, X, ArrowLeft, HelpCircle, AlertTriangle, Lightbulb, ArrowRight } from 'lucide-react';
+import { Compass, FileText, MousePointerClick, X, ArrowLeft, HelpCircle, AlertTriangle, Lightbulb, ArrowRight, BookOpen } from 'lucide-react';
 import { findPageGuide, findModalGuide } from '../src/modules/help/pageGuide';
 import { explainControl, ControlKind, ControlHelp } from '../src/modules/help/controlGuide';
 
@@ -195,6 +195,7 @@ export const HelpHub: React.FC<{
   onOpen: () => void;
 }> = ({ open, initialMode = 'menu', onClose, onOpen, onReplayTour }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   const { activeRole, previewPersona, setIsModuleGuideActive } = useApp();
   const [hasSample, setHasSample] = useState(false);
   const guideRole = previewPersona ? PERSONA_TO_ROLE[previewPersona] : activeRole;
@@ -565,6 +566,30 @@ export const HelpHub: React.FC<{
                     <span className="block text-sm font-semibold text-gray-900">解释这一项</span>
                     <span className="mt-0.5 block text-xs font-medium leading-relaxed text-gray-500">
                       点选不懂的按钮、字段或数据，了解含义和操作结果。讲解期间不会执行操作。
+                    </span>
+                  </span>
+                </button>
+
+                {/*
+                  第四层：字段档案（2026-09-18 加）。
+
+                  前三层回答的是「这一页/这个按钮是干什么的」，
+                  但同事最常卡住的其实是**两个数字对不上**：
+                  工作台写「逾期任务 5」，项目管理写「0」——
+                  他第一反应是系统坏了，而真相是两张卡的口径不同。
+                  「解释这一项」只能解释他点得到的那一个，
+                  这一层是把全部口径摊开让他自己比。
+                */}
+                <button
+                  type="button"
+                  onClick={() => { onClose(); navigate('/glossary'); }}
+                  className="flex w-full items-start gap-3 rounded-2xl border border-gray-200 p-4 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+                >
+                  <BookOpen className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
+                  <span>
+                    <span className="block text-sm font-semibold text-gray-900">字段档案</span>
+                    <span className="mt-0.5 block text-xs font-medium leading-relaxed text-gray-500">
+                      每个数字数的是什么、不包括什么。<b>两个数字对不上时先查这里</b> —— 多半是两张卡的口径不同，不是系统算错了。
                     </span>
                   </span>
                 </button>

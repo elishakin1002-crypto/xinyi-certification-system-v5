@@ -81,7 +81,9 @@
     "checkup:knowledge": "node scripts/checkup-knowledge.mjs",
     "clean:knowledge": "node scripts/clean-knowledge.mjs",
     "sync:from-prod": "node scripts/sync-from-prod.mjs",
-    "qa:supervisor": "node tools/qa-supervisor/server.mjs"
+    "qa:supervisor": "node tools/qa-supervisor/server.mjs",
+    "contract": "node scripts/data-contract.mjs",
+    "contract:update": "node scripts/data-contract.mjs --write"
   },
   "dependencies": {
     "cors": "^2.8.5",

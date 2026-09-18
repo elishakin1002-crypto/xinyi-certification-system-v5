@@ -83,6 +83,14 @@ jobs:
           VITE_PROJECTS_API_VERIFY_WRITES_ENABLED: "1"
         run: npm run health:preflight:test
 
+      # 字段契约：前端字段↔库表列的映射、核心实体的字段名，都固化在
+      # tests/fixtures/data-contract.json。改名或删字段会在这里红 ——
+      # 不是禁止改，是不许**悄悄**改（改动必须出现在 diff 里）。
+      # 加这一步是因为：类型检查和测试都挡不住"两边一起改"的字段改名，
+      # 而线上库里的旧数据是按旧名字存的。
+      - name: Data contract check
+        run: node --test tests/data-contract.test.js
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 

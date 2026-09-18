@@ -20,6 +20,7 @@ import Login from './pages/Login';
 import Employees from './pages/Employees';
 import ChangePassword from './pages/ChangePassword';
 import AuthAuditLogs from './pages/AuthAuditLogs';
+import Glossary from './pages/Glossary';
 import LoginSessions from './components/LoginSessions';
 import { AppProvider } from './context/AppContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -162,6 +163,12 @@ const App = () => {
               <Route path="/auth-audit" element={<ProtectedRoute action="AUTH_AUDIT_VIEW"><AuthAuditLogs /></ProtectedRoute>} />
               {/* 自己的登录设备，人人可看，不需要任何额外权限 —— 看的是自己 */}
               <Route path="/my-devices" element={<div className="p-4 md:p-6 max-w-3xl mx-auto"><LoginSessions /></div>} />
+              {/*
+                字段档案不加权限 —— 每个人都该能查"这个数字数的是什么"。
+                它不含任何业务数据，只有口径说明（内容从代码常量生成，
+                见 src/modules/help/fieldDictionary.ts）。
+              */}
+              <Route path="/glossary" element={<Glossary />} />
             </Routes>
             </PageBoundary>
           </Layout>
