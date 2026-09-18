@@ -2,6 +2,10 @@
   "name": "xinyi-certification-system-v5",
   "version": "5.0.0",
   "description": "信义认证系统 V5.0 - Enterprise Management System",
+  "//engines": "生产跑 v22、开发机跑 v22，而 CI 一直跑 20 —— 三边对不上。2026-09-18 对齐并在这里声明死，免得下次谁又改回去。",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "start": "node server/app.js",
     "start:guard": "node scripts/backend-supervisor.mjs",

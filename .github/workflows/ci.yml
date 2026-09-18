@@ -23,7 +23,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 和生产、开发机保持同一个大版本（都是 v22）。
+          # 2026-09-18 之前这里是 20 —— **CI 验的是一个没人用的运行时**，
+          # 而且 Node 20 的 `node --test` 不支持 glob 展开，
+          # 于是 "tests/**/*.test.js" 在这里永远找不到文件、测试一条都没跑过。
+          # 版本声明在 package.json 的 engines 里，改这里之前先改那里。
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
