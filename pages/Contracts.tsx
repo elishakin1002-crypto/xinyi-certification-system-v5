@@ -31,7 +31,7 @@ const Contracts = () => {
   const [expandedContract, setExpandedContract] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   // 立项弹窗：负责人默认当前登录人（多数情况自己录自己做），交期默认 90 天后
-  const [projectDraft, setProjectDraft] = useState<{ contract: Contract; ownerUserId: string; manager: string; deadline: string } | null>(null);
+  const [projectDraft, setProjectDraft] = useState<{ contract: Contract; ownerUserId: string; manager: string; deadline: string; projectAmount: number } | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'risk' | 'archived'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -395,13 +395,28 @@ const Contracts = () => {
       contract,
       ownerUserId: currentUser.id,
       manager: currentUser.name,
-      deadline: defaultDeadline()
+      deadline: defaultDeadline(),
+      /*
+        默认带上合同金额（2026-09-18 补）。
+
+        在这之前这条路**不带金额**，而合同识别自动建项目那条路是带的
+        （AppContext 里 `projectAmount: newContract.amount`）——
+        同一个业务动作两条路、两种结果，这个项目最高频的那类 bug。
+
+        后果不只是少填一个字段：交付类项目金额为 0 会直接掉进
+        「待补信息」那张卡。**每一个从按钮立的项目一出生就在那张卡里**，
+        于是那个数字永远不为零，人就不看它了 ——
+        一个永远消不掉的提醒，等于没有提醒。
+
+        做成可改而不是写死：一份合同拆成多个项目时要按比例分。
+      */
+      projectAmount: Number(contract.amount || 0)
     });
   };
 
   const confirmCreateProject = async () => {
     if (!projectDraft) return;
-    const { contract, ownerUserId, manager, deadline } = projectDraft;
+    const { contract, ownerUserId, manager, deadline, projectAmount } = projectDraft;
     if (!manager.trim()) { alert('请选择项目负责人'); return; }
     if (!deadline) { alert('请填写交付截止日期'); return; }
     const initialServiceItems = Array.isArray(contract.serviceItems)
@@ -429,6 +444,7 @@ const Contracts = () => {
       paymentStatus: 'unpaid',
       deadline,
       projectType: 'Self-Operated',
+      projectAmount,
       settlementConfig: { rule: 'Ratio', value: 10, base: 'Revenue' },
       initialServiceItems,
       disableDefaultTemplateTasks: initialServiceItems.length > 0
@@ -1700,6 +1716,25 @@ const Contracts = () => {
                   onChange={e => setProjectDraft(prev => prev ? { ...prev, deadline: e.target.value } : prev)}
                 />
                 <p className="text-[11px] text-gray-400 mt-1.5">默认 90 天后，按实际交期改。</p>
+              </div>
+              <div>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2">项目金额（元）</label>
+                <input
+                  type="number"
+                  min={0}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm outline-none focus:border-indigo-400 font-mono"
+                  value={projectDraft.projectAmount}
+                  onChange={e => setProjectDraft(prev => prev ? { ...prev, projectAmount: Number(e.target.value) || 0 } : prev)}
+                />
+                <p className="text-[11px] text-gray-400 mt-1.5">
+                  默认等于合同金额 ¥{Number(projectDraft.contract.amount || 0).toLocaleString()}。
+                  一份合同拆成几个项目时，按这个项目实际该收的金额改。
+                  {projectDraft.projectAmount <= 0 && (
+                    <span className="block mt-1 text-amber-700">
+                      填 0 的话，这个项目会进「待补信息」—— 收不到钱，也算不进营收。
+                    </span>
+                  )}
+                </p>
               </div>
               {(projectDraft.contract.serviceItems || []).length > 0 && (
                 <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
