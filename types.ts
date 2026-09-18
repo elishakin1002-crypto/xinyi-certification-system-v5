@@ -335,8 +335,20 @@ export interface Receivable {
   id: string;
   node: string;
   amount: number;
+  /** 约定的收款日。**权责发生制**按它归月（本月应收） */
   dueDate: string;
   status: 'paid' | 'unpaid' | 'overdue';
+  /**
+   * 实际到账日（YYYY-MM-DD），财务点「确认到账」时记下。
+   *
+   * **收付实现制**按它归月（本月实收，也就是现金流）。
+   * 和 dueDate 分开是财务的标准做法：一条看账龄催收，一条看现金流入，
+   * 两者本来就该对不上 —— 对不上的部分正是"该收没收到"。
+   *
+   * 2026-09-18 之前的数据没有这个字段，那些回款**不进任何一个月的实收**，
+   * 界面单独提示有几笔，不拿到期日去猜（猜就是在重犯原来的错）。
+   */
+  paidAt?: string;
   rejectionReason?: string;
   /**
    * 销售报备"客户已付款，请财务核对"。

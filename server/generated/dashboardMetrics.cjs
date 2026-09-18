@@ -101,6 +101,18 @@ var isUnownedProject = (project) => {
   return isUnownedName(project.manager);
 };
 
+// src/modules/cashBasis.ts
+var num = (v) => {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+};
+var monthOf = (date) => String(date || "").trim().slice(0, 7);
+var allReceivables = (contracts) => (contracts || []).flatMap((c) => c?.receivables || []);
+var isPaid = (r) => String(r?.status || "") === "paid";
+var receivedInMonth = (contracts, monthKey) => allReceivables(contracts).filter((r) => isPaid(r) && monthOf(r.paidAt) === monthKey).reduce((acc, r) => acc + num(r.amount), 0);
+var paidWithoutPaidAt = (contracts) => allReceivables(contracts).filter((r) => isPaid(r) && !monthOf(r.paidAt)).length;
+var dueAndReceivedInMonth = (contracts, monthKey) => allReceivables(contracts).filter((r) => isPaid(r) && monthOf(r.dueDate) === monthKey).reduce((acc, r) => acc + num(r.amount), 0);
+
 // src/modules/glossary.ts
 var TERM_PROJECT = {
   /**
@@ -213,6 +225,14 @@ var DEPRECATED_TERMS = {
   "\u5DF2\u5B8C\u6210\u9879\u76EE": TERM_PROJECT.completed,
   "\u903E\u671F\u672A\u5B8C\u6210\u4EFB\u52A1": TERM_PROJECT.withOverdueTask
 };
+var TERM_WINDOW = {
+  /** 本周一零点到现在。记日志、看工时用这个 */
+  naturalWeek: "\u672C\u5468",
+  /** 今天往前数七天（滚动）。看"最近有没有在动"用这个 */
+  last7d: "\u8FD1\u4E03\u5929",
+  /** 今天往后数七天（滚动）。看"接下来要交什么"用这个 */
+  next7d: "\u672A\u6765\u4E03\u5929"
+};
 
 // src/modules/myWork.ts
 var isMyTask = (task, project, me) => {
@@ -314,10 +334,8 @@ var buildBossMetrics = (inputs, monthKey) => {
   const activeProjects = inputs.projects.filter(isLiveProject);
   const monthContracts = inputs.contracts.filter((c) => inMonth(c.signDate, monthKey));
   const monthContractAmount = monthContracts.reduce((acc, c) => acc + Number(c.amount || 0), 0);
-  const monthPaid = inputs.contracts.reduce((acc, c) => {
-    const paidThisMonth = (c.receivables || []).filter((r) => r.status === "paid" && inMonth(r.dueDate, monthKey)).reduce((sum, r) => sum + Number(r.amount || 0), 0);
-    return acc + paidThisMonth;
-  }, 0);
+  const monthPaid = receivedInMonth(inputs.contracts, monthKey);
+  const paidNoDate = paidWithoutPaidAt(inputs.contracts);
   const overdueAmount = inputs.contracts.reduce((acc, c) => acc + contractUnpaidOverdueAmount(c, now), 0);
   const monthLeads = inputs.leads.filter((l) => isLeadInMonth(l, monthKey));
   const monthLeadRevenueProjects = inputs.projects.filter(
@@ -368,7 +386,14 @@ var buildBossMetrics = (inputs, monthKey) => {
   return {
     topCards: [
       { id: "boss-month-contract", title: "\u672C\u6708\u65B0\u589E\u5408\u540C\u91D1\u989D", value: money(monthContractAmount), route: `${APP_ROUTES.CONTRACTS}?month=this` },
-      { id: "boss-month-paid", title: "\u672C\u6708\u5DF2\u56DE\u6B3E\u91D1\u989D", value: money(monthPaid), route: `${APP_ROUTES.FINANCE}?month=this&view=paid` },
+      /* 「实收」不是「已收」：说的是这个月账上真进了多少，能对银行流水 */
+      {
+        id: "boss-month-paid",
+        title: "\u672C\u6708\u5B9E\u6536\u91D1\u989D",
+        value: money(monthPaid),
+        hint: paidNoDate > 0 ? `\u53E6\u6709 ${paidNoDate} \u7B14\u5DF2\u6536\u4F46\u6CA1\u8BB0\u5230\u8D26\u65E5\uFF0C\u672A\u8BA1\u5165` : "",
+        route: `${APP_ROUTES.FINANCE}?month=this&view=paid`
+      },
       { id: "boss-overdue-amt", title: `${TERM_RECEIVABLE.overdue}\u91D1\u989D`, value: money(overdueAmount), route: `${APP_ROUTES.FINANCE}?status=overdue` },
       { id: "boss-conv", title: "\u9500\u552E\u8F6C\u5316\u7387\uFF08\u7EBF\u7D22\u2192\u8425\u6536\u9879\u76EE\uFF09", value: rate(monthLeadRevenueProjects.length, monthLeads.length), route: `${APP_ROUTES.LEADS}?filter=conversion` }
     ],
@@ -399,7 +424,8 @@ var buildBossMetrics = (inputs, monthKey) => {
       { id: "boss-delay-rate", title: "\u9879\u76EE\u5EF6\u8BEF\u7387", value: rate(delayedProjects.length, activeProjects.length), route: `${APP_ROUTES.PROJECTS}?filter=delay` },
       // 必须带 range=7d：不带的话下钻看的是「任何时候有日志的项目」，
       // 而指标算的是本周，点进去的列表和卡片上的数字对不上。
-      { id: "boss-log-coverage", title: "\u672C\u5468\u65E5\u5FD7\u8986\u76D6\u7387", value: rate(weekLogProjects.size, activeProjects.length), route: `${APP_ROUTES.PROJECTS}?tab=logs&range=7d` }
+      /* 这里的窗口是**回看七天**（滚动），不是自然周 —— 名字要跟着口径走（B05） */
+      { id: "boss-log-coverage", title: `${TERM_WINDOW.last7d}\u65E5\u5FD7\u8986\u76D6\u7387`, value: rate(weekLogProjects.size, activeProjects.length), route: `${APP_ROUTES.PROJECTS}?tab=logs&range=7d` }
     ],
     listItems: topRiskList
   };
@@ -468,7 +494,7 @@ var buildManagerMetrics = (inputs) => {
       },
       {
         id: "mgr-log-coverage",
-        title: "\u672C\u5468\u65E5\u5FD7\u8986\u76D6\u7387",
+        title: `${TERM_WINDOW.last7d}\u65E5\u5FD7\u8986\u76D6\u7387`,
         value: rate(weekLogProjects.size, activeProjects.length),
         hint: "\u4F4E\u4E0D\u4EE3\u8868\u5077\u61D2\uFF0C\u591A\u534A\u662F\u67D0\u4E2A\u73AF\u8282\u592A\u9EBB\u70E6",
         route: `${APP_ROUTES.PROJECTS}?tab=logs&range=7d`
@@ -636,8 +662,8 @@ var buildConsultantMetrics = (inputs) => {
       { id: "cons-below-half", title: "\u670D\u52A1\u8FDB\u5EA6\u4F4E\u4E8E50%\u9879\u76EE", value: String(belowHalfProjects.length), route: `${APP_ROUTES.PROJECTS}?owner=me&progress=lt50` }
     ],
     bottomCards: [
-      { id: "cons-week-logs", title: "\u672C\u5468\u65E5\u5FD7\u6761\u6570", value: String(myWeekLogs.length), route: `${APP_ROUTES.PROJECTS}?owner=me&tab=logs&range=7d` },
-      { id: "cons-week-hours", title: "\u672C\u5468\u5DE5\u65F6\u7EDF\u8BA1", value: `${weekHours.toFixed(1)}h`, route: `${APP_ROUTES.PROJECTS}?owner=me&tab=logs&metric=hours` },
+      { id: "cons-week-logs", title: `${TERM_WINDOW.last7d}\u65E5\u5FD7\u6761\u6570`, value: String(myWeekLogs.length), route: `${APP_ROUTES.PROJECTS}?owner=me&tab=logs&range=7d` },
+      { id: "cons-week-hours", title: `${TERM_WINDOW.last7d}\u5DE5\u65F6\u7EDF\u8BA1`, value: `${weekHours.toFixed(1)}h`, route: `${APP_ROUTES.PROJECTS}?owner=me&tab=logs&metric=hours` },
       { id: "cons-join-project", title: "\u53C2\u4E0E\u9879\u76EE\u6570", value: String(new Set(myWeekLogs.map((l) => l.projectId)).size), route: `${APP_ROUTES.PROJECTS}?owner=me` }
     ],
     listItems
@@ -655,7 +681,9 @@ var buildFinanceMetrics = (inputs, monthKey) => {
     contractNo: contract.contractNo || contract.title
   })));
   const monthReceivable = receivables.filter((r) => inMonth(r.dueDate, monthKey)).reduce((acc, r) => acc + r.amount, 0);
-  const monthPaid = receivables.filter((r) => r.status === "paid" && inMonth(r.dueDate, monthKey)).reduce((acc, r) => acc + r.amount, 0);
+  const monthPaid = receivedInMonth(inputs.contracts, monthKey);
+  const monthDueReceived = dueAndReceivedInMonth(inputs.contracts, monthKey);
+  const paidNoDate = paidWithoutPaidAt(inputs.contracts);
   const overdueItems = receivables.filter((r) => r.status !== "paid" && diffDays(r.dueDate, now) < 0);
   const overdueAmount = overdueItems.reduce((acc, r) => acc + r.amount, 0);
   const expected30 = receivables.filter((r) => r.status !== "paid" && diffDays(r.dueDate, now) >= 0 && diffDays(r.dueDate, now) <= 30).reduce((acc, r) => acc + r.amount, 0);
@@ -694,7 +722,13 @@ var buildFinanceMetrics = (inputs, monthKey) => {
   return {
     topCards: [
       { id: "fin-month-rec", title: "\u672C\u6708\u5E94\u6536", value: money(monthReceivable), route: `${APP_ROUTES.FINANCE}?month=this&view=receivable` },
-      { id: "fin-month-paid", title: "\u672C\u6708\u5DF2\u6536", value: money(monthPaid), route: `${APP_ROUTES.FINANCE}?month=this&view=paid` },
+      {
+        id: "fin-month-paid",
+        title: "\u672C\u6708\u5B9E\u6536",
+        value: money(monthPaid),
+        hint: paidNoDate > 0 ? `\u6309\u5B9E\u9645\u5230\u8D26\u65E5\u7EDF\u8BA1\u3002\u53E6\u6709 ${paidNoDate} \u7B14\u5DF2\u6536\u4F46\u6CA1\u8BB0\u5230\u8D26\u65E5\uFF0C\u672A\u8BA1\u5165` : `\u6309\u5B9E\u9645\u5230\u8D26\u65E5\u7EDF\u8BA1\uFF1B\u672C\u6708\u5230\u671F\u4E14\u5DF2\u6536 ${money(monthDueReceived)}`,
+        route: `${APP_ROUTES.FINANCE}?month=this&view=paid`
+      },
       { id: "fin-overdue", title: TERM_RECEIVABLE.overdue, value: money(overdueAmount), hint: `${overdueItems.length} \u5355`, route: `${APP_ROUTES.FINANCE}?status=overdue` },
       { id: "fin-next30", title: "\u672A\u676530\u5929\u9884\u8BA1\u56DE\u6B3E", value: money(expected30), route: `${APP_ROUTES.FINANCE}?range=30d` }
     ],

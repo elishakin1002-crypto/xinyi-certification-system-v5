@@ -3,8 +3,9 @@ import { APP_ROUTES } from '../src/routes';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
 import { isOpenTask, isOverdue } from '../src/modules/taskFlow';
 import { isUnownedProject, isUnownedName } from '../src/modules/ownership';
+import { receivedInMonth, dueAndReceivedInMonth, paidWithoutPaidAt, collectionProgress } from '../src/modules/cashBasis';
 // 术语只有一份定义，见 src/modules/glossary.ts（口径也写在那里）
-import { TERM_PROJECT, TERM_TASK, TERM_RECEIVABLE } from '../src/modules/glossary';
+import { TERM_PROJECT, TERM_TASK, TERM_RECEIVABLE, TERM_WINDOW } from '../src/modules/glossary';
 // 「我该做什么」只算一次，见 src/modules/myWork.ts
 import { myActionableTasks } from '../src/modules/myWork';
 
@@ -244,12 +245,14 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
   const activeProjects = inputs.projects.filter(isLiveProject);
   const monthContracts = inputs.contracts.filter(c => inMonth(c.signDate, monthKey));
   const monthContractAmount = monthContracts.reduce((acc, c) => acc + Number(c.amount || 0), 0);
-  const monthPaid = inputs.contracts.reduce((acc, c) => {
-    const paidThisMonth = (c.receivables || [])
-      .filter(r => r.status === 'paid' && inMonth(r.dueDate, monthKey))
-      .reduce((sum, r) => sum + Number(r.amount || 0), 0);
-    return acc + paidThisMonth;
-  }, 0);
+  /*
+    本月**实收**（现金流）：按实际到账日归月，不是按到期日。
+    改之前是「已收 && 到期日在本月」——两个记账基础都不是，
+    八月到期九月才收到的钱记在八月。口径见 src/modules/cashBasis.ts。
+  */
+  const monthPaid = receivedInMonth(inputs.contracts, monthKey);
+  /** 已收但没记到账日的笔数 —— 界面要说出来，不能让人以为上面那个数是完整的 */
+  const paidNoDate = paidWithoutPaidAt(inputs.contracts);
   const overdueAmount = inputs.contracts.reduce((acc, c) => acc + contractUnpaidOverdueAmount(c, now), 0);
   const monthLeads = inputs.leads.filter(l => isLeadInMonth(l, monthKey));
   const monthLeadRevenueProjects = inputs.projects.filter(p =>
@@ -336,7 +339,10 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
   return {
     topCards: [
       { id: 'boss-month-contract', title: '本月新增合同金额', value: money(monthContractAmount), route: `${APP_ROUTES.CONTRACTS}?month=this` },
-      { id: 'boss-month-paid', title: '本月已回款金额', value: money(monthPaid), route: `${APP_ROUTES.FINANCE}?month=this&view=paid` },
+      /* 「实收」不是「已收」：说的是这个月账上真进了多少，能对银行流水 */
+      { id: 'boss-month-paid', title: '本月实收金额', value: money(monthPaid),
+        hint: paidNoDate > 0 ? `另有 ${paidNoDate} 笔已收但没记到账日，未计入` : '',
+        route: `${APP_ROUTES.FINANCE}?month=this&view=paid` },
       { id: 'boss-overdue-amt', title: `${TERM_RECEIVABLE.overdue}金额`, value: money(overdueAmount), route: `${APP_ROUTES.FINANCE}?status=overdue` },
       { id: 'boss-conv', title: '销售转化率（线索→营收项目）', value: rate(monthLeadRevenueProjects.length, monthLeads.length), route: `${APP_ROUTES.LEADS}?filter=conversion` }
     ],
@@ -367,7 +373,8 @@ const buildBossMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMetric
       { id: 'boss-delay-rate', title: '项目延误率', value: rate(delayedProjects.length, activeProjects.length), route: `${APP_ROUTES.PROJECTS}?filter=delay` },
       // 必须带 range=7d：不带的话下钻看的是「任何时候有日志的项目」，
       // 而指标算的是本周，点进去的列表和卡片上的数字对不上。
-      { id: 'boss-log-coverage', title: '本周日志覆盖率', value: rate(weekLogProjects.size, activeProjects.length), route: `${APP_ROUTES.PROJECTS}?tab=logs&range=7d` }
+      /* 这里的窗口是**回看七天**（滚动），不是自然周 —— 名字要跟着口径走（B05） */
+      { id: 'boss-log-coverage', title: `${TERM_WINDOW.last7d}日志覆盖率`, value: rate(weekLogProjects.size, activeProjects.length), route: `${APP_ROUTES.PROJECTS}?tab=logs&range=7d` }
     ],
     listItems: topRiskList
   };
@@ -486,7 +493,7 @@ const buildManagerMetrics = (inputs: Inputs): RoleDashboardMetrics => {
         hint: '过了截止日还没完成的', route: `${APP_ROUTES.PROJECTS}?filter=delay` },
       { id: 'mgr-due-soon', title: '三天内到期任务', value: String(dueSoonTasks.length),
         hint: '现在提醒还来得及', route: `${APP_ROUTES.PROJECTS}?filter=duesoon` },
-      { id: 'mgr-log-coverage', title: '本周日志覆盖率',
+      { id: 'mgr-log-coverage', title: `${TERM_WINDOW.last7d}日志覆盖率`,
         value: rate(weekLogProjects.size, activeProjects.length),
         hint: '低不代表偷懒，多半是某个环节太麻烦',
         route: `${APP_ROUTES.PROJECTS}?tab=logs&range=7d` }
@@ -711,8 +718,8 @@ const buildConsultantMetrics = (inputs: Inputs): RoleDashboardMetrics => {
       { id: 'cons-below-half', title: '服务进度低于50%项目', value: String(belowHalfProjects.length), route: `${APP_ROUTES.PROJECTS}?owner=me&progress=lt50` }
     ],
     bottomCards: [
-      { id: 'cons-week-logs', title: '本周日志条数', value: String(myWeekLogs.length), route: `${APP_ROUTES.PROJECTS}?owner=me&tab=logs&range=7d` },
-      { id: 'cons-week-hours', title: '本周工时统计', value: `${weekHours.toFixed(1)}h`, route: `${APP_ROUTES.PROJECTS}?owner=me&tab=logs&metric=hours` },
+      { id: 'cons-week-logs', title: `${TERM_WINDOW.last7d}日志条数`, value: String(myWeekLogs.length), route: `${APP_ROUTES.PROJECTS}?owner=me&tab=logs&range=7d` },
+      { id: 'cons-week-hours', title: `${TERM_WINDOW.last7d}工时统计`, value: `${weekHours.toFixed(1)}h`, route: `${APP_ROUTES.PROJECTS}?owner=me&tab=logs&metric=hours` },
       { id: 'cons-join-project', title: '参与项目数', value: String(new Set(myWeekLogs.map(l => l.projectId)).size), route: `${APP_ROUTES.PROJECTS}?owner=me` }
     ],
     listItems
@@ -732,7 +739,15 @@ const buildFinanceMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMet
   })));
 
   const monthReceivable = receivables.filter(r => inMonth(r.dueDate, monthKey)).reduce((acc, r) => acc + r.amount, 0);
-  const monthPaid = receivables.filter(r => r.status === 'paid' && inMonth(r.dueDate, monthKey)).reduce((acc, r) => acc + r.amount, 0);
+  /*
+    两条线分开（2026-09-18）：
+      本月应收 monthReceivable —— 按到期日，看"这个月该收多少"
+      本月实收 monthPaid       —— 按到账日，看"这个月真进了多少"
+    它们**本来就该对不上**，差额正是该收没收到的那部分。
+  */
+  const monthPaid = receivedInMonth(inputs.contracts, monthKey);
+  const monthDueReceived = dueAndReceivedInMonth(inputs.contracts, monthKey);
+  const paidNoDate = paidWithoutPaidAt(inputs.contracts);
   const overdueItems = receivables.filter(r => r.status !== 'paid' && diffDays(r.dueDate, now) < 0);
   const overdueAmount = overdueItems.reduce((acc, r) => acc + r.amount, 0);
   const expected30 = receivables
@@ -792,7 +807,11 @@ const buildFinanceMetrics = (inputs: Inputs, monthKey: string): RoleDashboardMet
   return {
     topCards: [
       { id: 'fin-month-rec', title: '本月应收', value: money(monthReceivable), route: `${APP_ROUTES.FINANCE}?month=this&view=receivable` },
-      { id: 'fin-month-paid', title: '本月已收', value: money(monthPaid), route: `${APP_ROUTES.FINANCE}?month=this&view=paid` },
+      { id: 'fin-month-paid', title: '本月实收', value: money(monthPaid),
+        hint: paidNoDate > 0
+          ? `按实际到账日统计。另有 ${paidNoDate} 笔已收但没记到账日，未计入`
+          : `按实际到账日统计；本月到期且已收 ${money(monthDueReceived)}`,
+        route: `${APP_ROUTES.FINANCE}?month=this&view=paid` },
       { id: 'fin-overdue', title: TERM_RECEIVABLE.overdue, value: money(overdueAmount), hint: `${overdueItems.length} 单`, route: `${APP_ROUTES.FINANCE}?status=overdue` },
       { id: 'fin-next30', title: '未来30天预计回款', value: money(expected30), route: `${APP_ROUTES.FINANCE}?range=30d` }
     ],

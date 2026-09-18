@@ -123,7 +123,7 @@ export const MyWorkWidget: React.FC = () => {
 
       {urgent.length === 0 ? (
         <p className="rounded-xl bg-gray-50 px-4 py-4 text-xs font-bold text-gray-400">
-          这一周没有到期的活。
+          未来七天没有到期的活。
           {rows.length > 0 && `名下还有 ${rows.length} 条更远的，点右上角看。`}
         </p>
       ) : (
@@ -167,7 +167,7 @@ export const MyWorkWidget: React.FC = () => {
               onClick={() => navigate('/my-tasks')}
               className="w-full rounded-xl border border-dashed border-gray-200 py-2 text-[11px] font-bold text-gray-500 hover:border-gray-300 hover:text-gray-700"
             >
-              这周还有 {urgent.length - MAX_ROWS} 条，去我的任务看全部
+              未来七天还有 {urgent.length - MAX_ROWS} 条，去我的任务看全部
             </button>
           )}
         </div>

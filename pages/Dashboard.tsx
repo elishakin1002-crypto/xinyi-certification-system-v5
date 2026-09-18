@@ -679,9 +679,18 @@ const Dashboard = () => {
       {
         id: 'collect',
         tone: collectRate >= 70 ? 'emerald' : 'amber',
-        title: '近 7 个月回款率',
+        /*
+          这个数的分母是**近七个月的新签金额**，不是合同总额 ——
+          它回答的是「签进来的钱收回来多少」，是**回款与签约的比值**，
+          不是回款率（2026-09-18 统一口径时改名）。
+
+          两者会差很多：往年签的合同今年收到钱，分子有、分母没有，
+          比值能超过 100%。叫「回款率」的话，人会拿它和财务页那个
+          「已收÷合同总额」对，永远对不上。
+        */
+        title: '近 7 个月 回款/签约比',
         value: `${collectRate}%`,
-        detail: `累计新签 ${money(totalSigned)}，已收 ${money(totalRevenue)}。${collectRate >= 70 ? '资金回笼健康。' : '签得多收得慢，注意现金流。'}`
+        detail: `近七个月新签 ${money(totalSigned)}，同期到账 ${money(totalRevenue)}。${collectRate >= 70 ? '资金回笼健康。' : '签得多收得慢，注意现金流。'}（分母是新签金额，不是合同总额）`
       },
       {
         id: 'overdue',

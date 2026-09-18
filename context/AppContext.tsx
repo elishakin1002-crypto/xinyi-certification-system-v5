@@ -4552,11 +4552,17 @@ ${receivableLines}
       if (c.id !== cid) return c;
       const updatedReceivables = c.receivables.map(r => {
         if (r.id !== rid) return r;
+        /*
+          和服务端 confirmReceivable 保持一致：确认到账时记下**实际到账日**，
+          取消确认时清掉（口径见 src/modules/cashBasis.ts）。
+          两边不一致的话，前端乐观更新和后端落库会得出不同的现金流月份。
+        */
         if (r.status === 'paid') {
-          const reverted = { ...r, status: 'unpaid' as const };
+          const { paidAt, ...rest } = r;
+          const reverted = { ...rest, status: 'unpaid' as const };
           return { ...reverted, status: deriveReceivableStatus(reverted) };
         }
-        return { ...r, status: 'paid' as const };
+        return { ...r, status: 'paid' as const, paidAt: r.paidAt || new Date().toISOString().slice(0, 10) };
       });
       const allPaid = updatedReceivables.length > 0 && updatedReceivables.every(r => r.status === 'paid');
       paidCompleted = allPaid;

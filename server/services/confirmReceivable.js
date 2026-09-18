@@ -34,10 +34,24 @@ const confirmReceivable = async (contractId, receivableId, actor = null) => {
   const receivables = Array.isArray(contract.receivables) ? contract.receivables : [];
   if (!receivables.some((r) => r.id === receivableId)) return { ok: false, reason: '回款节点不存在' };
 
+  /*
+    记下**实际到账日**（2026-09-18 加）。
+
+    在这之前只有一个 status='paid'，于是「本月已收」只能拿**到期日**归月 ——
+    八月到期、九月才收到的钱记在八月，财务拿它对银行流水永远对不上。
+    口径见 src/modules/cashBasis.ts：应收按到期日，实收按到账日，两条线分开。
+
+    取消确认时要把 paidAt 清掉，否则会留下一个"已到账日期"却不是已收的节点，
+    下个月的现金流里凭空多一笔。
+  */
+  const today = new Date().toISOString().slice(0, 10);
   const nextReceivables = receivables.map((r) => {
     if (r.id !== receivableId) return r;
-    if (r.status === 'paid') return { ...r, status: deriveReceivableStatus({ ...r, status: 'unpaid' }) };
-    return { ...r, status: 'paid' };
+    if (r.status === 'paid') {
+      const { paidAt, ...rest } = r;
+      return { ...rest, status: deriveReceivableStatus({ ...r, status: 'unpaid' }) };
+    }
+    return { ...r, status: 'paid', paidAt: r.paidAt || today };
   });
   const allPaid = nextReceivables.length > 0 && nextReceivables.every((r) => r.status === 'paid');
   const nextPaymentStatus = deriveProjectPaymentStatus(nextReceivables);

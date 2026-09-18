@@ -7,6 +7,7 @@ import { Badge, EmptyState, FilterSelect, SearchInput, StatCard, StatGrid } from
 import { TaskStatusControl } from '../components/TaskStatusControl';
 import { SampleRow } from '../components/SampleRow';
 import { isOpenTask, isOverdue, byUrgency, blockingPrerequisites } from '../src/modules/taskFlow';
+import { TERM_WINDOW } from '../src/modules/glossary';
 
 /**
  * 我的任务 —— 跨项目看「我今天要干什么」。
@@ -240,7 +241,8 @@ const MyTasks: React.FC = () => {
       <StatGrid className="mb-6">
         <StatCard icon={<AlertTriangle className="h-6 w-6" />} value={buckets.overdue.length} label="已逾期" emphasis={buckets.overdue.length > 0 ? 'danger' : undefined} title="过了截止日期还没做完的" />
         <StatCard icon={<CalendarDays className="h-6 w-6" />} value={buckets.today.length} label="今天到期" tone="amber" />
-        <StatCard icon={<ListTodo className="h-6 w-6" />} value={buckets.week.length} label="本周内" tone="blue" />
+        {/* 这一档是「今天往后七天」，不是自然周 —— 叫「本周内」会和项目日志那个自然周对不上（B05） */}
+        <StatCard icon={<ListTodo className="h-6 w-6" />} value={buckets.week.length} label={TERM_WINDOW.next7d} tone="blue" />
         <StatCard icon={<Inbox className="h-6 w-6" />} value={doingCount} label="我正在做" tone="emerald" title="标了「进行中」的。堆太多说明同时开的头太多" />
       </StatGrid>
 
@@ -287,7 +289,7 @@ const MyTasks: React.FC = () => {
         <>
           {section('已逾期', '过了日子还没做完 —— 先处理这里', buckets.overdue, 'bg-red-50 text-red-800', <AlertTriangle className="h-4 w-4" />)}
           {section('今天到期', '今天之内要有结果', buckets.today, 'bg-amber-50 text-amber-800', <CalendarDays className="h-4 w-4" />)}
-          {section('本周内', '这周要安排上', buckets.week, 'bg-blue-50 text-blue-800', <ListTodo className="h-4 w-4" />)}
+          {section(TERM_WINDOW.next7d, '接下来七天要安排上', buckets.week, 'bg-blue-50 text-blue-800', <ListTodo className="h-4 w-4" />)}
 
           {/* 「以后」默认收起：一次给 60 条任务，人会直接关掉页面 */}
           {buckets.later.length > 0 && (

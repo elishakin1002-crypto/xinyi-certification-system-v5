@@ -11,6 +11,7 @@ import { aiService } from '../services/aiService';
 import { SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 import { isReceivableOverdue } from '../src/modules/glossary';
 import { settlementStatusLabel, FIELD } from '../src/modules/labels';
+import { collectionProgress } from '../src/modules/cashBasis';
 
 const Finance = () => {
   const { contracts, settlements, projects, toggleReceivableStatus, rejectReceivable, importSettlements, updateSettlementStatus, vendors } = useApp();
@@ -226,7 +227,19 @@ const Finance = () => {
   const totalReceivable = allReceivables.reduce((acc, r) => acc + r.amount, 0);
   const totalReceived = allReceivables.filter(r => r.displayStatus === 'paid').reduce((acc, r) => acc + r.amount, 0);
   const totalPending = totalReceivable - totalReceived;
-  const collectionRate = totalReceivable > 0 ? (totalReceived / totalReceivable) * 100 : 0;
+  /*
+    回款率的分母是**合同总额**，不是"回款节点计划总额"（2026-09-18 统一）。
+
+    金恩来：「我们之前没有算回款率，但一般是倾向于真实的回款进度。」
+    拿计划总额当分母会把数据缺失藏起来 —— 少录一期回款节点，
+    分母变小，回款率反而变好看。合同签了 10 万只录了 6 万的节点，
+    收到 6 万就显示 100%，而实际上还有 4 万没人跟。
+
+    所以缺口（planGap）要暴露出来让人去补，不是换个分母绕过去。
+    口径见 src/modules/cashBasis.ts。
+  */
+  const 回款进度 = collectionProgress(contracts);
+  const collectionRate = (回款进度.rate ?? 0) * 100;
   const filteredSettlements = settlements
     .filter(s => settlementTypeFilter === 'All' || s.type === settlementTypeFilter)
     .filter(s => settlementStatusFilter === 'all' || s.status === settlementStatusFilter)
@@ -419,7 +432,15 @@ const Finance = () => {
                     <div className="p-3 bg-emerald-50 rounded-xl mr-4 group-hover:scale-110 transition-transform"><CheckCircle className="w-6 h-6 text-emerald-600" /></div>
                     <div className="min-w-0">
                         <div className="text-2xl font-black text-gray-900 truncate">¥{totalReceived.toLocaleString()}</div>
-                        <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">实际已到账 · 回款率 {collectionRate.toFixed(1)}%</div>
+                        <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">
+                          实际已到账 · 回款率 {回款进度.rate === null ? '—' : `${collectionRate.toFixed(1)}%`}
+                          <span className="ml-1 normal-case font-normal text-gray-400">（已收 ÷ 合同总额）</span>
+                        </div>
+                        {回款进度.planGap > 0 && (
+                          <div className="mt-1 text-[11px] text-amber-700">
+                            有 ¥{回款进度.planGap.toLocaleString()} 的合同金额还没拆进回款节点 —— 这部分没人跟。
+                          </div>
+                        )}
                     </div>
                 </div>
                 <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center group hover:border-amber-200 transition-colors">
