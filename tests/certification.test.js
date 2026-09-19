@@ -188,3 +188,14 @@ test('未核实必须明说，不能留空 —— 留空会被当成没问题', 
   assert.ok(C.confidenceLabel(undefined).trim().length > 0, '来源缺失时也要有话说');
   assert.match(C.confidenceLabel(undefined), /未核实/);
 });
+
+test('从证书原件读出来的算已核实 —— 不能落到「客户自己说的」', () => {
+  /*
+    2026-09-19 传真证书 PDF 试出来的：识别成功了，
+    可信度那一栏却写着「未核实」，等于把这个字段作废。
+    这条只读代码看不出来，得真的传一份文件看那一行写什么。
+  */
+  assert.equal(C.isVerified('certFile'), true);
+  assert.match(C.confidenceLabel('certFile'), /已核实/);
+  assert.equal(C.CERT_SOURCE.certFile, '证书原件读出来的');
+});

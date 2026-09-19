@@ -153,7 +153,59 @@ export const CERT_TYPES: Record<string, CertTypeMeta> = {
     validMonths: 60,
     supervision: [],
     note: '五年有效。是行政许可，不是认证 —— 换证流程和体系类不一样。'
+  },
+  IATF16949: {
+    label: 'IATF 16949 汽车行业质量管理体系',
+    validMonths: 36,
+    supervision: [{ month: 12, kind: 'surveillance' }, { month: 24, kind: 'surveillance' }],
+    note: '三年一个周期，监督审核比普通体系严，脱审后果也更重。'
+  },
+  HIGHTECH: {
+    label: '高新技术企业',
+    validMonths: 36,
+    supervision: [],
+    note: '三年有效，期满重新认定。不是认证，是资格认定。'
+  },
+  SPECIALIZED: {
+    label: '专精特新',
+    validMonths: 36,
+    supervision: [],
+    note: '三年有效，期满复核。'
+  },
+  PRODUCT_CERT: {
+    label: '产品认证（通用）',
+    validMonths: 60,
+    supervision: [{ month: 12, kind: 'annualReview' }, { month: 24, kind: 'annualReview' },
+      { month: 36, kind: 'annualReview' }, { month: 48, kind: 'annualReview' }],
+    note: '五年有效，每年一次跟踪检查。'
   }
+};
+
+/**
+ * 老的周期规则 ID → 现在的种类 ID。
+ *
+ * ── 为什么要有这张表（2026-09-19）────────────────────────────
+ *
+ * constants.ts 里原来有一张 CERT_LIFECYCLE_RULES，只有名字没有有效期；
+ * 真正的周期是靠**文件名后缀**判断的：`ruleId.endsWith('_5Y')`。
+ *
+ * 这就是 CLAUDE.md 二点五之一说的那种规则：
+ * 「这条规则要不要随着别人写新代码而更新？」——要。
+ * 谁加一个 `ORGANIC_1Y`，它不以 _5Y 结尾，于是**静悄悄按三年算**，
+ * 而有机产品认证只有一年。到期日、提醒全错，界面上看不出来。
+ *
+ * 两张种类表并存会立刻变成"改一处漏一处"，所以这里只留一张
+ * （CERT_TYPES），老 ID 通过这张别名表落到新种类上 ——
+ * 已经存过老 ID 的数据不用迁移也能正确解析。
+ */
+export const LEGACY_RULE_ALIAS: Record<string, string> = {
+  SYSTEM_3Y: 'ISO9001',
+  IATF_3Y: 'IATF16949',
+  PRODUCT_5Y: 'PRODUCT_CERT',
+  FDA_MED_5Y: 'PRODUCT_CERT',
+  HIGHTECH_3Y: 'HIGHTECH',
+  SPECIALIZED_3Y: 'SPECIALIZED',
+  SC_5Y: 'SC_FOOD'
 };
 
 /**
@@ -166,8 +218,40 @@ export const CERT_TYPES: Record<string, CertTypeMeta> = {
  * 这里返回 null，由调用方显示「未知种类，请先选一个」——
  * 和 labels.ts 里「未知(原值)」是同一条规矩。
  */
-export const certTypeOf = (typeId?: string | null): CertTypeMeta | null =>
-  (typeId && Object.prototype.hasOwnProperty.call(CERT_TYPES, typeId)) ? CERT_TYPES[typeId] : null;
+export const certTypeOf = (typeId?: string | null): CertTypeMeta | null => {
+  const id = String(typeId || '');
+  if (!id) return null;
+  // 老数据存的是 SYSTEM_3Y 这类规则 ID，先翻译成种类 ID
+  const resolved = Object.prototype.hasOwnProperty.call(LEGACY_RULE_ALIAS, id) ? LEGACY_RULE_ALIAS[id] : id;
+  return Object.prototype.hasOwnProperty.call(CERT_TYPES, resolved) ? CERT_TYPES[resolved] : null;
+};
+
+/**
+ * 从证书上印的那行名字，猜它是哪个种类。
+ *
+ * OCR 读出来的是「质量管理体系认证证书 / ISO 9001:2015」这种原话，
+ * 手填时人也会随手写「9001」。种类是后面一切推算的依据，
+ * 所以要有一个地方把这些写法收拢。
+ *
+ * **猜不出就返回 null，不瞎归类。** 归错种类比没归类更糟：
+ * 有效期、监督节点、提醒节奏会全套按错的来，而界面上完全看不出。
+ * 猜不出时由界面请人选一下 —— 这是一次性的两秒钟，
+ * 换的是后面三年的提醒都是对的。
+ */
+export const guessCertType = (rawName?: string | null): string | null => {
+  const s = String(rawName || '').toUpperCase().replace(/\s|:|：|-/g, '');
+  if (!s) return null;
+  // 先匹配更具体的，再匹配宽泛的 —— 否则「ISO14001」会被「9001」之外的规则抢走
+  if (s.includes('45001') || s.includes('职业健康')) return 'ISO45001';
+  if (s.includes('14001') || s.includes('环境管理')) return 'ISO14001';
+  if (s.includes('9001') || s.includes('质量管理体系')) return 'ISO9001';
+  if (s.includes('两化融合') || s.includes('23001')) return 'LIANGHUA';
+  if (s.includes('知识产权') || s.includes('29490')) return 'IP_GUANBIAO';
+  if (s.includes('有机产品') || s.includes('有机认证')) return 'ORGANIC';
+  if (s.includes('绿色食品')) return 'GREEN_FOOD';
+  if (s.includes('食品生产许可') || s.includes('SC证')) return 'SC_FOOD';
+  return null;
+};
 
 /* ══════════════════════════════════════════════════════════════
    三、提醒锚点 —— 按「这一触的目的」定，不是按比例缩放
@@ -393,6 +477,7 @@ export const reachedAnchors = (daysToExpiry: number, anchors: ReadonlyArray<Touc
 export const CERT_SOURCE = {
   ourDelivery: '我们交付的',
   official: '官方平台查到的',
+  certFile: '证书原件读出来的',
   customerSaid: '客户自己说的',
   peerSaid: '同行或第三方说的',
   guess: '推测的'
@@ -400,9 +485,18 @@ export const CERT_SOURCE = {
 
 export type CertSource = keyof typeof CERT_SOURCE;
 
-/** 只有我们交付的和官方查到的算「已核实」，其余一律未核实 */
+/**
+ * 算不算「已核实」。
+ *
+ * `certFile` 是 2026-09-19 补的 —— 看屏幕才发现漏了：
+ * 传一份真证书 PDF 识别出来，来源却显示「客户自己说的」。
+ * 从证书原件上读出来的编号和有效期，和饭桌上听来的一句话
+ * 显然不是一回事，混在一起就把「可信度」这个字段作废了。
+ *
+ * 这条是只读代码看不出来的 —— 得真的传一份文件、看那一行写着什么。
+ */
 export const isVerified = (source?: CertSource | null): boolean =>
-  source === 'ourDelivery' || source === 'official';
+  source === 'ourDelivery' || source === 'official' || source === 'certFile';
 
 /**
  * 界面上显示的可信度标签。

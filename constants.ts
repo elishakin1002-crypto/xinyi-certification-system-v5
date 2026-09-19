@@ -688,15 +688,29 @@ export const MOCK_CONTRACTS: Contract[] = [
 ];
 
 export const COMPANY_SERVICES = "";
-export const CERT_LIFECYCLE_RULES: Record<string, { name: string }> = {
-  'SYSTEM_3Y': { name: 'ISO 三年周期' },
-  'IATF_3Y': { name: 'IATF 16949 三年周期' },
-  'PRODUCT_5Y': { name: '产品认证 五年周期' },
-  'FDA_MED_5Y': { name: 'FDA 医疗 五年周期' },
-  'HIGHTECH_3Y': { name: '高新申报 三年周期' },
-  'SPECIALIZED_3Y': { name: '专精特新 三年周期' },
-  'SC_5Y': { name: 'SC 食品生产 五年周期' }
-};
+/*
+  证书种类 —— **定义在 src/modules/certification.ts，这里只是转发**。
+
+  ── 为什么改成转发（2026-09-19）──────────────────────────────
+
+  这里原来是一张独立的表，每条只有一个名字，真正的周期靠
+  `ruleId.endsWith('_5Y')` 判断（见 AppContext 的 generateAuditPlan）。
+  两个毛病：
+
+    · 有效期藏在**文件名后缀**里。谁加一条 `ORGANIC_1Y`，
+      它不以 _5Y 结尾 → 静悄悄按三年算，而有机产品认证只有一年。
+      到期日、监督节点、提醒全错，界面上完全看不出来。
+    · 种类在两个地方各有一份，改一处漏一处 ——
+      这是这个项目最高频的那类 bug。
+
+  现在种类、有效期、监督节点、提醒锚点全在 certification.ts 一处，
+  有测试钉住。这里保留导出只是为了不动所有引用它的地方。
+*/
+import { CERT_TYPES } from './src/modules/certification';
+
+export const CERT_LIFECYCLE_RULES: Record<string, { name: string }> = Object.fromEntries(
+  Object.entries(CERT_TYPES).map(([id, meta]) => [id, { name: meta.label }])
+);
 export const MOCK_VENDORS = [];
 export const MOCK_LEADS = [];
 export const MOCK_SETTLEMENTS = [];

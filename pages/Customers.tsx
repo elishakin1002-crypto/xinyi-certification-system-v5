@@ -17,6 +17,7 @@ import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
 import { SearchInput, EmptyState, FilterSelect, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
 import { groupIndustry, INDUSTRY_GROUPS, INDUSTRY_GROUP_META, IndustryGroup } from '../src/modules/industry';
 import { auditSeverityLabel, auditStatusLabel, FIELD } from '../src/modules/labels';
+import { CERT_TYPES, CERT_SOURCE, LEGACY_RULE_ALIAS, certTypeOf, isVerified, confidenceLabel } from '../src/modules/certification';
 
 const Customers = () => {
   const { toggleReceivableStatus, customers, updateCustomer, addCustomer, addCustomerFollowUp, checkActionPermission, contracts, projects, auditIssues, addReminder, runSystemScans, generateAuditPlan, updateCertificateAuditStatus, scheduleRenewalFollowUp, currentUser, knowledgeDocs, addKnowledgeDoc, visibleReminders } = useApp();
@@ -888,6 +889,48 @@ const Customers = () => {
     setEditingData({ ...editingData, certificates: newCerts });
   };
 
+  /**
+   * 手工录一张证书。
+   *
+   * ══════════════════════════════════════════════════════════
+   * 为什么这是主路径，不是补充（2026-09-19）
+   * ══════════════════════════════════════════════════════════
+   *
+   * 金恩来：「现在的客户详情证书区，哪里有手填的地方？只能识别啊。」
+   *
+   * 他说得对 —— 这一块此前**唯一**的入口是上传文件做 AI 识别，
+   * 要先识别出一条，才有得改字段。
+   *
+   * 但最该记的那些证书，我们手上根本没有文件：
+   * 销售听说某家厂的 9001 明年三月到期，这就是一条值钱的情报，
+   * 而它没有任何附件可传。要求先有文件才能记，
+   * 等于把最该记的东西挡在门外。
+   *
+   * 成熟系统的排法是反过来的：**手填是主路径，识别是快捷方式**。
+   * 所以这个按钮和「智能识别」并排，而且空状态里也放一个。
+   *
+   * 只预填两样：新建时间和「未核实」。其余一律留空 ——
+   * 预填一个看起来合理的默认值（比如把今天当发证日期），
+   * 会变成没人核对的假数据。
+   */
+  const handleAddCertificateManually = () => {
+    if (!editingData) return;
+    const blank = {
+      id: `CERT-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: '',
+      number: '',
+      issuingBody: '',
+      issueDate: '',
+      expiryDate: '',
+      status: 'Valid',
+      cycleRule: '',
+      scope: '',
+      source: 'customerSaid',   // 手填的默认按「客户自己说的」，要核实
+      auditPlan: []
+    } as unknown as CertificateDetail;
+    setEditingData({ ...editingData, certificates: [...(editingData.certificates || []), blank] });
+  };
+
   const handleCreateCertificateReminder = (cert: CertificateDetail) => {
     if (!selectedCustomer) return;
     const days = getDaysUntil(cert.expiryDate);
@@ -1500,11 +1543,38 @@ const Customers = () => {
                                                 <p className="text-xs text-gray-500 mt-1">证书主数据归客户、续证动作归项目、原件归档进知识中心。</p>
                                             </div>
                                             <div className="flex items-center space-x-2">
+                                                {/*
+                                                  「手工录入」排在「智能识别」**前面**，因为它才是主路径。
+                                                  2026-09-19 之前这一块只有识别，没有手填：
+                                                  没有证书文件就什么都记不了，而最值钱的情报
+                                                  （别人家的证书什么时候到期）恰恰是没有文件的。
+                                                */}
                                                 {isEditing && (
-                                                    <div className="w-40">
-                                                        <IngestionUploader 
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleAddCertificateManually}
+                                                        className="text-xs font-black px-3 py-2 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 flex items-center shrink-0"
+                                                    >
+                                                        <Plus className="w-3 h-3 mr-1" /> 手工录入
+                                                    </button>
+                                                )}
+                                                {isEditing && (
+                                                    /*
+                                                      原来是 w-40（160px）：图标 + 「选择文件」按钮就占掉 110px 左右，
+                                                      留给文字不到 30px，于是「智能识别」被 truncate 成「智」、
+                                                      副标题被截成「支」—— 两个孤字叠在一起，没人看得懂那是什么。
+                                                      （金恩来 2026-09-19 的截图里就是这个样子。）
+
+                                                      加宽，并且**不要副标题**：这个位置旁边就是「手工录入」，
+                                                      两个按钮并排时副标题只会把两边都挤坏。
+                                                      手机上占满整行，不跟手工录入挤同一行。
+                                                    */
+                                                    /* shrink-0 不能少：外层是 flex，光给宽度还是会被标题那块挤扁 */
+                                                    <div className="w-full shrink-0 md:w-52">
+                                                        <IngestionUploader
                                                             source="certificate"
                                                             label="智能识别"
+                                                            subLabel=""
                                                             compact={true}
                                                             onSuccess={async (result, file) => {
                                                                 const certs = Array.isArray(result.data) ? result.data : [];
@@ -1590,6 +1660,70 @@ const Customers = () => {
                                                                 <span>证书编号：{isEditing ? <input className="ml-1 border-b bg-transparent w-36" value={cert.number || ''} onChange={e => updateCertificate(idx, 'number', e.target.value)} placeholder="待补充" /> : (cert.number || '-')}</span>
                                                                 <span>发证机构：{isEditing ? <input className="ml-1 border-b bg-transparent w-36" value={cert.issuingBody || ''} onChange={e => updateCertificate(idx, 'issuingBody', e.target.value)} placeholder="待补充" /> : (cert.issuingBody || '-')}</span>
                                                             </div>
+
+                                                            {/*
+                                                              ── 种类和来源（2026-09-19 新增）──────────────────
+
+                                                              **种类**决定有效期、监督节点和提醒时间，所以它不是可选项。
+                                                              选不出来就明说「还没选」，不给默认值 ——
+                                                              老代码是按 `_5Y` 后缀猜，猜不中一律按三年，
+                                                              于是有机产品（只有一年）的提醒会晚十几个月，
+                                                              而页面上看起来一切正常。
+
+                                                              **来源**决定这条信息能不能直接拿来安排事情。
+                                                              「客户随口说的」和「官网查到的」不分开的话，
+                                                              一句饭桌上听来的话会和官方数据长得一模一样。
+                                                            */}
+                                                            <div className="text-xs mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+                                                                <span className="flex items-center text-gray-500">
+                                                                    种类：
+                                                                    {isEditing ? (
+                                                                        <select
+                                                                            className="ml-1 border border-gray-200 rounded-lg bg-white px-2 py-1 font-bold text-gray-800"
+                                                                            value={certTypeOf(cert.cycleRule) ? (LEGACY_RULE_ALIAS[cert.cycleRule || ''] || cert.cycleRule || '') : ''}
+                                                                            onChange={e => updateCertificate(idx, 'cycleRule', e.target.value)}
+                                                                        >
+                                                                            <option value="">— 请选择 —</option>
+                                                                            {Object.entries(CERT_TYPES).map(([id, meta]) => (
+                                                                                <option key={id} value={id}>{meta.label}（{meta.validMonths ? `${meta.validMonths / 12} 年` : '长期'}）</option>
+                                                                            ))}
+                                                                        </select>
+                                                                    ) : (
+                                                                        <b className={certTypeOf(cert.cycleRule) ? 'text-gray-800' : 'text-amber-600'}>
+                                                                            {certTypeOf(cert.cycleRule)?.label || '还没选种类'}
+                                                                        </b>
+                                                                    )}
+                                                                </span>
+                                                                <span className="flex items-center text-gray-500">
+                                                                    来源：
+                                                                    {isEditing ? (
+                                                                        <select
+                                                                            className="ml-1 border border-gray-200 rounded-lg bg-white px-2 py-1 font-bold text-gray-800"
+                                                                            value={cert.source || 'customerSaid'}
+                                                                            onChange={e => updateCertificate(idx, 'source', e.target.value)}
+                                                                        >
+                                                                            {Object.entries(CERT_SOURCE).map(([id, label]) => (
+                                                                                <option key={id} value={id}>{label}</option>
+                                                                            ))}
+                                                                        </select>
+                                                                    ) : (
+                                                                        <b className="text-gray-800">{CERT_SOURCE[(cert.source || 'customerSaid') as keyof typeof CERT_SOURCE] || cert.source}</b>
+                                                                    )}
+                                                                </span>
+                                                                <span className={`px-2 py-1 rounded-full border font-bold ${
+                                                                    isVerified(cert.source as any)
+                                                                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                                                        : 'bg-amber-50 border-amber-200 text-amber-700'
+                                                                }`}>
+                                                                    {confidenceLabel(cert.source as any)}
+                                                                </span>
+                                                            </div>
+
+                                                            {!certTypeOf(cert.cycleRule) && (
+                                                                <div className="mt-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                                                                    没选种类，这张证书<b>不会产生到期提醒</b> —— 有效期和提醒时间都是按种类算的。
+                                                                </div>
+                                                            )}
                                                         </div>
                                                         <div className="flex flex-wrap items-center gap-2 shrink-0">
                                                             {!isEditing && (
@@ -1749,9 +1883,29 @@ const Customers = () => {
                                                 </div>
                                             );
                                         }) : (
+                                            /*
+                                              空状态原来只写「建议识别首张证书」——
+                                              对手上没有证书文件的人，这是一条走不通的路，
+                                              而且页面没给任何别的出口。
+                                              现在两条路都说清楚，并且手填那条给按钮。
+                                            */
                                             <div className="rounded-2xl border-2 border-dashed border-gray-200 py-10 text-center bg-gray-50/50">
-                                                <div className="text-sm font-bold text-gray-600">暂无证书信息</div>
-                                                <div className="text-xs text-gray-400 mt-2">建议在客户详情页识别首张证书，自动生成监管周期并沉淀档案。</div>
+                                                <div className="text-sm font-bold text-gray-600">还没有证书信息</div>
+                                                <div className="text-xs text-gray-500 mt-2 px-6 leading-relaxed">
+                                                    有证书文件（PDF / 照片 / Word）就用「智能识别」，自动读出编号和有效期。<br />
+                                                    只知道「哪一年到期」也值得记 —— 点下面手工录，<b className="text-gray-700">企业名 + 有效期至</b>这两样就够排提醒了。
+                                                </div>
+                                                {isEditing ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleAddCertificateManually}
+                                                        className="mt-4 text-xs font-black px-4 py-2 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 inline-flex items-center"
+                                                    >
+                                                        <Plus className="w-3 h-3 mr-1" /> 手工录入一张
+                                                    </button>
+                                                ) : (
+                                                    <div className="mt-4 text-[11px] font-bold text-gray-400">先点右上角「编辑」，才能录入</div>
+                                                )}
                                             </div>
                                         )}
                                     </div>

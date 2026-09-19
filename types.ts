@@ -234,8 +234,20 @@ export interface CertificateDetail {
   issuingBody?: string;
   scope?: string;
   status: 'Valid' | 'Expiring' | 'Expired';
-  cycleRule?: string; 
+  /** 证书种类。取值见 src/modules/certification.ts 的 CERT_TYPES（老数据可能是 SYSTEM_3Y 这类旧规则 ID，已做别名） */
+  cycleRule?: string;
   auditPlan?: AuditNode[];
+  /**
+   * 这条信息是哪来的。取值见 CERT_SOURCE。
+   *
+   * **必须是字段，不能省**（2026-09-19）：
+   * 「客户随口说的到期日」和「官网查到的到期日」，该采取的行动完全不同 ——
+   * 前者要先去核实，后者可以直接排跟进。
+   * 不分开的话，饭桌上听来的一句话会和官方数据长得一模一样。
+   *
+   * 留空按「未核实」处理，界面必须明说，不能显示成没问题。
+   */
+  source?: string;
 }
 
 export interface ContactPerson {
