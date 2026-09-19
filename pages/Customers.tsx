@@ -9,7 +9,9 @@ import { SampleTr } from '../components/SampleRow';
 import { Customer, ContactPerson, Status, Contract, Project, CertificateDetail, AuditNode, FollowUpRecord, UserProfile, KnowledgeDoc, RoleID, AuditIssue } from '../types';
 import { Search, MoreHorizontal, ShieldAlert, BadgeCheck, X, Building, FileText, Briefcase, Globe, Users, Phone, MessageCircle, MapPin, Wallet, Edit3, Save, Plus, Trash2, CalendarClock, Send, Sparkles, Loader2, FileCheck, ArrowRight, Activity, Layers, Target, ChevronRight, Hash, CreditCard, AlignLeft, ScanLine, Eye, Download, Zap, RefreshCw, BellRing, BrainCircuit, MessageSquare, ListTree, Clock, CheckCircle, UploadCloud, Lock } from 'lucide-react';
 import { aiService } from '../services/aiService';
-import { COMPANY_SERVICES, CERT_LIFECYCLE_RULES } from '../constants';
+// CERT_LIFECYCLE_RULES 已不在这里用 —— 种类统一从 src/modules/certification 取。
+// 留着这个 import 会让下一个人以为还有两套种类表可选。
+import { COMPANY_SERVICES } from '../constants';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { IngestionUploader } from '../components/IngestionUploader';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
@@ -119,7 +121,9 @@ const Customers = () => {
 
   const getCertificateStatusMeta = (cert: CertificateDetail) => {
     const days = getDaysUntil(cert.expiryDate);
-    if (days === null) return { label: '待补日期', tone: 'bg-gray-100 text-gray-600 border-gray-200', summary: '请补充到期日期' };
+    // summary 留空：这一档的 label 已经是「待补日期」，再来一句「请补充到期日期」
+    // 就是同一句话说两遍，并排两个灰徽章。其余几档 label 是状态、summary 是天数，不重复。
+    if (days === null) return { label: '待补到期日期', tone: 'bg-gray-100 text-gray-600 border-gray-200', summary: '' };
     if (days < 0) return { label: '已过期', tone: 'bg-red-100 text-red-700 border-red-200', summary: `已过期 ${Math.abs(days)} 天` };
     if (days <= 30) return { label: '紧急续证', tone: 'bg-red-100 text-red-700 border-red-200', summary: `${days} 天内到期` };
     if (days <= 90) return { label: '临期', tone: 'bg-amber-100 text-amber-700 border-amber-200', summary: `${days} 天内到期` };
@@ -1542,35 +1546,34 @@ const Customers = () => {
                                                 <h3 className="text-lg font-bold text-gray-900 flex items-center"> <FileCheck className="w-4 h-4 mr-2 text-green-600" /> 认证证书与监管周期 </h3>
                                                 <p className="text-xs text-gray-500 mt-1">证书主数据归客户、续证动作归项目、原件归档进知识中心。</p>
                                             </div>
-                                            <div className="flex items-center space-x-2">
-                                                {/*
-                                                  「手工录入」排在「智能识别」**前面**，因为它才是主路径。
-                                                  2026-09-19 之前这一块只有识别，没有手填：
-                                                  没有证书文件就什么都记不了，而最值钱的情报
-                                                  （别人家的证书什么时候到期）恰恰是没有文件的。
-                                                */}
+                                            {/*
+                                              ── 这一排按钮的布局（2026-09-19 两次才排对）──────────────
+
+                                              「手工录入」排在「智能识别」**前面**，因为它才是主路径：
+                                              最值钱的情报（别人家的证书什么时候到期）根本没有文件可传。
+
+                                              第一版这里是 `w-40`（160px），图标加「选择文件」按钮就占掉
+                                              110px，留给文字不到 30px，「智能识别」被截成「智」、
+                                              副标题被截成「支」，两个孤字叠着没人看得懂。
+
+                                              第二版我加了 `shrink-0` 让它别被挤扁 —— 桌面对了，
+                                              **手机上直接顶出屏幕**：一行里放不下两个不许收缩的东西。
+
+                                              第三版（现在）：手机上**换行**，两个按钮各占整行；
+                                              桌面上才并排。shrink-0 只在桌面生效。
+                                            */}
+                                            <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center md:gap-2">
                                                 {isEditing && (
                                                     <button
                                                         type="button"
                                                         onClick={handleAddCertificateManually}
-                                                        className="text-xs font-black px-3 py-2 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 flex items-center shrink-0"
+                                                        className="flex w-full items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 hover:bg-blue-100 md:w-auto md:shrink-0"
                                                     >
                                                         <Plus className="w-3 h-3 mr-1" /> 手工录入
                                                     </button>
                                                 )}
                                                 {isEditing && (
-                                                    /*
-                                                      原来是 w-40（160px）：图标 + 「选择文件」按钮就占掉 110px 左右，
-                                                      留给文字不到 30px，于是「智能识别」被 truncate 成「智」、
-                                                      副标题被截成「支」—— 两个孤字叠在一起，没人看得懂那是什么。
-                                                      （金恩来 2026-09-19 的截图里就是这个样子。）
-
-                                                      加宽，并且**不要副标题**：这个位置旁边就是「手工录入」，
-                                                      两个按钮并排时副标题只会把两边都挤坏。
-                                                      手机上占满整行，不跟手工录入挤同一行。
-                                                    */
-                                                    /* shrink-0 不能少：外层是 flex，光给宽度还是会被标题那块挤扁 */
-                                                    <div className="w-full shrink-0 md:w-52">
+                                                    <div className="w-full md:w-52 md:shrink-0">
                                                         <IngestionUploader
                                                             source="certificate"
                                                             label="智能识别"
@@ -1654,76 +1657,28 @@ const Customers = () => {
                                                                     <span className="font-bold text-gray-900 text-base">{cert.name}</span>
                                                                 )}
                                                                 <span className={`text-xs px-2 py-1 rounded-full border font-bold ${statusMeta.tone}`}>{statusMeta.label}</span>
-                                                                <span className="text-[11px] font-bold text-gray-500 bg-white border border-gray-200 px-2 py-1 rounded-full">{statusMeta.summary}</span>
+                                                                {statusMeta.summary && <span className="text-[11px] font-bold text-gray-500 bg-white border border-gray-200 px-2 py-1 rounded-full">{statusMeta.summary}</span>}
+                                                                {/* 可信度和「有效/剩余天数」是同一类信息（这条记录能不能直接拿来办事），
+                                                                    所以排在一起，不另起一行 —— 一行里三种徽章样式会很乱 */}
+                                                                <span className={`text-[11px] px-2 py-1 rounded-full border font-bold ${
+                                                                    isVerified(cert.source as any)
+                                                                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                                                        : 'bg-amber-50 border-amber-200 text-amber-700'
+                                                                }`}>
+                                                                    {isVerified(cert.source as any) ? '已核实' : '未核实'}
+                                                                </span>
+                                                                {!certTypeOf(cert.cycleRule) && (
+                                                                    <span className="text-[11px] px-2 py-1 rounded-full border border-amber-300 bg-amber-100 font-bold text-amber-800">
+                                                                        没选种类 · 不会提醒
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                             <div className="text-xs text-gray-500 mt-2 flex flex-wrap gap-x-4 gap-y-1">
                                                                 <span>证书编号：{isEditing ? <input className="ml-1 border-b bg-transparent w-36" value={cert.number || ''} onChange={e => updateCertificate(idx, 'number', e.target.value)} placeholder="待补充" /> : (cert.number || '-')}</span>
                                                                 <span>发证机构：{isEditing ? <input className="ml-1 border-b bg-transparent w-36" value={cert.issuingBody || ''} onChange={e => updateCertificate(idx, 'issuingBody', e.target.value)} placeholder="待补充" /> : (cert.issuingBody || '-')}</span>
                                                             </div>
 
-                                                            {/*
-                                                              ── 种类和来源（2026-09-19 新增）──────────────────
 
-                                                              **种类**决定有效期、监督节点和提醒时间，所以它不是可选项。
-                                                              选不出来就明说「还没选」，不给默认值 ——
-                                                              老代码是按 `_5Y` 后缀猜，猜不中一律按三年，
-                                                              于是有机产品（只有一年）的提醒会晚十几个月，
-                                                              而页面上看起来一切正常。
-
-                                                              **来源**决定这条信息能不能直接拿来安排事情。
-                                                              「客户随口说的」和「官网查到的」不分开的话，
-                                                              一句饭桌上听来的话会和官方数据长得一模一样。
-                                                            */}
-                                                            <div className="text-xs mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
-                                                                <span className="flex items-center text-gray-500">
-                                                                    种类：
-                                                                    {isEditing ? (
-                                                                        <select
-                                                                            className="ml-1 border border-gray-200 rounded-lg bg-white px-2 py-1 font-bold text-gray-800"
-                                                                            value={certTypeOf(cert.cycleRule) ? (LEGACY_RULE_ALIAS[cert.cycleRule || ''] || cert.cycleRule || '') : ''}
-                                                                            onChange={e => updateCertificate(idx, 'cycleRule', e.target.value)}
-                                                                        >
-                                                                            <option value="">— 请选择 —</option>
-                                                                            {Object.entries(CERT_TYPES).map(([id, meta]) => (
-                                                                                <option key={id} value={id}>{meta.label}（{meta.validMonths ? `${meta.validMonths / 12} 年` : '长期'}）</option>
-                                                                            ))}
-                                                                        </select>
-                                                                    ) : (
-                                                                        <b className={certTypeOf(cert.cycleRule) ? 'text-gray-800' : 'text-amber-600'}>
-                                                                            {certTypeOf(cert.cycleRule)?.label || '还没选种类'}
-                                                                        </b>
-                                                                    )}
-                                                                </span>
-                                                                <span className="flex items-center text-gray-500">
-                                                                    来源：
-                                                                    {isEditing ? (
-                                                                        <select
-                                                                            className="ml-1 border border-gray-200 rounded-lg bg-white px-2 py-1 font-bold text-gray-800"
-                                                                            value={cert.source || 'customerSaid'}
-                                                                            onChange={e => updateCertificate(idx, 'source', e.target.value)}
-                                                                        >
-                                                                            {Object.entries(CERT_SOURCE).map(([id, label]) => (
-                                                                                <option key={id} value={id}>{label}</option>
-                                                                            ))}
-                                                                        </select>
-                                                                    ) : (
-                                                                        <b className="text-gray-800">{CERT_SOURCE[(cert.source || 'customerSaid') as keyof typeof CERT_SOURCE] || cert.source}</b>
-                                                                    )}
-                                                                </span>
-                                                                <span className={`px-2 py-1 rounded-full border font-bold ${
-                                                                    isVerified(cert.source as any)
-                                                                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                                                                        : 'bg-amber-50 border-amber-200 text-amber-700'
-                                                                }`}>
-                                                                    {confidenceLabel(cert.source as any)}
-                                                                </span>
-                                                            </div>
-
-                                                            {!certTypeOf(cert.cycleRule) && (
-                                                                <div className="mt-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
-                                                                    没选种类，这张证书<b>不会产生到期提醒</b> —— 有效期和提醒时间都是按种类算的。
-                                                                </div>
-                                                            )}
                                                         </div>
                                                         <div className="flex flex-wrap items-center gap-2 shrink-0">
                                                             {!isEditing && (
@@ -1754,7 +1709,13 @@ const Customers = () => {
                                                         </div>
                                                     </div>
 
-                                                    <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-sm">
+                                                    {/*
+                                                      4 列两行，不是 8 列一行。
+                                                      8 列时每格只有 70 多像素：「发证日期」被折成「发证日/期」，
+                                                      日期输入框缩到只剩一个日历图标。
+                                                      第一行四张窄卡（日期/天数/份数），第二行两张宽卡（种类/来源）。
+                                                    */}
+                                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                                                         <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
                                                             <div className="text-[11px] font-bold text-gray-400 uppercase">发证日期</div>
                                                             {isEditing ? <input type="date" className="mt-1 w-full border rounded px-2 py-1 bg-white" value={cert.issueDate || ''} onChange={e => updateCertificate(idx, 'issueDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.issueDate || '-'}</div>}
@@ -1767,19 +1728,61 @@ const Customers = () => {
                                                             <div className="text-[11px] font-bold text-gray-400 uppercase">剩余天数</div>
                                                             <div className={`mt-1 font-black ${remainingDays !== null && remainingDays < 0 ? 'text-red-600' : remainingDays !== null && remainingDays <= 90 ? 'text-amber-600' : 'text-gray-900'}`}>{remainingDays === null ? '-' : `${remainingDays} 天`}</div>
                                                         </div>
-                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2 md:col-span-2">
-                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">监管规则</div>
-                                                            {isEditing ? (
-                                                                <select className="mt-1 w-full border rounded px-2 py-1 bg-white" value={cert.cycleRule || 'SYSTEM_3Y'} onChange={e => updateCertificate(idx, 'cycleRule', e.target.value)}>
-                                                                    {Object.entries(CERT_LIFECYCLE_RULES).map(([key, rule]) => ( <option key={key} value={key}>{rule.name}</option> ))}
-                                                                </select>
-                                                            ) : (
-                                                                <div className="mt-1 font-bold text-gray-800">{(CERT_LIFECYCLE_RULES as any)[cert.cycleRule as string]?.name || cert.cycleRule || '-'}</div>
-                                                            )}
-                                                        </div>
                                                         <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
                                                             <div className="text-[11px] font-bold text-gray-400 uppercase">档案份数</div>
                                                             <div className="mt-1 font-black text-emerald-700">{archiveDocs.length}</div>
+                                                        </div>
+                                                        {/*
+                                                          ── 证书种类（2026-09-19 重做）────────────────────────
+
+                                                          原来这张卡叫「监管规则」，而且 `value={cert.cycleRule || 'SYSTEM_3Y'}`
+                                                          —— **没选的时候默默显示成「ISO 三年周期」**。
+                                                          人看到一个填好的值，不会想到那只是个默认值；
+                                                          而有机产品认证只有一年，按三年算提醒会晚十几个月。
+
+                                                          改三处：
+                                                            · 名字改成「证书种类」——「监管规则」听不出它决定有效期
+                                                            · 没选就显示「请选择」，**不给默认值**
+                                                            · 选项带上有效期，选的时候就能看出对不对
+
+                                                          另外：我 2026-09-19 上午在上面另加过一个「种类」下拉，
+                                                          和这张卡绑的是同一个字段 —— 一个字段两个控件。
+                                                          已经删掉那个，字段统一留在这张卡里。
+                                                        */}
+                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2 md:col-span-2">
+                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">证书种类</div>
+                                                            {isEditing ? (
+                                                                <select
+                                                                    className={`mt-1 w-full border rounded-lg px-2 py-1 bg-white font-bold ${certTypeOf(cert.cycleRule) ? 'border-gray-200 text-gray-800' : 'border-amber-300 text-amber-700'}`}
+                                                                    value={certTypeOf(cert.cycleRule) ? (LEGACY_RULE_ALIAS[cert.cycleRule || ''] || cert.cycleRule || '') : ''}
+                                                                    onChange={e => updateCertificate(idx, 'cycleRule', e.target.value)}
+                                                                >
+                                                                    <option value="">— 请选择 —</option>
+                                                                    {Object.entries(CERT_TYPES).map(([id, meta]) => (
+                                                                        <option key={id} value={id}>{meta.label}（{meta.validMonths ? `${meta.validMonths / 12} 年` : '长期'}）</option>
+                                                                    ))}
+                                                                </select>
+                                                            ) : (
+                                                                <div className={`mt-1 font-bold ${certTypeOf(cert.cycleRule) ? 'text-gray-800' : 'text-amber-600'}`}>
+                                                                    {certTypeOf(cert.cycleRule)?.label || '还没选'}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2 md:col-span-2">
+                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">信息来源</div>
+                                                            {isEditing ? (
+                                                                <select
+                                                                    className="mt-1 w-full border border-gray-200 rounded-lg px-2 py-1 bg-white font-bold text-gray-800"
+                                                                    value={cert.source || 'customerSaid'}
+                                                                    onChange={e => updateCertificate(idx, 'source', e.target.value)}
+                                                                >
+                                                                    {Object.entries(CERT_SOURCE).map(([id, label]) => (
+                                                                        <option key={id} value={id}>{label}</option>
+                                                                    ))}
+                                                                </select>
+                                                            ) : (
+                                                                <div className="mt-1 font-bold text-gray-800">{CERT_SOURCE[(cert.source || 'customerSaid') as keyof typeof CERT_SOURCE] || cert.source}</div>
+                                                            )}
                                                         </div>
                                                     </div>
 
