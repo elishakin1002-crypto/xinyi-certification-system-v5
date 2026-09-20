@@ -26,14 +26,60 @@ const wrap = (fn) => async (req, res) => {
 };
 const payload = (b) => (b?.doc && typeof b.doc === 'object' ? b.doc : (b || {}));
 
+/*
+  ── 可见范围要在服务端生效，不能只在浏览器里过滤（2026-09-20）──
+
+  改之前这个接口**把所有文档返回给所有人**，过滤全在前端
+  （Knowledge.tsx 的 canAccessDoc、AIChatWidget 的 allowedDocs）。
+
+  后果：顾问的浏览器里其实装着财务和总经理的文档，
+  打开开发者工具、或者看一眼网络请求就能读到。
+  也就是说「可见范围」是个**显示过滤，不是访问控制**。
+
+  这正是联网查到的企业 RAG 通病 ——
+  「大多数企业把权限做在应用层，结果把机密文档泄露给了错误的人」。
+  权限必须跟着数据走，在**数据出服务端之前**就滤掉。
+
+  两条规矩：
+    · 总经理和系统管理员看全部（负责人 + 维护角色，见 visibility.ts）
+    · accessRoles 为空 = 全员可见（这是这个系统既有的约定，别改语义）
+*/
+const ALWAYS_SEE_ALL = ['ADMIN', 'SYS_ADMIN'];
+
+const visibleTo = (doc, user) => {
+  const roles = Array.isArray(user?.roles) ? user.roles : [];
+  if (roles.some((r) => ALWAYS_SEE_ALL.includes(r))) return true;
+
+  const users = Array.isArray(doc?.accessUserIds) ? doc.accessUserIds : [];
+  if (users.length > 0 && !users.includes(user?.id)) return false;
+
+  const allowed = Array.isArray(doc?.accessRoles) ? doc.accessRoles : [];
+  if (allowed.length === 0) return true;                       // 空 = 全员可见
+  return allowed.some((r) => roles.includes(r));
+};
+
 router.get('/api/knowledge', wrap(async (req, res) => {
   const docs = await knowledgeRepo.list({ linkType: req.query.linkType, linkId: req.query.linkId, category: req.query.category });
-  sendSuccess(res, { docs }, 'success');
+  /*
+    没有登录态时（本机开发、鉴权关掉的环境）不做过滤 ——
+    那种环境本来就没有"谁在问"这个概念，硬过滤会让本地开发
+    看不到任何文档，然后有人把这段注释掉，规则就没了。
+  */
+  const user = req.authUser;
+  sendSuccess(res, { docs: user ? docs.filter((d) => visibleTo(d, user)) : docs }, 'success');
 }));
 
 router.get('/api/knowledge/:id', wrap(async (req, res) => {
   const doc = await knowledgeRepo.getById(req.params.id);
   if (!doc) return sendFail(res, ERROR_CODES.NOT_FOUND, 'Doc not found', {}, 404);
+  /*
+    单篇也要拦。只滤列表的话，知道 id 就能绕过去 ——
+    而 id 在列表里出现过、在链接里出现过，不是秘密。
+    返回 404 而不是 403：不告诉对方"这篇存在但你看不了"。
+  */
+  if (req.authUser && !visibleTo(doc, req.authUser)) {
+    return sendFail(res, ERROR_CODES.NOT_FOUND, 'Doc not found', {}, 404);
+  }
   sendSuccess(res, { doc }, 'success');
 }));
 

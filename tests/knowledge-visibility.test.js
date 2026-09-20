@@ -46,12 +46,13 @@ test('知识中心的可见范围不许写死角色清单', () => {
     PDCA / AI生成 那两条是**有意的子集**，不在此列 ——
     判据是：这个数组是不是被当成"所有角色"用（allRoles / 默认可见范围）。
   */
-  const hardcodedAll = /allRoles\s*:\s*RoleID\[\]\s*=\s*\[/.test(src);
-  assert.equal(hardcodedAll, false,
-    'allRoles 又被写死了。必须从 SYSTEM_ROLES 派生 —— '
-    + '写死的清单在新增角色时不会跟着变，而界面还会显示「全员可见」。');
+  assert.equal(/allRoles[^\n]*=\s*\[\s*'[A-Z]/.test(src), false,
+    'allRoles 又被写死成一串角色字面量了。'
+    + '写死的清单在新增角色时不会跟着变，而界面还会显示「全员可见」—— '
+    + '2026-09-20 销售就是这么被漏掉的。');
 
-  assert.match(src, /allRoles[^\n]*SYSTEM_ROLES/, 'allRoles 应当从 SYSTEM_ROLES 派生');
+  assert.match(src, /allRoles[^\n]*SELECTABLE_AUDIENCE_ROLES/,
+    'allRoles 应当来自 SELECTABLE_AUDIENCE_ROLES（受众清单的单一来源）');
 });
 
 test('系统的六个角色，可见范围里一个都不能少', () => {
@@ -66,9 +67,15 @@ test('系统的六个角色，可见范围里一个都不能少', () => {
 
 /* ── 二、老板永远可见 ─────────────────────────────────────── */
 
-test('可见范围里没有总经理时，自动补上', () => {
-  assert.deepEqual(V.enforceAlwaysVisible(['CONSULTANT']), ['CONSULTANT', 'ADMIN']);
-  assert.deepEqual(V.enforceAlwaysVisible(['FINANCE', 'ADMIN']), ['FINANCE', 'ADMIN'], '已经有就不重复加');
+test('存盘时自动补上「始终可见」的角色', () => {
+  /*
+    界面上不列这两个角色，但**存进去的 accessRoles 必须包含它们** ——
+    否则服务端和前端按 accessRoles 判断时会把他们挡在外面。
+    界面简洁和数据正确是两件事，不能为了前者牺牲后者。
+  */
+  assert.deepEqual(V.enforceAlwaysVisible(['CONSULTANT']), ['CONSULTANT', 'ADMIN', 'SYS_ADMIN']);
+  assert.deepEqual(V.enforceAlwaysVisible(['FINANCE', 'ADMIN']), ['FINANCE', 'ADMIN', 'SYS_ADMIN'],
+    '已经有的不重复加');
 });
 
 test('空数组是「全员可见」，不能被改成「只有总经理」', () => {
@@ -82,10 +89,61 @@ test('空数组是「全员可见」，不能被改成「只有总经理」', ()
   assert.deepEqual(V.enforceAlwaysVisible(undefined), []);
 });
 
-test('总经理那个勾在界面上是锁死的', () => {
-  assert.equal(V.isLockedRole('ADMIN'), true);
-  assert.equal(V.isLockedRole('CONSULTANT'), false);
-  assert.ok(V.LOCKED_ROLE_HINT.includes('总经理'), '要有一句人话解释为什么取消不了');
+test('总经理和系统管理员不出现在选项里 —— 受众和访问权是两件事', () => {
+  /*
+    第一版我把总经理做成一个**锁死的勾**，那是半成品：
+    一个点不动的选项框只会让人以为界面坏了。
+
+    金恩来 2026-09-20 的三个判断都对 ——
+    受众（谁需要看）是业务概念、可选；
+    访问权（谁技术上看得到）是系统属性、不该摆成选项。
+  */
+  assert.deepEqual([...V.SELECTABLE_AUDIENCE_ROLES], ['MANAGER', 'SALES', 'CONSULTANT', 'FINANCE']);
+  for (const hidden of ['ADMIN', 'SYS_ADMIN']) {
+    assert.equal(V.SELECTABLE_AUDIENCE_ROLES.includes(hidden), false,
+      `${hidden} 不该出现在可选受众里 —— 它始终可见，占个点不动的位置只会让人困惑`);
+  }
+  assert.ok(V.LOCKED_ROLE_HINT.includes('总经理') && V.LOCKED_ROLE_HINT.includes('系统管理员'),
+    '要有一句人话说明这两个角色始终可见');
+});
+
+test('默认受众 = 四个业务角色全选，也就是全员可见', () => {
+  // 金恩来：「默认要全员可见」。收窄应该是例外，需要人主动判断一次。
+  assert.deepEqual([...V.DEFAULT_AUDIENCE], ['MANAGER', 'SALES', 'CONSULTANT', 'FINANCE']);
+});
+
+test('服务端按可见范围过滤，不能把所有文档发给所有人', () => {
+  /*
+    改之前 GET /api/knowledge **把全部文档返回给所有人**，
+    过滤只发生在浏览器里 —— 顾问的浏览器里装着财务和老板的文档，
+    打开开发者工具就能读。那是显示过滤，不是访问控制。
+
+    这正是联网查到的企业 RAG 通病：权限做在应用层，
+    数据已经离开服务端了。
+  */
+  const src = read('server/routes/knowledge.js');
+  assert.match(src, /const visibleTo/, '服务端缺少 visibleTo');
+
+  const list = src.slice(src.indexOf("router.get('/api/knowledge'"), src.indexOf("router.get('/api/knowledge/:id'"));
+  assert.match(list, /filter\(\(d\) => visibleTo\(d, user\)\)/, '列表接口没有按可见范围过滤');
+
+  const one = src.slice(src.indexOf("router.get('/api/knowledge/:id'"), src.indexOf("router.post('/api/knowledge'"));
+  assert.match(one, /visibleTo\(doc, req\.authUser\)/,
+    '单篇接口没拦 —— 只滤列表的话，知道 id 就能绕过去，而 id 不是秘密');
+});
+
+test('AI 检索只吃当前用户有权限看的文档', () => {
+  /*
+    「AI 只会读取你有权限查看的文档内容」这句话写在界面上，
+    必须是真的。查到的行业通病是反过来的：
+    「大多数企业 RAG 把权限做在应用层，结果把机密文档泄露给了错误的人」。
+  */
+  const src = read('components/AIChatWidget.tsx');
+  const block = src.slice(src.indexOf('const allowedDocs'), src.indexOf('const allowedDocs') + 600);
+  assert.match(block, /aiVisible !== true/, 'AI 检索没过滤 aiVisible');
+  assert.match(block, /accessUserIds/, 'AI 检索没看 accessUserIds');
+  assert.match(block, /accessRoles/, 'AI 检索没看 accessRoles');
+  assert.match(block, /currentUser/, 'AI 检索没按当前用户判断');
 });
 
 /* ── 三、服务端也要拦，只在界面锁等于没锁 ─────────────────── */

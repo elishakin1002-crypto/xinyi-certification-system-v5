@@ -20,7 +20,7 @@ import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { adviseIntake } from '../src/modules/knowledge/intake';
 import { APP_ROUTES } from '../src/routes';
 import { auditSeverityLabel, auditStatusLabel, knowledgeCategoryLabel } from '../src/modules/labels';
-import { enforceAlwaysVisible, isLockedRole, LOCKED_ROLE_HINT } from '../src/modules/knowledge/visibility';
+import { enforceAlwaysVisible, LOCKED_ROLE_HINT, SELECTABLE_AUDIENCE_ROLES, DEFAULT_AUDIENCE } from '../src/modules/knowledge/visibility';
 
 const Knowledge = () => {
   const { knowledgeDocs, auditIssues, addKnowledgeDoc, deleteKnowledgeDoc, updateKnowledgeDoc, currentUser, activeRole, backfillPdcaForPaidContracts } = useApp();
@@ -38,7 +38,7 @@ const Knowledge = () => {
   const [newDocCategory, setNewDocCategory] = useState<'Company Profile' | 'Product Service' | 'Standard' | 'Template' | 'Training' | 'PDCA' | 'AI生成' | 'Other'>('Company Profile');
   // 默认可见范围 = 全部角色。写死清单的话，新增角色会默认被排除在外，
   // 而界面还显示「全员可见」—— 2026-09-20 销售就是这么被漏掉的。
-  const [visibleRoles, setVisibleRoles] = useState<RoleID[]>(SYSTEM_ROLES.map(r => r.id as RoleID));
+  const [visibleRoles, setVisibleRoles] = useState<RoleID[]>([...DEFAULT_AUDIENCE] as RoleID[]);
   
   /*
     「让 AI 学习」默认**不勾**。
@@ -76,7 +76,14 @@ const Knowledge = () => {
     以后谁加一个角色，这里不跟着改就又漏。所以改成从 SYSTEM_ROLES 派生，
     并有 tests/knowledge-visible-roles.test.js 钉住。
   */
-  const allRoles: RoleID[] = SYSTEM_ROLES.map(r => r.id as RoleID);
+  /*
+    可见范围里**只列四个业务角色**（2026-09-20 重做）。
+
+    总经理和系统管理员始终可见，不占选项位 ——
+    一个点不动的勾只会让人以为界面坏了，用一句话说明更清楚。
+    规则在 src/modules/knowledge/visibility.ts。
+  */
+  const allRoles: RoleID[] = [...SELECTABLE_AUDIENCE_ROLES] as RoleID[];
   const getRoleLabel = (roleId: RoleID) => SYSTEM_ROLES.find(r => r.id === roleId)?.name || roleId;
 
   const canAccessDoc = (doc: KnowledgeDoc) => {
@@ -165,7 +172,7 @@ const Knowledge = () => {
       if (cat === 'AI生成') return ['ADMIN', 'MANAGER'];
       // 上面两条是**有意的子集**（PDCA 和 AI 生成内容不给所有人）；
       // 这条兜底的本意是「全员」，所以必须跟着角色表走，不能写死。
-      return SYSTEM_ROLES.map(r => r.id as RoleID);
+      return [...DEFAULT_AUDIENCE] as RoleID[];
   };
 
   const getDuplicateAlertMessage = (duplicate: KnowledgeDoc, incomingTitle: string) => {
@@ -738,35 +745,18 @@ const Knowledge = () => {
                               {allRoles.map(roleId => {
                                   const label = getRoleLabel(roleId);
                                   const checked = visibleRoles.includes(roleId);
-                                  /*
-                                    总经理那个勾**取消不了**（2026-09-20）。
-
-                                    金恩来：「员工可以上传文件不让老板看见，
-                                      这个在成熟的咨询系统中有这个功能吗？」——没有。
-                                    文档管理系统的通行做法是：权限由管理员设定，
-                                    而**公司所有者永远拥有完整可见性**。
-                                    上传的人只能往下收窄，不能把负责人挡在外面。
-
-                                    置灰而不是隐藏：隐藏会让人以为"忘了给老板权限"，
-                                    置灰 + 一句说明才知道这是规矩。
-                                  */
-                                  const locked = isLockedRole(roleId);
                                   return (
                                     <button
                                       key={roleId}
                                       type="button"
-                                      disabled={locked}
-                                      title={locked ? LOCKED_ROLE_HINT : undefined}
-                                      onClick={() => { if (!locked) toggleVisibleRole(roleId); }}
+                                      onClick={() => toggleVisibleRole(roleId)}
                                       className={`px-3 py-1.5 rounded-full text-[11px] font-bold border transition-colors ${
-                                        locked
-                                          ? 'bg-indigo-600 text-white border-indigo-600 opacity-70 cursor-not-allowed'
-                                          : checked
-                                            ? 'bg-indigo-600 text-white border-indigo-600'
-                                            : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'
+                                        checked
+                                          ? 'bg-indigo-600 text-white border-indigo-600'
+                                          : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'
                                       }`}
                                     >
-                                      {label}{locked && ' 🔒'}
+                                      {label}
                                     </button>
                                   );
                               })}
