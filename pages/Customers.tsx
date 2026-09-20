@@ -16,7 +16,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { IngestionUploader } from '../components/IngestionUploader';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
-import { SearchInput, EmptyState, FilterSelect, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
+import { SearchInput, EmptyState, FilterSelect, tableHeadClass, thClass, tdClass, trClass,
+  fieldCardClass, fieldLabelClass, fieldInputClass, fieldValueClass } from '../src/ui';
 import { groupIndustry, INDUSTRY_GROUPS, INDUSTRY_GROUP_META, IndustryGroup } from '../src/modules/industry';
 import { auditSeverityLabel, auditStatusLabel, FIELD } from '../src/modules/labels';
 import { CERT_TYPES, CERT_SOURCE, LEGACY_RULE_ALIAS, certTypeOf, isVerified, confidenceLabel } from '../src/modules/certification';
@@ -1722,34 +1723,34 @@ const Customers = () => {
                                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                                                         {isEditing && (
                                                             <>
-                                                                <div className="rounded-xl border border-gray-100 bg-white px-3 py-2 md:col-span-2">
-                                                                    <div className="text-[11px] font-bold text-gray-400 uppercase">证书名称</div>
-                                                                    <input className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100" value={cert.name || ''} onChange={e => updateCertificate(idx, 'name', e.target.value)} placeholder="照证书上写" />
+                                                                <div className={`${fieldCardClass} md:col-span-2`}>
+                                                                    <div className={fieldLabelClass}>证书名称</div>
+                                                                    <input className={fieldInputClass()} value={cert.name || ''} onChange={e => updateCertificate(idx, 'name', e.target.value)} placeholder="照证书上写" />
                                                                 </div>
-                                                                <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
-                                                                    <div className="text-[11px] font-bold text-gray-400 uppercase">证书编号</div>
-                                                                    <input className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100" value={cert.number || ''} onChange={e => updateCertificate(idx, 'number', e.target.value)} placeholder="待补充" />
+                                                                <div className={fieldCardClass}>
+                                                                    <div className={fieldLabelClass}>证书编号</div>
+                                                                    <input className={fieldInputClass()} value={cert.number || ''} onChange={e => updateCertificate(idx, 'number', e.target.value)} placeholder="待补充" />
                                                                 </div>
-                                                                <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
-                                                                    <div className="text-[11px] font-bold text-gray-400 uppercase">发证机构</div>
-                                                                    <input className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100" value={cert.issuingBody || ''} onChange={e => updateCertificate(idx, 'issuingBody', e.target.value)} placeholder="待补充" />
+                                                                <div className={fieldCardClass}>
+                                                                    <div className={fieldLabelClass}>发证机构</div>
+                                                                    <input className={fieldInputClass()} value={cert.issuingBody || ''} onChange={e => updateCertificate(idx, 'issuingBody', e.target.value)} placeholder="待补充" />
                                                                 </div>
                                                             </>
                                                         )}
-                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
-                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">发证日期</div>
-                                                            {isEditing ? <input type="date" className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100" value={cert.issueDate || ''} onChange={e => updateCertificate(idx, 'issueDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.issueDate || '-'}</div>}
+                                                        <div className={fieldCardClass}>
+                                                            <div className={fieldLabelClass}>发证日期</div>
+                                                            {isEditing ? <input type="date" className={fieldInputClass()} value={cert.issueDate || ''} onChange={e => updateCertificate(idx, 'issueDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.issueDate || '-'}</div>}
                                                         </div>
-                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
-                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">到期日期</div>
-                                                            {isEditing ? <input type="date" className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100" value={cert.expiryDate || ''} onChange={e => updateCertificate(idx, 'expiryDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.expiryDate || '-'}</div>}
+                                                        <div className={fieldCardClass}>
+                                                            <div className={fieldLabelClass}>到期日期</div>
+                                                            {isEditing ? <input type="date" className={fieldInputClass()} value={cert.expiryDate || ''} onChange={e => updateCertificate(idx, 'expiryDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.expiryDate || '-'}</div>}
                                                         </div>
-                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
-                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">剩余天数</div>
+                                                        <div className={fieldCardClass}>
+                                                            <div className={fieldLabelClass}>剩余天数</div>
                                                             <div className={`mt-1 font-black ${remainingDays !== null && remainingDays < 0 ? 'text-red-600' : remainingDays !== null && remainingDays <= 90 ? 'text-amber-600' : 'text-gray-900'}`}>{remainingDays === null ? '-' : `${remainingDays} 天`}</div>
                                                         </div>
-                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
-                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">档案份数</div>
+                                                        <div className={fieldCardClass}>
+                                                            <div className={fieldLabelClass}>档案份数</div>
                                                             <div className="mt-1 font-black text-emerald-700">{archiveDocs.length}</div>
                                                         </div>
                                                         {/*
@@ -1769,11 +1770,11 @@ const Customers = () => {
                                                           和这张卡绑的是同一个字段 —— 一个字段两个控件。
                                                           已经删掉那个，字段统一留在这张卡里。
                                                         */}
-                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2 md:col-span-2">
-                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">证书种类</div>
+                                                        <div className={`${fieldCardClass} md:col-span-2`}>
+                                                            <div className={fieldLabelClass}>证书种类</div>
                                                             {isEditing ? (
                                                                 <select
-                                                                    className={`mt-1 w-full rounded-lg border bg-white px-2 py-1 font-bold outline-none focus:ring-2 focus:ring-indigo-100 ${certTypeOf(cert.cycleRule) ? 'border-gray-200 text-gray-800' : 'border-amber-300 text-amber-700'}`}
+                                                                    className={fieldInputClass(certTypeOf(cert.cycleRule) ? 'normal' : 'warn')}
                                                                     value={certTypeOf(cert.cycleRule) ? (LEGACY_RULE_ALIAS[cert.cycleRule || ''] || cert.cycleRule || '') : ''}
                                                                     onChange={e => updateCertificate(idx, 'cycleRule', e.target.value)}
                                                                 >
@@ -1783,16 +1784,16 @@ const Customers = () => {
                                                                     ))}
                                                                 </select>
                                                             ) : (
-                                                                <div className={`mt-1 font-bold ${certTypeOf(cert.cycleRule) ? 'text-gray-800' : 'text-amber-600'}`}>
+                                                                <div className={fieldValueClass(certTypeOf(cert.cycleRule) ? 'normal' : 'warn')}>
                                                                     {certTypeOf(cert.cycleRule)?.label || '还没选'}
                                                                 </div>
                                                             )}
                                                         </div>
-                                                        <div className="rounded-xl border border-gray-100 bg-white px-3 py-2 md:col-span-2">
-                                                            <div className="text-[11px] font-bold text-gray-400 uppercase">信息来源</div>
+                                                        <div className={`${fieldCardClass} md:col-span-2`}>
+                                                            <div className={fieldLabelClass}>信息来源</div>
                                                             {isEditing ? (
                                                                 <select
-                                                                    className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100"
+                                                                    className={fieldInputClass()}
                                                                     value={cert.source || 'customerSaid'}
                                                                     onChange={e => updateCertificate(idx, 'source', e.target.value)}
                                                                 >

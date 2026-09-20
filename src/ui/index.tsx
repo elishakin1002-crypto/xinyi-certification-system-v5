@@ -340,3 +340,65 @@ export const thClass = 'px-6 py-3 text-left whitespace-nowrap';
 export const tdClass = 'px-6 py-4 align-middle';
 /** 表体行 */
 export const trClass = 'border-b border-gray-50 last:border-0 hover:bg-gray-50/60 transition-colors';
+
+/* ════════════════════════════════════════════════════════════════
+   表单字段 —— 标签在上、输入在下的那种卡片
+
+   ══════════════════════════════════════════════════════════════
+   为什么补这一块（2026-09-20）
+   ══════════════════════════════════════════════════════════════
+
+   金恩来 2026-09-19：「手工录入按钮和智能识别按钮的大小都不统一…
+     UI 不同统一你懂吗？布局不合理你知道吗？」
+
+   查下来根因不是"没有设计规范"—— 这个文件里早就有 Badge / SectionCard /
+   StatCard / buttonClass / Modal / 统一色板。**根因是我一个都没用**：
+   我在证书区手写了 `rounded-xl border border-blue-200 bg-blue-50 px-3 py-2
+   text-xs font-black text-blue-700`，而不是调 buttonClass()。
+
+   而我之所以在表单上也手写，是因为**这里原来确实没有表单字段的规范**：
+   一张证书里同时出现了带框输入、下划线输入、卡片包着的输入三种样式。
+   没有现成的东西可用时，每个人（包括 AI）都会临时发明一个。
+
+   所以补上这一组。配套的约束在 tests/design-system.test.js：
+   新写的页面代码里再出现手搓的同款类名串，那条测试会红。
+   ──「要人记住的规矩，早晚有人记不住」（CLAUDE.md 二点五之四）。
+   ════════════════════════════════════════════════════════════════ */
+
+/** 字段卡片的外壳 */
+export const fieldCardClass = 'rounded-xl border border-gray-100 bg-white px-3 py-2';
+
+/** 字段名（卡片里那行小灰字） */
+export const fieldLabelClass = 'text-[11px] font-bold text-gray-400 uppercase';
+
+/**
+ * 字段里的输入框 / 下拉 / 日期框 —— 三者用同一套，不然一行里就会出现两种框。
+ * tone='warn' 用在"这一项没填会出问题"的场合（例如没选证书种类就不会提醒）。
+ */
+export const fieldInputClass = (tone: 'normal' | 'warn' = 'normal') =>
+  'mt-1 w-full rounded-lg px-2 py-1 font-bold outline-none focus:ring-2 focus:ring-indigo-100 border '
+  + (tone === 'warn' ? 'border-amber-300 bg-white text-amber-700' : 'border-gray-200 bg-white text-gray-800');
+
+/** 只读态下字段值的样子 */
+export const fieldValueClass = (tone: 'normal' | 'warn' = 'normal') =>
+  'mt-1 font-bold ' + (tone === 'warn' ? 'text-amber-600' : 'text-gray-800');
+
+/**
+ * 一张字段卡片。
+ *
+ * `span` 是在 12 栅格里占几列 —— 写死成 Tailwind 的完整类名，
+ * 不用模板字符串拼（`md:col-span-${n}` 那种写法 Tailwind 扫不到，
+ * 编译出来是空的，这个项目在别处栽过同样的跟头）。
+ */
+export const FieldCard: React.FC<{
+  label: React.ReactNode;
+  span?: 1 | 2 | 3 | 4;
+  children: React.ReactNode;
+}> = ({ label, span = 1, children }) => (
+  <div className={`${fieldCardClass} ${
+    span === 4 ? 'md:col-span-4' : span === 3 ? 'md:col-span-3' : span === 2 ? 'md:col-span-2' : ''
+  }`}>
+    <div className={fieldLabelClass}>{label}</div>
+    {children}
+  </div>
+);

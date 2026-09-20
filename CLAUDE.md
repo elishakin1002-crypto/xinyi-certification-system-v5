@@ -114,6 +114,36 @@ ssh -i ~/.ssh/id_ed25519_xinyi ubuntu@124.223.209.102
 
 ---
 
+## 四点五、改界面之前
+
+**设计规范在 `src/ui/index.tsx`，不要在页面里现搓。**
+
+那里有 `buttonClass()`、`Badge`、`SectionCard`、`StatCard`、`Modal`、
+`fieldCardClass` / `fieldLabelClass` / `fieldInputClass` / `FieldCard`、
+统一色板 `toneChip`。**缺哪一类就往那个文件里加一个**，
+不要在页面里写一串 `rounded-xl border px-3 py-2 font-black`——
+现搓的那一刻起，同一个东西就有了两套长相。
+
+金恩来 2026-09-19 为此来回指了三轮（「UI 不统一你懂吗？布局不合理你知道吗？」）。
+根因不是没有规范 —— 规范早就有了，是**没有任何东西逼人用它**：
+我自己做证书区时就一个都没用，手写了个按钮，
+于是两个并排的动作一个 160px 一个 400px。
+
+**两道闸门会拦你**（都在 CI 里）：
+
+| 闸门 | 管什么 | 红了怎么办 |
+|---|---|---|
+| `tests/design-system.test.js` | 手搓样式的数量**只许降不许升** | 去用 `src/ui` 的规范；缺就往那里加。**不要调基线** |
+| `e2e/layout-smoke.spec.ts` | 手机 375px 不许横向溢出；并排的同级动作必须一样大 | 真的排错了，去修布局 |
+
+基线文件 `tests/fixtures/design-system-baseline.json` 只在**还清旧账**之后
+用 `node scripts/design-system-baseline.mjs` 往下调。往上调就是把闸门拆了。
+
+**另外：改界面必须真的把页面打开看，桌面和 375px 各一遍。**
+只读代码能改对逻辑，改不对布局 —— 布局的问题只有眼睛和上面那两把尺子能发现。
+
+---
+
 ## 五、写代码的约定
 
 **注释写「为什么」，不写「是什么」。**
