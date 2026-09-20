@@ -1567,18 +1567,17 @@ const Customers = () => {
                                                     <button
                                                         type="button"
                                                         onClick={handleAddCertificateManually}
-                                                        className="flex w-full items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 hover:bg-blue-100 md:w-auto md:shrink-0"
+                                                        className="flex w-full items-center justify-center rounded-xl border px-3 py-2 text-xs font-black transition-colors md:w-40 md:shrink-0 border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
                                                     >
                                                         <Plus className="w-3 h-3 mr-1" /> 手工录入
                                                     </button>
                                                 )}
                                                 {isEditing && (
-                                                    <div className="w-full md:w-52 md:shrink-0">
+                                                    <div className="w-full md:w-40 md:shrink-0">
                                                         <IngestionUploader
                                                             source="certificate"
                                                             label="智能识别"
-                                                            subLabel=""
-                                                            compact={true}
+                                                            variant="button"
                                                             onSuccess={async (result, file) => {
                                                                 const certs = Array.isArray(result.data) ? result.data : [];
                                                                 if (certs.length > 0) {
@@ -1651,10 +1650,15 @@ const Customers = () => {
                                                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                                         <div className="min-w-0">
                                                             <div className="flex flex-wrap items-center gap-2">
-                                                                {isEditing ? (
-                                                                    <input className="font-bold text-sm bg-white border rounded-lg px-2 py-1 w-52" value={cert.name} onChange={e => updateCertificate(idx, 'name', e.target.value)} placeholder="证书名称" />
-                                                                ) : (
-                                                                    <span className="font-bold text-gray-900 text-base">{cert.name}</span>
+                                                                {/*
+                                                                  编辑态下名称不在这里出现 —— 它和证书编号、发证机构一起
+                                                                  排进下面的卡片网格。
+                                                                  2026-09-19 之前这里是个 w-52 的带框输入，而紧挨着的
+                                                                  编号/机构是下划线输入，再下面又是卡片包着的输入 ——
+                                                                  一行里三种输入样式，看着就是拼出来的。
+                                                                */}
+                                                                {!isEditing && (
+                                                                    <span className="font-bold text-gray-900 text-base">{cert.name || '未命名证书'}</span>
                                                                 )}
                                                                 <span className={`text-xs px-2 py-1 rounded-full border font-bold ${statusMeta.tone}`}>{statusMeta.label}</span>
                                                                 {statusMeta.summary && <span className="text-[11px] font-bold text-gray-500 bg-white border border-gray-200 px-2 py-1 rounded-full">{statusMeta.summary}</span>}
@@ -1674,8 +1678,8 @@ const Customers = () => {
                                                                 )}
                                                             </div>
                                                             <div className="text-xs text-gray-500 mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                                                                <span>证书编号：{isEditing ? <input className="ml-1 border-b bg-transparent w-36" value={cert.number || ''} onChange={e => updateCertificate(idx, 'number', e.target.value)} placeholder="待补充" /> : (cert.number || '-')}</span>
-                                                                <span>发证机构：{isEditing ? <input className="ml-1 border-b bg-transparent w-36" value={cert.issuingBody || ''} onChange={e => updateCertificate(idx, 'issuingBody', e.target.value)} placeholder="待补充" /> : (cert.issuingBody || '-')}</span>
+                                                                {!isEditing && <span>证书编号：{cert.number || '-'}</span>}
+                                                                {!isEditing && <span>发证机构：{cert.issuingBody || '-'}</span>}
                                                             </div>
 
 
@@ -1716,13 +1720,29 @@ const Customers = () => {
                                                       第一行四张窄卡（日期/天数/份数），第二行两张宽卡（种类/来源）。
                                                     */}
                                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                                                        {isEditing && (
+                                                            <>
+                                                                <div className="rounded-xl border border-gray-100 bg-white px-3 py-2 md:col-span-2">
+                                                                    <div className="text-[11px] font-bold text-gray-400 uppercase">证书名称</div>
+                                                                    <input className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100" value={cert.name || ''} onChange={e => updateCertificate(idx, 'name', e.target.value)} placeholder="照证书上写" />
+                                                                </div>
+                                                                <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
+                                                                    <div className="text-[11px] font-bold text-gray-400 uppercase">证书编号</div>
+                                                                    <input className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100" value={cert.number || ''} onChange={e => updateCertificate(idx, 'number', e.target.value)} placeholder="待补充" />
+                                                                </div>
+                                                                <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
+                                                                    <div className="text-[11px] font-bold text-gray-400 uppercase">发证机构</div>
+                                                                    <input className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100" value={cert.issuingBody || ''} onChange={e => updateCertificate(idx, 'issuingBody', e.target.value)} placeholder="待补充" />
+                                                                </div>
+                                                            </>
+                                                        )}
                                                         <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
                                                             <div className="text-[11px] font-bold text-gray-400 uppercase">发证日期</div>
-                                                            {isEditing ? <input type="date" className="mt-1 w-full border rounded px-2 py-1 bg-white" value={cert.issueDate || ''} onChange={e => updateCertificate(idx, 'issueDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.issueDate || '-'}</div>}
+                                                            {isEditing ? <input type="date" className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100" value={cert.issueDate || ''} onChange={e => updateCertificate(idx, 'issueDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.issueDate || '-'}</div>}
                                                         </div>
                                                         <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
                                                             <div className="text-[11px] font-bold text-gray-400 uppercase">到期日期</div>
-                                                            {isEditing ? <input type="date" className="mt-1 w-full border rounded px-2 py-1 bg-white" value={cert.expiryDate || ''} onChange={e => updateCertificate(idx, 'expiryDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.expiryDate || '-'}</div>}
+                                                            {isEditing ? <input type="date" className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100" value={cert.expiryDate || ''} onChange={e => updateCertificate(idx, 'expiryDate', e.target.value)} /> : <div className="mt-1 font-bold text-gray-800">{cert.expiryDate || '-'}</div>}
                                                         </div>
                                                         <div className="rounded-xl border border-gray-100 bg-white px-3 py-2">
                                                             <div className="text-[11px] font-bold text-gray-400 uppercase">剩余天数</div>
@@ -1753,7 +1773,7 @@ const Customers = () => {
                                                             <div className="text-[11px] font-bold text-gray-400 uppercase">证书种类</div>
                                                             {isEditing ? (
                                                                 <select
-                                                                    className={`mt-1 w-full border rounded-lg px-2 py-1 bg-white font-bold ${certTypeOf(cert.cycleRule) ? 'border-gray-200 text-gray-800' : 'border-amber-300 text-amber-700'}`}
+                                                                    className={`mt-1 w-full rounded-lg border bg-white px-2 py-1 font-bold outline-none focus:ring-2 focus:ring-indigo-100 ${certTypeOf(cert.cycleRule) ? 'border-gray-200 text-gray-800' : 'border-amber-300 text-amber-700'}`}
                                                                     value={certTypeOf(cert.cycleRule) ? (LEGACY_RULE_ALIAS[cert.cycleRule || ''] || cert.cycleRule || '') : ''}
                                                                     onChange={e => updateCertificate(idx, 'cycleRule', e.target.value)}
                                                                 >
@@ -1772,7 +1792,7 @@ const Customers = () => {
                                                             <div className="text-[11px] font-bold text-gray-400 uppercase">信息来源</div>
                                                             {isEditing ? (
                                                                 <select
-                                                                    className="mt-1 w-full border border-gray-200 rounded-lg px-2 py-1 bg-white font-bold text-gray-800"
+                                                                    className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-100"
                                                                     value={cert.source || 'customerSaid'}
                                                                     onChange={e => updateCertificate(idx, 'source', e.target.value)}
                                                                 >

@@ -12,6 +12,22 @@ interface IngestionUploaderProps {
   onError?: (error: string) => void;
   disabled?: boolean;
   compact?: boolean; // For mobile or tight spaces
+  /**
+   * 形态（2026-09-19 加）。
+   *
+   * 'card'（默认，原来的样子）：虚线框 + 图标 + 文字 + 里面还有个实心按钮。
+   *   它是个"投放区"，适合独占一块地方、旁边没有别的按钮的场合。
+   *
+   * 'button'：就是一个普通按钮，和旁边的按钮一样高、一样圆角。
+   *   金恩来 2026-09-19：「手工录入按钮和智能识别按钮的大小都不统一，
+   *     或者说不协调……UI 不统一你懂吗？」
+   *   他指的就是两个并排的动作，一个是 180px 的按钮、一个是 400px 的
+   *   虚线卡片，高度还不一样 —— 那不是两个按钮，是两种东西摆在一起。
+   *   并排出现时用这个形态。
+   *
+   * 默认仍是 'card'，别处那六个用法一个都不受影响。
+   */
+  variant?: 'card' | 'button';
 }
 
 export const IngestionUploader: React.FC<IngestionUploaderProps> = ({
@@ -23,7 +39,8 @@ export const IngestionUploader: React.FC<IngestionUploaderProps> = ({
   onSuccess,
   onError,
   disabled = false,
-  compact = false
+  compact = false,
+  variant = 'card'
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -108,6 +125,47 @@ export const IngestionUploader: React.FC<IngestionUploaderProps> = ({
     保持一行的形态，是因为它在弹窗里和别的字段排在一起，
     做成大方块又会回到「上传区吃掉半屏」那个问题。
   */
+  /*
+    按钮形态：和旁边的按钮长得一模一样（同样的高度、圆角、字号），
+    只有图标和颜色不同。拖拽照样支持 —— 按钮也能当投放区，
+    只是不画虚线框去暗示它。
+  */
+  if (variant === 'button') {
+    return (
+      <div
+        className={`relative w-full ${disabled || isProcessing ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+        onDragEnter={handleDrag}
+        onDragLeave={handleDrag}
+        onDragOver={handleDrag}
+        onDrop={handleDrop}
+      >
+        <input
+          type="file"
+          accept={accept}
+          onChange={handleChange}
+          disabled={disabled || isProcessing}
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        />
+        <span
+          className={`flex w-full items-center justify-center rounded-xl border px-3 py-2 text-xs font-black transition-colors
+            ${errorMsg
+              ? 'border-red-200 bg-red-50 text-red-700'
+              : dragActive
+                ? 'border-indigo-400 bg-indigo-100 text-indigo-700'
+                : 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'}
+            ${disabled || isProcessing ? 'opacity-60' : ''}`}
+        >
+          {isProcessing
+            ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+            : errorMsg
+              ? <AlertCircle className="mr-1 h-3 w-3" />
+              : <BrainCircuit className="mr-1 h-3 w-3" />}
+          {isProcessing ? '识别中…' : errorMsg ? '识别失败，再试一次' : label}
+        </span>
+      </div>
+    );
+  }
+
   if (compact) {
     return (
       <div
