@@ -3,8 +3,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { EmptyState } from '../src/ui';
 import { SampleRow } from '../components/SampleRow';
-import { INTEL_INDUSTRIES, INTEL_REGIONS } from '../constants';
-import { MarketSignal } from '../types';
+import { INTEL_INDUSTRIES, INTEL_REGIONS, SYSTEM_ROLES } from '../constants';
+import { MarketSignal, RoleID } from '../types';
 import { intelService } from '../services/intelService';
 import { intelConfigService, type IntelConfig } from '../services/intelConfigService';
 import { Calendar, CheckCircle2, FileText, Filter, Flame, Loader2, PlusCircle, Radar, RefreshCw, Search, Settings2, Sparkles, Target, XCircle } from 'lucide-react';
@@ -486,7 +486,9 @@ const IntelRadar = () => {
           type: 'opportunity',
           linkType: 'intel',
           linkId: today,
-          forRole: ['ADMIN', 'MANAGER', 'CONSULTANT', 'FINANCE']
+          // 情报提醒发给所有角色 —— 写死清单会把**销售**漏掉，
+          // 而情报雷达正是给销售找线索用的（2026-09-20 修）。
+          forRole: SYSTEM_ROLES.map(r => r.id as RoleID)
         });
         dataService.set('intel_last_notice', today);
       }

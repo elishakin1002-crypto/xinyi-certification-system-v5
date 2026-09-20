@@ -54,6 +54,34 @@ router.get('/api/knowledge/:id', wrap(async (req, res) => {
 */
 const MIN_AI_CONTENT_LENGTH = 200;
 
+/*
+  ── 可见范围不许把总经理排除在外（2026-09-20）──────────────────
+
+  金恩来：「知识中心给了顾问上传文件时可以选择可见范围的能力，
+    这个不合理！意思是员工可以上传文件不让老板看见。」
+
+  文档管理系统的通行做法是：权限由管理员设定，而且
+  **公司所有者永远拥有完整可见性**。上传的人只能往下收窄。
+
+  和 guardAiVisible 一样放在服务端：界面上把那个勾置灰是给人看的，
+  接口、批量导入、以后别的写入路径绕得过去。规矩要落在**必经之路**上。
+
+  规则本身在 src/modules/knowledge/visibility.ts，前后端共用一份，
+  免得两边慢慢长成两套。
+*/
+const ALWAYS_VISIBLE_ROLES = ['ADMIN'];
+
+const guardVisibleRoles = (body = {}) => {
+  const next = { ...body };
+  if (!Array.isArray(next.accessRoles) || next.accessRoles.length === 0) return next;  // 空 = 全员可见
+  const roles = next.accessRoles.filter(Boolean).map(String);
+  for (const must of ALWAYS_VISIBLE_ROLES) {
+    if (!roles.includes(must)) roles.push(must);
+  }
+  next.accessRoles = roles;
+  return next;
+};
+
 const guardAiVisible = (body = {}) => {
   const next = { ...body };
   if (next.aiVisible !== true) return next;
@@ -88,7 +116,7 @@ router.post('/api/knowledge',
     return sendFail(res, ERROR_CODES.PARAM_ERROR,
       '缺少文档标题。没有标题的文档在列表里认不出、也搜不到，等于存了个空壳。', {}, 400);
   }
-  const doc = await knowledgeRepo.create({ source: 'manual', ...guardAiVisible(body) });
+  const doc = await knowledgeRepo.create({ source: 'manual', ...guardVisibleRoles(guardAiVisible(body)) });
   sendSuccess(res, { doc }, 'success', ERROR_CODES.SUCCESS, 201);
 }));
 
@@ -96,7 +124,7 @@ router.patch('/api/knowledge/:id',
   requireAction('KNOWLEDGE_WRITE', { resource: (req) => ({ type: 'knowledge', id: req.params?.id || '' }) }),
   wrap(async (req, res) => {
   if (!(await knowledgeRepo.getById(req.params.id))) return sendFail(res, ERROR_CODES.NOT_FOUND, 'Doc not found', {}, 404);
-  const doc = await knowledgeRepo.update(req.params.id, guardAiVisible(payload(req.body)));
+  const doc = await knowledgeRepo.update(req.params.id, guardVisibleRoles(guardAiVisible(payload(req.body))));
   sendSuccess(res, { doc }, 'success');
 }));
 

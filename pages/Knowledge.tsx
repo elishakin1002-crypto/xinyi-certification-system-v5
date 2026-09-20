@@ -20,6 +20,7 @@ import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { adviseIntake } from '../src/modules/knowledge/intake';
 import { APP_ROUTES } from '../src/routes';
 import { auditSeverityLabel, auditStatusLabel, knowledgeCategoryLabel } from '../src/modules/labels';
+import { enforceAlwaysVisible, isLockedRole, LOCKED_ROLE_HINT } from '../src/modules/knowledge/visibility';
 
 const Knowledge = () => {
   const { knowledgeDocs, auditIssues, addKnowledgeDoc, deleteKnowledgeDoc, updateKnowledgeDoc, currentUser, activeRole, backfillPdcaForPaidContracts } = useApp();
@@ -35,7 +36,9 @@ const Knowledge = () => {
   
   const [newDocTitle, setNewDocTitle] = useState('');
   const [newDocCategory, setNewDocCategory] = useState<'Company Profile' | 'Product Service' | 'Standard' | 'Template' | 'Training' | 'PDCA' | 'AI生成' | 'Other'>('Company Profile');
-  const [visibleRoles, setVisibleRoles] = useState<RoleID[]>(['ADMIN', 'MANAGER', 'CONSULTANT', 'FINANCE']);
+  // 默认可见范围 = 全部角色。写死清单的话，新增角色会默认被排除在外，
+  // 而界面还显示「全员可见」—— 2026-09-20 销售就是这么被漏掉的。
+  const [visibleRoles, setVisibleRoles] = useState<RoleID[]>(SYSTEM_ROLES.map(r => r.id as RoleID));
   
   /*
     「让 AI 学习」默认**不勾**。
@@ -58,7 +61,22 @@ const Knowledge = () => {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [previewEvidence, setPreviewEvidence] = useState<null | { name: string; url: string; kind: 'image' | 'pdf' }>(null);
 
-  const allRoles: RoleID[] = ['ADMIN', 'MANAGER', 'CONSULTANT', 'FINANCE'];
+  /*
+    ── 角色清单必须从单一来源取（2026-09-20 修）──────────────────
+
+    这里原来写死成 `['ADMIN', 'MANAGER', 'CONSULTANT', 'FINANCE']`——
+    **漏了 SALES 和 SYS_ADMIN**。后果有两层：
+
+      · 一份文档**根本没法授权给销售**（界面上连这个选项都没有）
+      · 更糟的是下面第 74 行：选满这个数组就显示「**全员可见**」，
+        而销售和系统管理员实际上一个字都看不到。
+        对一家销售驱动的公司，这是最要命的那个角色。
+
+    典型的「要随着别人写新代码而更新的规则」（CLAUDE.md 二点五之一）：
+    以后谁加一个角色，这里不跟着改就又漏。所以改成从 SYSTEM_ROLES 派生，
+    并有 tests/knowledge-visible-roles.test.js 钉住。
+  */
+  const allRoles: RoleID[] = SYSTEM_ROLES.map(r => r.id as RoleID);
   const getRoleLabel = (roleId: RoleID) => SYSTEM_ROLES.find(r => r.id === roleId)?.name || roleId;
 
   const canAccessDoc = (doc: KnowledgeDoc) => {
@@ -145,7 +163,9 @@ const Knowledge = () => {
   const getDefaultRolesForCategory = (cat: string): RoleID[] => {
       if (cat === 'PDCA') return ['ADMIN', 'MANAGER', 'FINANCE'];
       if (cat === 'AI生成') return ['ADMIN', 'MANAGER'];
-      return ['ADMIN', 'MANAGER', 'CONSULTANT', 'FINANCE'];
+      // 上面两条是**有意的子集**（PDCA 和 AI 生成内容不给所有人）；
+      // 这条兜底的本意是「全员」，所以必须跟着角色表走，不能写死。
+      return SYSTEM_ROLES.map(r => r.id as RoleID);
   };
 
   const getDuplicateAlertMessage = (duplicate: KnowledgeDoc, incomingTitle: string) => {
@@ -367,7 +387,7 @@ const Knowledge = () => {
               */
               sourceUrl: uploadedUrl,
               aiVisible: finalAiVisible,
-              accessRoles: visibleRoles
+              accessRoles: enforceAlwaysVisible(visibleRoles) as RoleID[]
           };
           const added = await tryAddKnowledgeDoc(newDoc, file);
           if (!added) return;
@@ -718,24 +738,42 @@ const Knowledge = () => {
                               {allRoles.map(roleId => {
                                   const label = getRoleLabel(roleId);
                                   const checked = visibleRoles.includes(roleId);
+                                  /*
+                                    总经理那个勾**取消不了**（2026-09-20）。
+
+                                    金恩来：「员工可以上传文件不让老板看见，
+                                      这个在成熟的咨询系统中有这个功能吗？」——没有。
+                                    文档管理系统的通行做法是：权限由管理员设定，
+                                    而**公司所有者永远拥有完整可见性**。
+                                    上传的人只能往下收窄，不能把负责人挡在外面。
+
+                                    置灰而不是隐藏：隐藏会让人以为"忘了给老板权限"，
+                                    置灰 + 一句说明才知道这是规矩。
+                                  */
+                                  const locked = isLockedRole(roleId);
                                   return (
                                     <button
                                       key={roleId}
                                       type="button"
-                                      onClick={() => toggleVisibleRole(roleId)}
+                                      disabled={locked}
+                                      title={locked ? LOCKED_ROLE_HINT : undefined}
+                                      onClick={() => { if (!locked) toggleVisibleRole(roleId); }}
                                       className={`px-3 py-1.5 rounded-full text-[11px] font-bold border transition-colors ${
-                                        checked
-                                          ? 'bg-indigo-600 text-white border-indigo-600'
-                                          : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'
+                                        locked
+                                          ? 'bg-indigo-600 text-white border-indigo-600 opacity-70 cursor-not-allowed'
+                                          : checked
+                                            ? 'bg-indigo-600 text-white border-indigo-600'
+                                            : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'
                                       }`}
                                     >
-                                      {label}
+                                      {label}{locked && ' 🔒'}
                                     </button>
                                   );
                               })}
                           </div>
                           <p className="text-[10px] text-gray-400 mt-2">
                               仅选中角色可见，AI 只会读取你有权限查看的文档内容。
+                              <br />{LOCKED_ROLE_HINT}
                           </p>
                       </div>
                       
@@ -783,7 +821,7 @@ const Knowledge = () => {
                                            那会变成一条"看起来有文件其实没有"的记录 */
                                         sourceUrl: doc.sourceUrl || '',
                                         aiVisible: aiVisible,
-                                        accessRoles: visibleRoles
+                                        accessRoles: enforceAlwaysVisible(visibleRoles) as RoleID[]
                                     };
                                     const added = await tryAddKnowledgeDoc(newDoc, file);
                                     if (!added) return;
