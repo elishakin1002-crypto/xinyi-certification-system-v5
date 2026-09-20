@@ -1,5 +1,5 @@
 {
-  "total": 14,
+  "total": 9,
   "byFile": {
     "pages/Audit.tsx": {
       "desktopOnly": [
@@ -10,12 +10,7 @@
     },
     "pages/Contracts.tsx": {
       "desktopOnly": [
-        "async",
-        "handleArchive",
-        "handleCreateProject",
-        "handleGoToProject",
-        "handlePreviewFile",
-        "openAttachmentPickerForContract"
+        "async"
       ],
       "mobileOnly": []
     },

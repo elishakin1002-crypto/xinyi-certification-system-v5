@@ -8,7 +8,7 @@ import { isMyContract } from '../src/modules/ownership';
 import { RiskBadge } from '../src/ui/statusBadge';
 import { findProjectByContract } from '../src/modules/contractLink';
 import { SampleTr } from '../components/SampleRow';
-import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search, FileSpreadsheet, Sparkles} from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, CheckCircle, Clock, AlertTriangle, Upload, X, Loader2, Plus, Wallet, AlignLeft, Trash2, AlertCircle, Briefcase, Archive, Paperclip, Download, Eye, ShieldAlert, ShieldCheck, Zap, ToggleLeft, ToggleRight, PlayCircle, BrainCircuit, BookOpen, Search, FileSpreadsheet, Sparkles, ArrowRight} from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { aiService } from '../services/aiService'; 
 import { IngestionUploader } from '../components/IngestionUploader';
@@ -21,7 +21,82 @@ import { matchCatalogItems, toServiceLine } from '../src/modules/serviceCatalogM
 import { ARCHIVE_STATUS, RECEIVABLE_STATUS } from '../src/constants/status.ts';
 import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { buildImportPlan, ContractImportPlan, HISTORY_IMPORT_TAG } from '../src/modules/contractImport';
-import { Badge, SearchInput, EmptyState, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
+import { Badge, SearchInput, EmptyState, buttonClass, tableHeadClass, thClass, tdClass, trClass } from '../src/ui';
+
+
+/*
+  回款计划 —— **桌面和手机共用这一份**。
+
+  ══════════════════════════════════════════════════════════════
+  为什么抽出来（2026-09-20）
+  ══════════════════════════════════════════════════════════════
+
+  金恩来：「手机尺寸下，合同详情的在线阅览、已收款报备选项都不见了，
+    这几个选项在手机尺寸下还是很实用的。」
+
+  原因是这一整块只写在桌面表格的展开行里，手机卡片里压根没有。
+  最省事的做法是把 JSX 复制一份到手机分支 —— **但那正是问题的来源**：
+  这个项目已经有 14 处「同一个功能只做了一边」，全是这么来的。
+  复制一份，两边就开始各自演化，下次改报备逻辑又漏一边。
+
+  所以抽成组件。以后改一处，两边同时变。
+
+  金额仍然走 maskAmount（顾问看到 ¥ ***），确认到账始终只有财务能做 ——
+  这里只是"报备"，不改状态，只推待办给财务。
+*/
+const ReceivablePlan: React.FC<{
+  contractId: string;
+  receivables: Contract['receivables'];
+  canConfirmPayment: boolean;
+  maskAmount: (n: number) => string;
+  claimReceivablePaid: (contractId: string, receivableId: string, note: string) => { ok: boolean; reason?: string };
+}> = ({ contractId, receivables, canConfirmPayment, maskAmount, claimReceivablePaid }) => (
+                                    <div className="flex-1 p-6 bg-gray-50/30"> <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center"> <Wallet className="w-4 h-4 mr-2" /> 回款计划 </h4> <div className="space-y-2"> {receivables.map(r => ( <div key={r.id} className="flex justify-between text-sm border-b border-gray-100 pb-2 items-center gap-3">
+                                    <div className="flex items-center min-w-0">
+                                      {r.status === 'paid' ? <CheckCircle className="w-3 h-3 text-green-500 mr-2 shrink-0" /> : <Clock className="w-3 h-3 text-yellow-500 mr-2 shrink-0" />}
+                                      <span className="text-gray-900 font-bold text-sm truncate">{r.node}</span>
+                                      {r.paymentClaim && r.status !== 'paid' && (
+                                        <span className="ml-2 shrink-0"><Badge tone="amber">待财务核对</Badge></span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-3 shrink-0">
+                                      {/* 销售报备已收款：不改状态，只推待办给财务。确认到账始终只有财务能做。 */}
+                                      {r.status !== 'paid' && !r.paymentClaim && !canConfirmPayment && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            const note = window.prompt(`报备「${r.node}」已收款，请财务核对。\n可填备注（转账方式、到账日期等），也可留空：`, '');
+                                            if (note === null) return;
+                                            const res = claimReceivablePaid(contractId, r.id, note);
+                                            alert(res.ok ? '已通知财务核对。到账确认由财务完成。' : (res.reason || '报备失败'));
+                                          }}
+                                          className="whitespace-nowrap rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-black text-indigo-700 hover:bg-indigo-100" 
+                                        >
+                                          {/*
+                                            文案改成动作，不是陈述（2026-09-13）。
+
+                                            金恩来：「录入一份合同，合同为什么默认已经收款？」
+                                            —— 其实没有。状态图标是黄色时钟（未付），
+                                            这里是一个**按钮**：销售/顾问点它来报备"我收到钱了"，
+                                            通知财务去核对。确认到账始终只有财务能做。
+
+                                            但原来写「已收款，请核对」，读起来是**陈述句**，
+                                            又是淡蓝色小字、紧挨着金额 —— 看着就像系统在说
+                                            "这笔已经收了"。他是最熟系统的人都读反了，
+                                            同事只会更容易读反。
+                                            **按钮的文案要写动作，别写状态。**
+                                          */}
+                                          报备已收款
+                                        </button>
+                                      )}
+                                      <div className="text-right">
+                                        <div className="font-mono font-bold text-gray-900">{maskAmount(r.amount)}</div>
+                                        <div className="text-xs text-gray-400">{r.dueDate || '待定'}</div>
+                                      </div>
+                                    </div>
+                                  </div> ))} </div> </div> 
+);
 
 const Contracts = () => {
   const { contracts, customers, addCustomer, addContract, bindContractToCustomer, claimReceivablePaid, deleteContract, archiveContract, projects, addProject, addKnowledgeDoc, checkActionPermission, activeRole, currentUser, userProfiles, addContractAttachment, removeContractAttachment } = useApp();
@@ -1550,51 +1625,13 @@ const Contracts = () => {
                                       </div>
                                     </div> 
                                     {/* Receivables */} 
-                                    <div className="flex-1 p-6 bg-gray-50/30"> <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center"> <Wallet className="w-4 h-4 mr-2" /> 回款计划 </h4> <div className="space-y-2"> {contract.receivables.map(r => ( <div key={r.id} className="flex justify-between text-sm border-b border-gray-100 pb-2 items-center gap-3">
-                                    <div className="flex items-center min-w-0">
-                                      {r.status === 'paid' ? <CheckCircle className="w-3 h-3 text-green-500 mr-2 shrink-0" /> : <Clock className="w-3 h-3 text-yellow-500 mr-2 shrink-0" />}
-                                      <span className="text-gray-900 font-bold text-sm truncate">{r.node}</span>
-                                      {r.paymentClaim && r.status !== 'paid' && (
-                                        <span className="ml-2 shrink-0"><Badge tone="amber">待财务核对</Badge></span>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-3 shrink-0">
-                                      {/* 销售报备已收款：不改状态，只推待办给财务。确认到账始终只有财务能做。 */}
-                                      {r.status !== 'paid' && !r.paymentClaim && !canConfirmPayment && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            const note = window.prompt(`报备「${r.node}」已收款，请财务核对。\n可填备注（转账方式、到账日期等），也可留空：`, '');
-                                            if (note === null) return;
-                                            const res = claimReceivablePaid(contract.id, r.id, note);
-                                            alert(res.ok ? '已通知财务核对。到账确认由财务完成。' : (res.reason || '报备失败'));
-                                          }}
-                                          className="whitespace-nowrap rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-black text-indigo-700 hover:bg-indigo-100" 
-                                        >
-                                          {/*
-                                            文案改成动作，不是陈述（2026-09-13）。
-
-                                            金恩来：「录入一份合同，合同为什么默认已经收款？」
-                                            —— 其实没有。状态图标是黄色时钟（未付），
-                                            这里是一个**按钮**：销售/顾问点它来报备"我收到钱了"，
-                                            通知财务去核对。确认到账始终只有财务能做。
-
-                                            但原来写「已收款，请核对」，读起来是**陈述句**，
-                                            又是淡蓝色小字、紧挨着金额 —— 看着就像系统在说
-                                            "这笔已经收了"。他是最熟系统的人都读反了，
-                                            同事只会更容易读反。
-                                            **按钮的文案要写动作，别写状态。**
-                                          */}
-                                          报备已收款
-                                        </button>
-                                      )}
-                                      <div className="text-right">
-                                        <div className="font-mono font-bold text-gray-900">{maskAmount(r.amount)}</div>
-                                        <div className="text-xs text-gray-400">{r.dueDate || '待定'}</div>
-                                      </div>
-                                    </div>
-                                  </div> ))} </div> </div> 
+                                    <ReceivablePlan
+                                      contractId={contract.id}
+                                      receivables={contract.receivables}
+                                      canConfirmPayment={canConfirmPayment}
+                                      maskAmount={maskAmount}
+                                      claimReceivablePaid={claimReceivablePaid}
+                                    />
                                     {/* Archives */} 
                                     <div className="flex-1 p-6 bg-blue-50/10"> 
                                         <div className="flex justify-between items-center mb-4"> 
@@ -1709,14 +1746,61 @@ const Contracts = () => {
                                                   <div title={file.type} className="w-6 h-6 bg-white rounded flex items-center justify-center text-[9px] leading-none font-black text-gray-500 border border-gray-200 uppercase shrink-0 mr-2 overflow-hidden">{fileTypeBadge(file)}</div>
                                                   <div className="truncate text-xs font-bold text-gray-700">{file.name}</div>
                                               </div>
-                                              <div className="flex space-x-1">
-                                                  <button onClick={(e) => handleDownloadFile(e, file)} className="text-gray-400 hover:text-blue-600"><Download className="w-3 h-3" /></button>
+                                              {/*
+                                                在线阅览 2026-09-20 补上 —— 桌面早就有，手机上一直没有。
+                                                金恩来：「这几个选项在手机尺寸下还是很实用的，都不见了！」
+                                                在外面用手机看合同原件，恰恰是最需要阅览的场景。
+                                              */}
+                                              <div className="flex space-x-2 shrink-0">
+                                                  <button onClick={(e) => handlePreviewFile(e, file)} className="text-gray-400 hover:text-blue-600" title="在线阅览"><Eye className="w-4 h-4" /></button>
+                                                  <button onClick={(e) => handleDownloadFile(e, file)} className="text-gray-400 hover:text-blue-600" title="下载"><Download className="w-4 h-4" /></button>
                                               </div>
                                           </div>
                                       )) : <EmptyState compact title="暂无附件" />}
                                   </div>
                               </div>
-                              {/* ... */}
+                              {/*
+                                回款计划 2026-09-20 补上。报备已收款在这块里 ——
+                                销售在客户那边收到钱，最可能就是拿手机报备，
+                                而这个功能以前只有桌面有。
+                                用的是和桌面同一个 <ReceivablePlan>，不是复制一份 ——
+                                复制出来的副本迟早各自演化，这个项目已经有 14 处这种。
+                              */}
+                              {/*
+                                合同的几个动作，手机上原来一个都没有（2026-09-20 补）。
+                                桌面表格最后一列有「转项目 / 打开关联项目 / 归档」，
+                                手机卡片整列都没渲染 —— 于是销售在外面拿手机，
+                                签完合同想顺手转项目，做不到。
+                              */}
+                              <div className="flex gap-2">
+                                  {linkedProject ? (
+                                      <button onClick={handleGoToProject} className={`${buttonClass('secondary')} flex-1 text-xs`} title={`已关联项目: ${linkedProject.name}`}>
+                                          <ArrowRight className="w-3 h-3 mr-1" /> 打开关联项目
+                                      </button>
+                                  ) : (
+                                      <button onClick={(e) => handleCreateProject(e, contract)} className={`${buttonClass('primary')} flex-1 text-xs`}>
+                                          <Plus className="w-3 h-3 mr-1" /> 转为项目
+                                      </button>
+                                  )}
+                                  <button onClick={(e) => handleArchive(e, contract.id, contract.title)} className={`${buttonClass('secondary')} shrink-0 text-xs`} title="归档合同">
+                                      <Archive className="w-3 h-3" />
+                                  </button>
+                                  <button onClick={(e) => openAttachmentPickerForContract(e, contract.id)} className={`${buttonClass('secondary')} shrink-0 text-xs`} title="添加附件">
+                                      <Paperclip className="w-3 h-3" />
+                                  </button>
+                              </div>
+
+                              {contract.receivables && contract.receivables.length > 0 && (
+                                  <div className="border rounded-xl bg-white overflow-hidden border-gray-100">
+                                      <ReceivablePlan
+                                        contractId={contract.id}
+                                        receivables={contract.receivables}
+                                        canConfirmPayment={canConfirmPayment}
+                                        maskAmount={maskAmount}
+                                        claimReceivablePaid={claimReceivablePaid}
+                                      />
+                                  </div>
+                              )}
                           </div>
                       )}
                   </div>
