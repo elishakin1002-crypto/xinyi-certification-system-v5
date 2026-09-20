@@ -20,7 +20,8 @@ import { readGlobalSearchQuery } from '../src/modules/global_search';
 import { adviseIntake } from '../src/modules/knowledge/intake';
 import { APP_ROUTES } from '../src/routes';
 import { auditSeverityLabel, auditStatusLabel, knowledgeCategoryLabel } from '../src/modules/labels';
-import { enforceAlwaysVisible, LOCKED_ROLE_HINT, SELECTABLE_AUDIENCE_ROLES, DEFAULT_AUDIENCE } from '../src/modules/knowledge/visibility';
+import { enforceAlwaysVisible, LOCKED_ROLE_HINT, SELECTABLE_AUDIENCE_ROLES, DEFAULT_AUDIENCE,
+  canSetAudience, AUDIENCE_FIXED_HINT } from '../src/modules/knowledge/visibility';
 
 const Knowledge = () => {
   const { knowledgeDocs, auditIssues, addKnowledgeDoc, deleteKnowledgeDoc, updateKnowledgeDoc, currentUser, activeRole, backfillPdcaForPaidContracts } = useApp();
@@ -730,6 +731,32 @@ const Knowledge = () => {
                           <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none" placeholder="输入文档名称..." value={newDocTitle} onChange={e => setNewDocTitle(e.target.value)} />
                       </div>
 
+                      {/*
+                        ── 谁能看到这一块（2026-09-20）─────────────────────
+
+                        金恩来：「普通顾问有必要有这个功能吗？……我不太确定
+                          这个可见范围对某些角色来说是不是画蛇添足。」
+
+                        查下来答案是：**对顾问和销售确实是画蛇添足，而且有害**。
+                        逐份文档设权限正是"权限失控"的来源，通行做法是默认团队
+                        透明、只对敏感内容设控制；而权限一严，人就会绕过系统
+                        （重复上传、用过期旧副本）。
+
+                        顾问上传的是体系文件范本、客户复盘、审核记录 ——
+                        恰恰最该共享。给他一个收窄按钮，最可能的结果是
+                        随手收窄 → 别人找不到 → 再重复传一份。
+
+                        所以只有财务、总经理、系统管理员看得到这一块。
+                        其他人看到的是一行**说明结果**的话，不是什么都不显示 ——
+                        藏起来会让人以为"我传的东西可能别人看不到"，那比给选项更糟。
+                      */}
+                      {!canSetAudience(activeRole) ? (
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+                            <div className="text-xs font-bold text-gray-400 uppercase mb-1">可见范围</div>
+                            <div className="text-xs font-bold text-gray-700">公司全员可见</div>
+                            <div className="text-[11px] text-gray-400 mt-1 leading-relaxed">{AUDIENCE_FIXED_HINT}</div>
+                        </div>
+                      ) : (
                       <div>
                           <div className="flex items-center justify-between mb-2">
                               <label className="block text-xs font-bold text-gray-400 uppercase">可见范围</label>
@@ -766,6 +793,7 @@ const Knowledge = () => {
                               <br />{LOCKED_ROLE_HINT}
                           </p>
                       </div>
+                      )}
                       
                       {/* Security Toggle */}
                       <div className={`flex items-center space-x-3 p-4 rounded-xl border transition-colors ${aiVisible ? 'bg-indigo-50 border-indigo-100' : 'bg-gray-100 border-gray-200'}`}>

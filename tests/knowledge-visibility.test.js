@@ -172,3 +172,40 @@ test('前端保存文档时也走同一条规则', () => {
   assert.equal(/accessRoles:\s*visibleRoles\b/.test(src), false,
     '还有保存点直接用了 visibleRoles，没过强制函数');
 });
+
+/* ── 四、谁该有「设定可见范围」这个选项 ───────────────────── */
+
+test('顾问和销售没有可见范围选项 —— 对他们是画蛇添足', () => {
+  /*
+    金恩来 2026-09-20：「普通顾问有必要有这个功能吗？……我不太确定这个
+      可见范围对某些角色来说是不是画蛇添足。」
+
+    查下来是的，而且有害。两条行业结论直接对上：
+      · **逐份文档设权限正是"权限失控"的来源**，通行做法是按分类继承
+      · 10-20 人团队的平衡点是「默认团队透明，只对敏感分类设控制」，
+        而且「权限太严的话，人会绕过系统 —— 重复上传、用过期旧副本」
+
+    顾问上传的是体系文件范本、客户复盘、审核记录 —— 恰恰最该共享。
+    给他一个收窄按钮，最可能的结果是随手收窄 → 别人找不到 → 再传一份。
+  */
+  for (const no of ['CONSULTANT', 'SALES', 'MANAGER']) {
+    assert.equal(V.canSetAudience(no), false, `${no} 不该有可见范围选项`);
+  }
+  for (const yes of ['FINANCE', 'ADMIN', 'SYS_ADMIN']) {
+    assert.equal(V.canSetAudience(yes), true, `${yes} 需要可见范围选项`);
+  }
+  assert.equal(V.canSetAudience(undefined), false, '拿不到角色时按"没有"处理，不给');
+});
+
+test('没有这个选项的人，界面要明说结果，不是什么都不显示', () => {
+  /*
+    藏起来会让人以为"我传的东西可能别人看不到"——
+    那比给选项更糟：他会去问、去重复传，或者干脆不传。
+  */
+  assert.ok(V.AUDIENCE_FIXED_HINT.includes('全员可见'), '要说清这份文档谁能看到');
+  assert.ok(/财务|总经理/.test(V.AUDIENCE_FIXED_HINT), '要说清真需要限定范围时该找谁');
+
+  const src = read('pages/Knowledge.tsx');
+  assert.match(src, /canSetAudience\(activeRole\)/, '界面没有按角色判断');
+  assert.match(src, /AUDIENCE_FIXED_HINT/, '没有给无权限的人显示说明');
+});
