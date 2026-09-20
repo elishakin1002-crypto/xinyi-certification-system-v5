@@ -12,6 +12,7 @@ import { useApp } from '../context/AppContext';
 import { authService } from '../services/authService';
 import { stateSyncService } from '../services/stateSyncService';
 import { dataService } from '../services/dataService';
+import { buttonClass } from '../src/ui';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { SYSTEM_ROLES , ROLE_TO_PERSONA} from '../constants';
 import { DashboardPersona, RoleID, AggregatedReminder } from '../types';
@@ -41,6 +42,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
   const [isBellOpen, setIsBellOpen] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  // 手机端搜索默认收起：14px 高的头部塞不下常驻输入框，塞了就挤掉页面标题
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [replayTour, setReplayTour] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpStartMode, setHelpStartMode] = useState<'menu' | 'page'>('menu');
@@ -910,6 +913,27 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <h2 className="text-sm font-bold text-gray-800 truncate">{getPageTitle()}</h2>
           </div>
           <div className="flex items-center space-x-2 shrink-0">
+            {/*
+              搜索和反馈 2026-09-20 补 —— 这两个原来只在桌面头部有。
+              「跨模块找东西」和「报个问题」在手机上一样需要，
+              而且手机恰恰是同事在外面用得最多的形态。
+            */}
+            <button
+              type="button"
+              onClick={() => setIsMobileSearchOpen(v => !v)}
+              aria-label="全局搜索"
+              className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
+            >
+              <Search className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsFeedbackOpen(true)}
+              aria-label="问题反馈"
+              className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
+            >
+              <MessageSquare className="w-5 h-5" />
+            </button>
             {/* 手机上更需要这个入口：屏幕小、说明文字都被折叠了 */}
             <button
               onClick={openHelp}
@@ -949,6 +973,53 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             {renderAccountMenu(true)}
           </div>
         </header>
+
+        {/*
+          ── 手机端的全局搜索（2026-09-20 补）────────────────────────
+
+          金恩来：「手机尺寸下顶部的搜索框又不见了？」
+
+          确实 —— 全局搜索整块写在 `hidden md:flex` 的桌面头部里，
+          手机头部只有汉堡、标题、帮助、铃铛、头像，**一个搜索都没有**。
+          于是"跨模块找东西"在手机上做不了：销售在客户那儿想查一份合同，
+          只能先猜它属于哪个模块、进去再用那个页面自己的筛选框。
+
+          手机头部只有 56px 高，塞不下常驻输入框（塞了就挤掉页面标题），
+          所以用通行做法：**放大镜图标，点开展开一行**。
+          用的是和桌面**同一套** globalQuery / handleGlobalSearchSubmit，
+          不是另写一份 —— 两份实现迟早各自演化。
+        */}
+        {isMobileSearchOpen && (
+          <div className="flex md:hidden items-center gap-2 border-b border-gray-200 bg-white px-4 py-2 shrink-0 z-20">
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                autoFocus
+                type="text"
+                placeholder="搜索全局数据…"
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-indigo-300 focus:bg-white"
+                value={globalQuery}
+                onChange={(e) => setGlobalQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { handleGlobalSearchSubmit(); setIsMobileSearchOpen(false); } }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => { handleGlobalSearchSubmit(); setIsMobileSearchOpen(false); }}
+              className={`${buttonClass('primary')} shrink-0 text-xs`}
+            >
+              搜索
+            </button>
+            <button
+              type="button"
+              onClick={() => { setIsMobileSearchOpen(false); setGlobalQuery(''); }}
+              aria-label="关闭搜索"
+              className="shrink-0 rounded-xl p-2 text-gray-400 hover:bg-gray-100"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         <header className="hidden md:flex h-16 bg-white border-b border-gray-200 items-center justify-between px-6 shrink-0 z-20">
           {/*

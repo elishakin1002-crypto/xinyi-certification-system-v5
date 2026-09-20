@@ -1,5 +1,5 @@
 {
-  "total": 9,
+  "total": 12,
   "byFile": {
     "pages/Audit.tsx": {
       "desktopOnly": [
@@ -10,7 +10,19 @@
     },
     "pages/Contracts.tsx": {
       "desktopOnly": [
-        "async"
+        "bindContractToCustomer",
+        "removeAttachment",
+        "removeContractAttachment"
+      ],
+      "mobileOnly": []
+    },
+    "pages/Employees.tsx": {
+      "desktopOnly": [
+        "setEditingUserId",
+        "setPendingDelete",
+        "setResetPassword",
+        "setResetUserId",
+        "toggleStatus"
       ],
       "mobileOnly": []
     },
@@ -18,15 +30,6 @@
       "desktopOnly": [
         "navigate",
         "rollbackSettlementStatus"
-      ],
-      "mobileOnly": []
-    },
-    "components/Layout.tsx": {
-      "desktopOnly": [
-        "handleGlobalSearchSubmit",
-        "handleOpenScopeResult",
-        "setGlobalQuery",
-        "setIsFeedbackOpen"
       ],
       "mobileOnly": []
     }

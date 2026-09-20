@@ -82,14 +82,75 @@ const openingTagBefore = (src, idx) => {
   return -1;
 };
 
-/** 一段源码里所有「动作」——onClick / onChange 里调到的函数名 */
+/**
+ * 一段源码里所有「动作」——onClick / onChange 里调到的函数名。
+ *
+ * ── 第一版漏了一整类写法（2026-09-20）────────────────────────
+ *
+ * 原来的正则是 `on(Click|…)=\{\s*(\(…\)\s*=>\s*)?(名字)`，
+ * 只认得 `onClick={fn}` 和 `onClick={() => fn(...)}` 两种。
+ *
+ * 碰到 **`onClick={() => { a(); b(); }}`**（箭头函数带花括号）就抓不到 ——
+ * 箭头后面是 `{` 不是标识符。我给手机端补全局搜索时就写成了这种，
+ * 结果工具报「handleGlobalSearchSubmit 只有桌面有」，**而它明明在**。
+ *
+ * 一个查"功能缺失"的工具自己漏报，比没有更坏：它会让人以为已经查过了。
+ * 现在改成：取出整个 handler 表达式，把里面所有 `名字(` 都算进来。
+ */
+/**
+ * 语言内建、DOM 方法、数组/字符串方法 —— 都不是「能不能做这件事」的标志。
+ *
+ * 分得细一点是必要的：`alert` / `confirm` / `stopPropagation` 这类两边写法
+ * 不一样很正常（手机上少写一个 stopPropagation 不代表功能缺失）。
+ * 混进来会把真问题淹掉 —— 第一版 18 条里有 7 条是这种噪音，
+ * 而真正要紧的那条（员工账号在手机上改不了密码）夹在中间看不见。
+ */
+const NOT_AN_ACTION = new Set([
+  'if', 'for', 'while', 'switch', 'return', 'typeof', 'void', 'async', 'await',
+  'catch', 'try', 'finally', 'new', 'delete', 'in', 'of', 'do', 'else',
+  'Number', 'String', 'Boolean', 'Array', 'Object', 'JSON', 'Math', 'Date',
+  'Promise', 'Set', 'Map', 'RegExp', 'Error',
+  'console', 'alert', 'confirm', 'prompt', 'setTimeout', 'setInterval', 'requestAnimationFrame',
+  'stopPropagation', 'preventDefault', 'focus', 'blur', 'scrollIntoView',
+  'querySelector', 'getElementById',
+  'map', 'filter', 'forEach', 'find', 'findIndex', 'some', 'every', 'reduce',
+  'sort', 'slice', 'splice', 'concat', 'join', 'includes', 'indexOf',
+  'push', 'pop', 'shift', 'unshift',
+  'trim', 'split', 'replace', 'toLowerCase', 'toUpperCase', 'padStart', 'padEnd',
+  'startsWith', 'endsWith', 'toFixed', 'toString', 'valueOf',
+  'then', 'keys', 'values', 'entries', 'from', 'isArray', 'parse', 'stringify',
+  'max', 'min', 'round', 'floor', 'ceil', 'abs'
+]);
+
 const actionsIn = (chunk) => {
   const out = new Set();
-  for (const m of chunk.matchAll(/on(?:Click|Change|Submit)=\{\s*(?:\([^)]*\)\s*=>\s*)?([A-Za-z_$][\w$]*)/g)) {
-    const name = m[1];
-    // 过滤掉 setXxx 这类纯本地状态和一看就不是业务动作的
-    if (/^(?:e|event|_)$/.test(name)) continue;
-    out.add(name);
+  for (const m of chunk.matchAll(/on(?:Click|Change|Submit)=\{/g)) {
+    // 从 `{` 开始按花括号配平，截出整个 handler 表达式
+    let i = m.index + m[0].length - 1;
+    let depth = 0;
+    const start = i;
+    while (i < chunk.length) {
+      if (chunk[i] === '{') depth += 1;
+      else if (chunk[i] === '}') { depth -= 1; if (depth === 0) break; }
+      i += 1;
+    }
+    const expr = chunk.slice(start, i + 1);
+    // `onClick={handleX}` 这种没有调用括号，单独认一下
+    const bare = /^\{\s*([A-Za-z_$][\w$]*)\s*\}$/.exec(expr);
+    if (bare) { out.add(bare[1]); continue; }
+    for (const c of expr.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)) {
+      const name = c[1];
+      /*
+        排掉不是"业务动作"的东西。
+
+        分得细一点是必要的：`alert`、`confirm`、`stopPropagation` 这些
+        两边写法不同很正常（手机上少一个 stopPropagation 不代表功能缺失），
+        混进来会把真正的缺失淹掉 —— 18 条里有 7 条是这种噪音，
+        而真问题（员工账号在手机上改不了密码）夹在中间看不见。
+      */
+      if (NOT_AN_ACTION.has(name)) continue;
+      out.add(name);
+    }
   }
   return out;
 };

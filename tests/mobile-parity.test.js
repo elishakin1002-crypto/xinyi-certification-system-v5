@@ -48,7 +48,9 @@ const BASELINE = path.join(__dirname, 'fixtures', 'mobile-parity-baseline.json')
  * 加进这张表的时候必须写清为什么 —— 不写理由的豁免，下一个人无法判断该不该删。
  */
 const ALLOWED_ONE_SIDED = {
-  setIsSidebarOpen: '汉堡菜单只在手机上存在，桌面侧边栏常驻'
+  setIsSidebarOpen: '汉堡菜单只在手机上存在，桌面侧边栏常驻',
+  setIsMobileSearchOpen: '手机搜索是收起/展开的，桌面搜索框常驻，不需要这个开关',
+  handleOpenScopeResult: '桌面搜索有"按模块分组"的结果面板；手机屏幕放不下，直接跳到最匹配的模块 —— 结果一样，少一步'
 };
 
 /*
