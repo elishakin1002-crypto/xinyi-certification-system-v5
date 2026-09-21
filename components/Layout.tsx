@@ -636,7 +636,22 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             */}
             <p className="text-[11px] text-gray-400 mt-0.5">
               {unreadReminders.length > 0
-                ? `${unreadReminders.length} 条未读，归成 ${bellBuckets.total} 件事`
+                /*
+                  ── 角标和面板必须是同一个数（2026-09-20）──────────
+
+                  金恩来：「铃铛显示 4 条未读，下拉框里只有 2 条？
+                    这种数字和实际内容上的不统一只会带来混乱！」
+
+                  他说得对。原来角标数的是**原始提醒条数（4）**，
+                  面板把它们归并成**件事（2）**再显示 —— 抬头虽然写了
+                  「4 条未读，归成 2 件事」，但没人会先读那行小字、
+                  再回头理解角标为什么和列表长度不一样。
+
+                  成熟做法是一致的：Gmail / Slack 的角标数的是**会话**，
+                  不是会话里的消息条数 —— 角标承诺的是"点进去有几件事等你"。
+                  所以角标改成件数，抬头先说件数、把原始条数作为补充。
+                */
+                ? `${bellBuckets.total} 件待办（共 ${unreadReminders.length} 条提醒）`
                 : '没有未读提醒'}
             </p>
           </div>
@@ -951,13 +966,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <div className="relative">
               <button
                 onClick={() => setIsBellOpen(v => !v)}
-                aria-label={`提醒${unreadReminders.length > 0 ? `（${unreadReminders.length} 条未读）` : ''}`}
+                aria-label={`提醒${bellBuckets.total > 0 ? `（${bellBuckets.total} 件待办）` : ''}`}
                 className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
               >
                 <Bell className="w-5 h-5" />
                 {unreadReminders.length > 0 && (
                   <span className="absolute top-1.5 right-1.5 min-w-[1rem] h-4 px-1 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white font-bold">
-                    {unreadReminders.length > 99 ? '99+' : unreadReminders.length}
+                    {bellBuckets.total > 99 ? '99+' : bellBuckets.total}
                   </span>
                 )}
               </button>
@@ -1158,14 +1173,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
              <div className="relative">
                <button
                  onClick={() => setIsBellOpen(v => !v)}
-                 aria-label={`提醒${unreadReminders.length > 0 ? `（${unreadReminders.length} 条未读）` : ''}`}
+                 aria-label={`提醒${bellBuckets.total > 0 ? `（${bellBuckets.total} 件待办）` : ''}`}
                  className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors group"
                >
                   <Bell className="w-5 h-5 group-hover:shake" />
                   {unreadReminders.length > 0 && (
                     <span className="absolute top-1.5 right-1.5 min-w-[1rem] h-4 px-1 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white font-bold">
                       {/* 上限 99+：三位数会把红点撑变形，而且「到底 127 还是 128 条」对人没有意义 */}
-                      {unreadReminders.length > 99 ? '99+' : unreadReminders.length}
+                      {bellBuckets.total > 99 ? '99+' : bellBuckets.total}
                     </span>
                   )}
                </button>

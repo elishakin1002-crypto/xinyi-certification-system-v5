@@ -141,3 +141,39 @@ export const isMyContract = (
   if (myName && String(contract?.owner ?? '').trim() === myName) return true;
   return linkedProject ? isMyProject(linkedProject, me) : false;
 };
+
+/**
+ * 「这个项目**我负责**吗」—— 和 isMyProject 的区别只有一条：**不含待指派**。
+ *
+ * ══════════════════════════════════════════════════════════════
+ * 为什么必须是两个名字，而不是两套实现（2026-09-20）
+ * ══════════════════════════════════════════════════════════════
+ *
+ * 金恩来：「同样是『进行中项目』为什么分成含待指派和不含待指派呢？
+ *   这样显示除了容易误导人还有什么好处？」
+ *
+ * **没有好处。** 他看到的是：工作台写 2，点进项目管理变成 3。
+ *
+ * 真因是**同一个概念有两套独立实现**：
+ *   services/dashboardMetrics.ts 自己写了个 projectIsMine（不含待指派）
+ *   src/modules/ownership.ts 的 isMyProject（含待指派）
+ * 两个函数、两个结果、界面上却是同一个词「进行中项目」。
+ *
+ * 但「含不含待指派」这个区分本身是**有意义**的，不能一刀切掉：
+ *   · 待指派的项目故意对所有人可见 —— 否则没人认领，它会一直烂在那儿
+ *   · 而「我今天要干什么」显然不该把没人认领的算成我的活
+ *
+ * 所以做法是：**两个概念、一份实现、两个名字，界面上必须说清是哪个**。
+ *   isMyProject   → 「与我相关」（含待指派）
+ *   isOwnedByMe   → 「我负责的」（不含待指派）
+ *
+ * 不许任何地方再自己写第三份。
+ */
+export const isOwnedByMe = (
+  project: OwnableProject | null | undefined,
+  me: { id?: string | null; name?: string | null }
+): boolean => {
+  if (!project) return false;
+  if (isUnownedProject(project)) return false;   // 唯一的区别就在这一行
+  return isMyProject(project, me);
+};

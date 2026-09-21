@@ -2,7 +2,7 @@ import { Contract, Customer, Lead, Project, ProjectTask, ProjectWorkLog, RoleID,
 import { APP_ROUTES } from '../src/routes';
 import { inferProjectMeta } from '../src/utils/projectCapabilities';
 import { isOpenTask, isOverdue } from '../src/modules/taskFlow';
-import { isUnownedProject, isUnownedName } from '../src/modules/ownership';
+import { isUnownedProject, isUnownedName, isOwnedByMe } from '../src/modules/ownership';
 import { receivedInMonth, dueAndReceivedInMonth, paidWithoutPaidAt, collectionProgress } from '../src/modules/cashBasis';
 // 术语只有一份定义，见 src/modules/glossary.ts（口径也写在那里）
 import { TERM_PROJECT, TERM_TASK, TERM_RECEIVABLE, TERM_WINDOW } from '../src/modules/glossary';
@@ -129,10 +129,22 @@ const taskOwner = (task: ProjectTask, userName: string) => String(task?.owner ||
  * 这个口径和服务端 authorize.js 的 inScope 保持一致，
  * 两边不一致会出现「工作台说是我的、服务端说不是」。
  */
-const projectIsMine = (project: Project, userName: string, user?: { id?: string; name?: string }) =>
-  (user ? ownedByUser(project as any, user) : false)
-  || String(project.manager || '') === userName
-  || (project.tasks || []).some(task => taskOwner(task, userName));
+/*
+  ── 这里原来自己写了一份「我的项目」（2026-09-20 删）────────────
+
+  金恩来：「同样是『进行中项目』为什么分成含待指派和不含待指派呢？
+    这样显示除了容易误导人还有什么好处？」
+
+  他看到的是工作台写 2、点进项目管理变成 3。真因就是这里：
+  这个文件自己写了一份 projectIsMine（不含待指派），
+  而项目管理页用的是 ownership.ts 的 isMyProject（含待指派）——
+  **两个函数、两个结果、界面上同一个词。**
+
+  现在统一走 ownership.ts 的 isOwnedByMe（「我负责的」，不含待指派）。
+  概念还是两个，但**实现只有一份**，而且名字说清了是哪个。
+*/
+const projectIsMine = (project: Project, _userName: string, user?: { id?: string; name?: string }) =>
+  isOwnedByMe(project as any, user || {});
 
 const contractPaidAmount = (contract: Contract) =>
   (contract.receivables || [])
@@ -686,9 +698,27 @@ const buildConsultantMetrics = (inputs: Inputs): RoleDashboardMetrics => {
   const thisWeekStart = new Date(now);
   thisWeekStart.setDate(now.getDate() - 6);
   const myWeekLogs = inputs.projectWorkLogs.filter(log => String(log.operatorName || '') === me && parseDate(log.logDate) >= thisWeekStart.getTime());
-  const weekCompletedTasks = myWeekLogs.filter(log => log.source === 'task_transition').length;
   const weekHours = myWeekLogs.reduce((acc, log) => acc + Number(log.actualHours || 0), 0);
-  const pendingCustomerConfirm = myOpenTasks.filter(({ task }) => /确认|回传|审核|签字|盖章/.test(String(task.title || ''))).length;
+  /*
+    ── 「客户待确认事项」已删（2026-09-20）────────────────────────
+
+    金恩来：「客户待确认事项到底什么意思？」
+
+    答案是：**它没有确切含义**。原来的实现是
+      /确认|回传|审核|签字|盖章/.test(task.title)
+    —— 按任务标题里有没有这几个字**猜**出来的：
+      ·「需求确认与资源对接」→ 被算进去，但那是我们内部要做的事
+      ·「等客户提供营业执照」→ 漏掉，因为标题里没这几个字
+    典型的「看起来像 X 就当 X」（CLAUDE.md 二点五之一）。
+
+    真要做这张卡，需要任务上有**显式字段**（阻塞原因=等客户），
+    而不是猜标题。那是另一件事，不能用一个猜出来的数字顶着。
+
+    换成「今天要做」：看板的判据是「看到这个数你会做什么」——
+    今天到期的任务，答案是"现在就去做"，最直接。
+  */
+  const todayStr = now.toISOString().slice(0, 10);
+  const myTodayTasks = myOpenTasksInActive.filter(({ task }) => String(task.deadline || '').slice(0, 10) === todayStr);
   const belowHalfProjects = myActiveProjects.filter(p => Number(p.progress || 0) < 50);
 
   const projectTaskBucket: Record<string, number> = {};
@@ -709,11 +739,28 @@ const buildConsultantMetrics = (inputs: Inputs): RoleDashboardMetrics => {
     topCards: [
       { id: 'cons-active-project', title: TERM_PROJECT.active, value: String(myActiveProjects.length), route: `${APP_ROUTES.PROJECTS}?owner=me&status=active` },
       { id: 'cons-overdue-task', title: TERM_TASK.overdue, value: String(myOverdueTasks.length), route: `${APP_ROUTES.PROJECTS}?owner=me&task=overdue` },
-      { id: 'cons-week-completed', title: '本周完成任务数', value: String(weekCompletedTasks), route: `${APP_ROUTES.PROJECTS}?owner=me&task=completed&range=7d` },
-      { id: 'cons-customer-confirm', title: '客户待确认事项', value: String(pendingCustomerConfirm), route: `${APP_ROUTES.PROJECTS}?owner=me&task=customer_confirm` }
+      /*
+        ── 顶上四张卡都要过「看到这个数你会做什么」这一关（2026-09-20）──
+
+        金恩来：「『本周完成任务数』和『客户待确认事项』是什么意思？
+          工作台显示这两个是咨询师最应该知道、最想知道，
+          或者是可以帮助咨询师提高工作效率的内容吗？」
+
+        不是。拿那把尺子量：
+          本周完成任务数  → 看到它你什么都不做。而且底部已经有
+                           「本周日志条数 / 本周工时」，重复了
+          客户待确认事项  → 数字是猜标题猜出来的（见上面），
+                           想做点什么也不知道该做什么
+
+        换成「今天要做」和「本周要交」——
+        前者答"现在做什么"，后者答"这周还欠什么"，都能直接行动。
+        「即将到期任务」原来在第二排，和「本周要交」是同一件事，
+        挪上来之后第二排不再重复。
+      */
+      { id: 'cons-today', title: '今天要做', value: String(myTodayTasks.length), route: `${APP_ROUTES.PROJECTS}?owner=me&task=today` },
+      { id: 'cons-due-soon', title: TERM_TASK.dueSoon, value: String(myDueSoonTasks.length), route: `${APP_ROUTES.PROJECTS}?owner=me&task=due_7d` }
     ],
     middleCards: [
-      { id: 'cons-due-soon', title: TERM_TASK.dueSoon, value: String(myDueSoonTasks.length), route: `${APP_ROUTES.PROJECTS}?owner=me&task=due_7d` },
       { id: 'cons-stacked-project', title: '任务堆积最多项目', value: mostStackedProject ? `${mostStackedProject.name}` : '暂无数据', route: `${APP_ROUTES.PROJECTS}?owner=me&focus=stacked` },
       { id: 'cons-below-half', title: '服务进度低于50%项目', value: String(belowHalfProjects.length), route: `${APP_ROUTES.PROJECTS}?owner=me&progress=lt50` }
     ],

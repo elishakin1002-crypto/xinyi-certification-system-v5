@@ -6,7 +6,7 @@ import { useApp } from '../context/AppContext';
 import { TaskSkipButton } from '../components/TaskSkipButton';
 import { TaskStatusControl } from '../components/TaskStatusControl';
 import { canBePrerequisite, knockOnDelays, isOverdue } from '../src/modules/taskFlow';
-import { isMyProject, isUnownedProject } from '../src/modules/ownership';
+import { isMyProject, isUnownedProject, isOwnedByMe } from '../src/modules/ownership';
 import { findContractByRef, refMatchesContract } from '../src/modules/contractLink';
 import { ProjectCompleteChecklist } from '../components/ProjectCompleteChecklist';
 import { Status, Project, ProjectTask, Receivable, TaskTemplate, ServiceCatalogItem, ServiceCategory, ProjectWorkLog, TaskSkipReason, TASK_SKIP_REASON_LABEL, ServiceItem} from '../types';
@@ -97,7 +97,7 @@ const Projects = () => {
     而且人打开项目页多半先找自己的活。为防它变成第四次「看不见」，
     下面有一条：与我相关是 0、全公司却有，就直接把话说出来并给个按钮。
   */
-  const [viewScope, setViewScope] = useState<'all' | 'related'>('related');
+  const [viewScope, setViewScope] = useState<'all' | 'related' | 'mine'>('related');
   const [modeScope, setModeScope] = useState<ProjectModeFilter>('all');
   const [assignOwnerUserId, setAssignOwnerUserId] = useState('');
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
@@ -435,7 +435,9 @@ const Projects = () => {
       setDashboardFocus(focus);
       setSearchTerm('');
       setTaskViewMode(['overdue_tasks', 'due_7d', 'customer_confirm', 'busiest_owner'].includes(focus.type) ? 'flat' : 'grouped');
-      setViewScope(focus.owner === 'me' || activeRole === 'CONSULTANT' ? 'related' : 'all');
+      // 工作台卡片写的是「我负责的」，落地页就必须是同一个范围 ——
+      // 2026-09-20 之前这里落在 'related'（含待指派），于是 2 变成 3。
+      setViewScope(focus.owner === 'me' || activeRole === 'CONSULTANT' ? 'mine' : 'all');
       setFilterStatus(['revenue_completed', 'completed_7d'].includes(focus.type) ? 'Completed' : focus.type === 'team_overview' ? 'All' : 'Active');
       /*
         从工作台点进来时，类别筛选要放开到「全部类别」。
@@ -681,7 +683,7 @@ const Projects = () => {
       只有状态和搜索不跟（那两个跟了卡片就没意义了，筛"进行中"时"已完成"会变 0）。
     */
     const base = projects
-      .filter(p => viewScope === 'all' || isMineProject(p))
+      .filter(p => viewScope === 'all' || (viewScope === 'mine' ? isOwnedByMe(p as any, currentUser) : isMineProject(p)))
       .filter(p => matchesModeScope(p));
     const active = base.filter(p => p.status === Status.Active);
     /*
@@ -712,6 +714,7 @@ const Projects = () => {
         真正的保护在动作权限（改任务/看金额），不在"看不见"。
       */
       if (viewScope === 'related' && !isMineProject(p)) return false;
+      if (viewScope === 'mine' && !isOwnedByMe(p as any, currentUser)) return false;
       if (!matchesProjectFocus(p)) return false;
 
       const q = searchTerm.trim();
@@ -2933,10 +2936,58 @@ const Projects = () => {
 
       {filterStatus === 'Overdue' ? <div data-testid="overdue-task-results" className="rounded-2xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-100">
         <h2 className="px-4 py-3 font-bold text-gray-900">有逾期任务的项目</h2>
-        {filteredProjects.flatMap(project => (project.tasks || []).filter(isOverdueTask).map(task => <button key={project.id + ':' + task.id} type="button" onClick={() => { selectOverview('All'); openProject(project.id); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center justify-between gap-4">
-          <div><p className="font-bold text-gray-900">{task.title}</p><p className="mt-1 text-xs text-gray-500">{project.name} · {FIELD.taskOwner}：{task.owner || `${project.manager}（${FIELD.taskOwnerFallback}）`}</p></div>
-          <div className="shrink-0 text-xs text-red-600">截止 {task.deadline}<span className="block mt-1 text-blue-600">查看所属项目 →</span></div>
-        </button>))}
+        {/*
+          ── 卡片说 2，这里就必须是 2 行（2026-09-20 重做）────────────
+
+          金恩来：「显示 2，具体内容却显示了 3 条，这是要让同事练习调查力、
+            找不同吗？谁会在一开始就注意到『共 3 项逾期任务·涉及 2 个项目』
+            这个提示呢？」
+
+          他说得对。原来这里是 `flatMap(项目 => 项目的逾期任务)` ——
+          标题写着「项目」，列出来的却是**任务**，于是 2 和 3 对不上。
+          上面那行小字虽然把真相写对了，但没人会先去读一行灰色小字，
+          再回头理解一个大数字为什么和列表长度不一样。
+
+          改成**按项目列**：一个项目一行，逾期任务作为这一行的明细。
+          数字、标题、行数三者从此是同一个东西。
+        */}
+        {filteredProjects
+          .filter(project => (project.tasks || []).some(isOverdueTask))
+          .map(project => {
+            const overdue = (project.tasks || []).filter(isOverdueTask);
+            return (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => { selectOverview('All'); openProject(project.id); }}
+                className="w-full px-4 py-3 text-left hover:bg-gray-50"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="font-bold text-gray-900 truncate">{project.name}</p>
+                    <p className="mt-1 text-xs text-gray-500 truncate">
+                      {resolveProjectCustomerName(project) || '未关联客户'} · {FIELD.projectManager}：{project.manager || FIELD.taskOwnerFallback}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-xs">
+                    <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 font-black text-red-600">
+                      {overdue.length} 项逾期
+                    </span>
+                    <span className="mt-1 block text-blue-600">打开项目 →</span>
+                  </div>
+                </div>
+                {/* 逾期的是哪几项，直接摊在这一行下面 —— 不用再点进去才知道 */}
+                <ul className="mt-2 space-y-1">
+                  {overdue.map(task => (
+                    <li key={task.id} className="flex items-center justify-between gap-3 text-xs text-gray-600">
+                      <span className="truncate">· {task.title}</span>
+                      <span className="shrink-0 text-red-600">截止 {task.deadline}</span>
+                    </li>
+                  ))}
+                </ul>
+              </button>
+            );
+          })}
         {filteredProjects.length === 0 && <p className="p-6 text-sm text-gray-500">当前范围没有有逾期任务的项目。</p>}
       </div> : (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
