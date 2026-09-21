@@ -83,6 +83,30 @@ export const buildDashboardRouteTarget = (route: string): DashboardTarget => {
       focus = { type: 'missing_contract_amount', owner, projectId };
     } else if (params.get('filter') === 'delay') {
       focus = { type: 'delay', owner, projectId };
+    /*
+      ── 这三个卡片的参数以前没人解析（2026-09-21 补）──────────────
+
+      Codex 实地走查发现：总助工作台点「待指派负责人 1」和
+      「三天内到期任务 3」，地址栏确实带上了 filter=unassigned / duesoon，
+      **但项目页仍是默认的「与我相关·全部状态」，显示 3 个项目**，
+      其中 2 个已有负责人 —— 点了等于没点，而且没有任何提示。
+
+      顾问的「今天要做」也是同一个毛病（我 2026-09-20 加这张卡时
+      发的是 task=today，同样没人解析，于是 Codex 报「今天要做 0
+      点进去却显示 8 个项目」）。
+
+      三个一起补。教训是：**加卡片时要顺着链路走到底**，
+      发一个参数出去不等于那头有人接 —— 而且不接的时候是静悄悄的。
+    */
+    } else if (params.get('filter') === 'unassigned') {
+      focus = { type: 'unassigned', owner, projectId };
+    } else if (params.get('filter') === 'duesoon' || params.get('task') === 'due_3d') {
+      focus = { type: 'due_3d', owner, projectId };
+    } else if (params.get('task') === 'today') {
+      focus = { type: 'today_tasks', owner, projectId };
+    } else if (params.get('filter') === 'open') {
+      // 总助的「未完成任务」卡 —— 2026-09-21 之前也是点了没反应
+      focus = { type: 'open_tasks', owner, projectId };
     } else if (params.get('tab') === 'logs') {
       focus = { type: 'logs', owner, metric: String(params.get('metric') || '') || undefined, range: String(params.get('range') || '') || undefined, projectId };
     } else if (params.get('focus') === 'stacked') {

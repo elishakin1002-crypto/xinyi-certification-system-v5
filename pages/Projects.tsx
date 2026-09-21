@@ -328,9 +328,17 @@ const Projects = () => {
     收口到 taskFlow.isOverdue 一份。
   */
   const isOverdueTask = (task: ProjectTask) => isOverdue(task);
+  /** 距截止还有几天。没填截止日返回 null —— 不能当成 0（那会被算成"今天到期"） */
+  const daysLeft = (task: ProjectTask): number | null => {
+    const raw = String(task.deadline || '').trim();
+    if (!raw) return null;
+    const t = new Date(raw).getTime();
+    if (!Number.isFinite(t)) return null;
+    return Math.ceil((t - Date.now()) / (24 * 3600 * 1000));
+  };
   const isDueSoonTask = (task: ProjectTask) => {
-    const diff = Math.ceil((new Date(String(task.deadline || '')).getTime() - Date.now()) / (24 * 3600 * 1000));
-    return isOpenTask(task) && diff >= 0 && diff <= 7;
+    const diff = daysLeft(task);
+    return isOpenTask(task) && diff !== null && diff >= 0 && diff <= 7;
   };
   /*
     ── 这一页的四张卡全部数「项目」（2026-09-15 重做）──────────────
@@ -412,6 +420,27 @@ const Projects = () => {
     if (dashboardFocus.type === 'completed_7d') return projectWorkLogs.some(log => log.projectId === project.id && log.source === WORK_LOG_SOURCE.TASK_TRANSITION && String(log.operatorName || '') === currentUser.name && new Date(String(log.logDate || '')).getTime() >= weekStartMs);
     if (dashboardFocus.type === 'customer_confirm') return (project.tasks || []).some(task => String(task.owner || '') === currentUser.name && isOpenTask(task) && /确认|回传|审核|签字|盖章/.test(String(task.title || '')));
     // 同样按任务算，不用 project.progress（它和任务状态不同步）
+    /*
+      ── 这三个焦点以前没实现（2026-09-21 补）──────────────────────
+
+      Codex 实地走查：总助点「待指派负责人 1」「三天内到期任务 3」，
+      顾问点「今天要做」——三张卡点进来都**不筛选**，显示的还是默认列表。
+      参数发出去了，这头没人接，而且不接的时候完全没有提示。
+    */
+    if (dashboardFocus.type === 'unassigned') return isUnownedProject(project) && project.status === Status.Active;
+    if (dashboardFocus.type === 'open_tasks') return project.status === Status.Active && (project.tasks || []).some(task =>
+      isOpenTask(task) && (dashboardFocus.owner !== 'me' || String(task.owner || '') === currentUser.name));
+    if (dashboardFocus.type === 'due_3d') return (project.tasks || []).some(task => {
+      if (!isOpenTask(task)) return false;
+      if (dashboardFocus.owner === 'me' && String(task.owner || '') !== currentUser.name) return false;
+      const d = daysLeft(task);
+      return d !== null && d >= 0 && d <= 3;
+    });
+    if (dashboardFocus.type === 'today_tasks') return (project.tasks || []).some(task => {
+      if (!isOpenTask(task)) return false;
+      if (dashboardFocus.owner === 'me' && String(task.owner || '') !== currentUser.name) return false;
+      return daysLeft(task) === 0;
+    });
     if (dashboardFocus.type === 'progress_lt_50') return project.status === Status.Active && taskProgress(project).pct < 50;
     if (dashboardFocus.type === 'missing_contract_amount') return project.projectCategory === 'Delivery' && Number(project.projectAmount || 0) <= 0;
     if (dashboardFocus.type === 'delay') return (project.tasks || []).some(task => isOverdueTask(task));
@@ -463,6 +492,10 @@ const Projects = () => {
       else if (focus.type === 'delay') setDashboardFocusLabel('项目延误清单');
       else if (focus.type === 'logs') setDashboardFocusLabel(focus.metric === 'hours' ? '本周工时日志项目' : '本周日志覆盖项目');
       else if (focus.type === 'busiest_owner') setDashboardFocusLabel('任务堆积最多项目');
+      else if (focus.type === 'unassigned') setDashboardFocusLabel('待指派负责人的项目');
+      else if (focus.type === 'due_3d') setDashboardFocusLabel('三天内到期的任务');
+      else if (focus.type === 'today_tasks') setDashboardFocusLabel('今天要做的任务');
+      else if (focus.type === 'open_tasks') setDashboardFocusLabel('还没完成的任务');
       else if (focus.type === 'team_overview') setDashboardFocusLabel('团队项目总览');
       else if (focus.type === 'active_projects') setDashboardFocusLabel(focus.owner === 'me' ? `我负责的${TERM_PROJECT.active}` : TERM_PROJECT.active);
     }
