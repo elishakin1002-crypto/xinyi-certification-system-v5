@@ -1016,19 +1016,33 @@ const Leads = () => {
                                         ))}
                                     </div>
 
-                                    {/* Input & Mic */}
+                                    {/*
+                                      ── 发送按钮会被顶出框外（2026-09-21 修）──────────────
+
+                                      金恩来截图：跟进记录那个纸飞机图标飞到容器外面去了。
+
+                                      真因是 flex 的老坑：**子项默认 min-width:auto，不会缩到
+                                      内容宽度以下**。输入框是 flex-1，它撑住自己的内容宽度不让步，
+                                      右边两个按钮就被挤出容器。
+
+                                      这个坑 components/Layout.tsx 里已经写过一次注释
+                                      （顶部搜索框那处），这里又犯 —— 说明光写注释不管用，
+                                      所以同时加了 tests/flex-overflow.test.js 扫全库。
+
+                                      修法两条都要：输入框 min-w-0（允许收缩）、按钮 shrink-0（不许被压）。
+                                    */}
                                     <div className="flex items-center space-x-2 mb-2">
                                         <input 
-                                            className="flex-1 text-sm bg-white border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-100" 
+                                            className="flex-1 min-w-0 text-sm bg-white border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-100" 
                                             placeholder="输入今日沟通重点..." 
                                             value={newFollowUpContent}
                                             onChange={e => setNewFollowUpContent(e.target.value)}
                                             onKeyDown={e => e.key === 'Enter' && handleAddFollowUp()}
                                         />
-                                        <button className="p-2 text-gray-400 hover:text-indigo-600 bg-white border border-gray-200 rounded-lg transition-colors" title="语音输入 (开发中)">
+                                        <button className="p-2 text-gray-400 hover:text-indigo-600 bg-white border border-gray-200 rounded-lg shrink-0 transition-colors" title="语音输入 (开发中)">
                                             <Mic className="w-4 h-4" />
                                         </button>
-                                        <button onClick={handleAddFollowUp} className="p-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-sm active:scale-95 transition-transform">
+                                        <button onClick={handleAddFollowUp} className="p-2 bg-indigo-600 text-white rounded-lg shrink-0 hover:bg-indigo-700 shadow-sm active:scale-95 transition-transform">
                                             <Send className="w-4 h-4" />
                                         </button>
                                     </div>

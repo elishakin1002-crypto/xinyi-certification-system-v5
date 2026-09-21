@@ -2060,7 +2060,7 @@ const Customers = () => {
                                         </div>
                                         <div className="flex items-center space-x-2">
                                             <input 
-                                                className="flex-1 text-sm bg-white border border-gray-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-100" 
+                                                className="flex-1 min-w-0 text-sm bg-white border border-gray-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-100" 
                                                 placeholder="输入跟进情况..." 
                                                 value={newFollowUpContent}
                                                 onChange={e => setNewFollowUpContent(e.target.value)}
