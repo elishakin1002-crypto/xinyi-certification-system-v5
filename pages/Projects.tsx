@@ -567,9 +567,36 @@ const Projects = () => {
     现在统一成「与我相关」——金恩来点名要的默认值，
     而「与我相关是 0、全公司却有」的情况由筛选条下面那行提示兜住。
   */
+  /*
+    ── 但不能盖掉工作台带过来的焦点（2026-09-21 补）──────────────
+
+    这个 effect 在挂载时也会跑一次，于是把上面第 440 行刚按焦点设好的
+    'mine' 又推回 'related' —— 界面上出现自相矛盾的一幕：
+    焦点标签写着「我负责的进行中项目」，范围选择器却是「与我相关」，
+    数字自然还是对不上（这正是金恩来报的 2 vs 3 那条）。
+
+    同一个文件里「谁来决定范围」有四处，这是最难发现的一处：
+    它不在筛选条附近，改筛选时根本看不到它。
+
+    所以加一个判据：**带着工作台焦点进来时，这条默认规则让路。**
+  */
   useEffect(() => {
+    /*
+      判据要读 location.state，不能读 dashboardFocus 那个 state。
+
+      第一版我写的是 `if (dashboardFocus) return;` —— **不管用**：
+      上面那个 effect 刚 setDashboardFocus(...)，但 React 的状态更新
+      在同一次提交里看不到，这个 effect 读到的还是 null，
+      于是照样把范围推回 'related'，盖掉刚设好的 'mine'。
+
+      界面上就是那一幕：焦点标签写着「我负责的进行中项目」，
+      范围选择器却是「与我相关」—— 数字自然还是对不上。
+
+      location.state 是**同步可读**的，没有这个时序问题。
+    */
+    if ((location.state as any)?.dashboardFocus?.type) return;
     setViewScope('related');
-  }, [activeRole]);
+  }, [activeRole, location.state]);
 
   useEffect(() => {
     if (undoComplete) return;
