@@ -789,6 +789,17 @@ const Finance = () => {
                                         {s.status === 'draft' ? '确认' : '支付'}
                                       </button>
                                     )}
+                                    {/*
+                                      回退 2026-09-21 补 —— 桌面有、手机没有。
+                                      「点错了要能退回来」在手机上比桌面更需要：
+                                      屏幕小、按钮挨得近，误触本来就更容易。
+                                      少了它，财务在外面点错一下就只能等回工位。
+                                    */}
+                                    {s.status !== 'draft' && (
+                                      <button onClick={() => rollbackSettlementStatus(s)} className="px-2 py-0.5 text-[11px] border border-gray-200 text-gray-600 rounded">
+                                        回退
+                                      </button>
+                                    )}
                                 </div>
                             </div>
                         </div>

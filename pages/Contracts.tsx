@@ -1754,6 +1754,28 @@ const Contracts = () => {
                                               <div className="flex space-x-2 shrink-0">
                                                   <button onClick={(e) => handlePreviewFile(e, file)} className="text-gray-400 hover:text-blue-600" title="在线阅览"><Eye className="w-4 h-4" /></button>
                                                   <button onClick={(e) => handleDownloadFile(e, file)} className="text-gray-400 hover:text-blue-600" title="下载"><Download className="w-4 h-4" /></button>
+                                                  {/*
+                                                    移除附件 2026-09-21 补 —— 桌面有、手机没有。
+                                                    生产上有合同挂着历史遗留的死链，重传只是"再加一条"，
+                                                    旧的不删就变成「一堆死的混着好的」，谁也分不清该点哪个。
+                                                    在手机上看到死链却删不掉，只能记下来回工位再删。
+                                                  */}
+                                                  <button
+                                                    onClick={async (e) => {
+                                                      e.stopPropagation();
+                                                      if (!window.confirm(`确认移除「${file.name}」这条附件记录？`)) return;
+                                                      try {
+                                                        await contractService.removeAttachment(contract.id, file.id);
+                                                        removeContractAttachment(contract.id, file.id);
+                                                      } catch (err) {
+                                                        alert(`移除失败：${err instanceof Error ? err.message : '未知错误'}`);
+                                                      }
+                                                    }}
+                                                    className="text-gray-400 hover:text-red-600"
+                                                    title="移除这条附件记录"
+                                                  >
+                                                    <Trash2 className="w-4 h-4" />
+                                                  </button>
                                               </div>
                                           </div>
                                       )) : <EmptyState compact title="暂无附件" />}

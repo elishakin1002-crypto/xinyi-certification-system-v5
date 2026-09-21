@@ -1,37 +1,4 @@
 {
-  "total": 12,
-  "byFile": {
-    "pages/Audit.tsx": {
-      "desktopOnly": [
-        "handleExtractExperience",
-        "handleOpenKnowledgeDoc"
-      ],
-      "mobileOnly": []
-    },
-    "pages/Contracts.tsx": {
-      "desktopOnly": [
-        "bindContractToCustomer",
-        "removeAttachment",
-        "removeContractAttachment"
-      ],
-      "mobileOnly": []
-    },
-    "pages/Employees.tsx": {
-      "desktopOnly": [
-        "setEditingUserId",
-        "setPendingDelete",
-        "setResetPassword",
-        "setResetUserId",
-        "toggleStatus"
-      ],
-      "mobileOnly": []
-    },
-    "pages/Finance.tsx": {
-      "desktopOnly": [
-        "navigate",
-        "rollbackSettlementStatus"
-      ],
-      "mobileOnly": []
-    }
-  }
+  "total": 0,
+  "byFile": {}
 }

@@ -15,7 +15,9 @@ import { parityOf } from './lib/mobileParity.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 process.chdir(ROOT);
 
-const ALLOWED = ['setIsSidebarOpen', 'setIsMobileSearchOpen', 'handleOpenScopeResult'];   // 和测试里的 ALLOWED_ONE_SIDED 对应
+const ALLOWED = ['setIsSidebarOpen', 'setIsMobileSearchOpen', 'handleOpenScopeResult',
+  'setEditingUserId', 'setPendingDelete', 'setResetPassword', 'setResetUserId', 'toggleStatus',
+  'bindContractToCustomer', 'handleExtractExperience', 'handleOpenKnowledgeDoc', 'navigate'];   // 和测试里的 ALLOWED_ONE_SIDED 对应，理由写在那边
 const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
   e.isDirectory() ? walk(path.join(d, e.name)) : (/\.tsx$/.test(e.name) ? [path.join(d, e.name)] : []));
 

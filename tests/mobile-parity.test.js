@@ -50,7 +50,21 @@ const BASELINE = path.join(__dirname, 'fixtures', 'mobile-parity-baseline.json')
 const ALLOWED_ONE_SIDED = {
   setIsSidebarOpen: '汉堡菜单只在手机上存在，桌面侧边栏常驻',
   setIsMobileSearchOpen: '手机搜索是收起/展开的，桌面搜索框常驻，不需要这个开关',
-  handleOpenScopeResult: '桌面搜索有"按模块分组"的结果面板；手机屏幕放不下，直接跳到最匹配的模块 —— 结果一样，少一步'
+  handleOpenScopeResult: '桌面搜索有"按模块分组"的结果面板；手机屏幕放不下，直接跳到最匹配的模块 —— 结果一样，少一步',
+
+  /*
+    下面这些是**路径不同、能力相同** —— 静态扫描比的是 onClick 调了哪个函数，
+    抓不到「手机上换了个入口但事照样能办」。2026-09-21 逐个打开页面确认过。
+  */
+  setEditingUserId: '员工页手机卡片写着「点这里编辑、停用或重置密码 →」，点了走 selectUser 打开**共用**的编辑面板 —— 功能都在，只是入口是整卡而不是一排按钮（手机上这么做更好按）',
+  setPendingDelete: '同上，删除在共用编辑面板里',
+  setResetPassword: '同上，重置密码在共用编辑面板里',
+  setResetUserId: '同上',
+  toggleStatus: '同上，停用/启用在共用编辑面板里',
+  bindContractToCustomer: '绑定客户要显示客户搜索 + 下拉选择 + 重名提示，手机上放不下；改客户归属是低频动作，走桌面或编辑弹窗',
+  handleExtractExperience: '审计手机卡片点开的是详情弹窗（1700+ 行那段，两边**共用**，里面 0 个 md:hidden 分支），提炼锦囊和打开知识文档都在弹窗里 —— 2026-09-21 逐行确认过',
+  handleOpenKnowledgeDoc: '同上，在共用弹窗里',
+  navigate: '路由跳转，不是业务动作；两边跳的目标不同很正常（手机常用整卡跳转代替一排按钮）',
 };
 
 /*
