@@ -976,7 +976,7 @@ ${ragContext}
         <div className={`p-4 flex justify-between items-center text-white shrink-0 bg-gradient-to-r from-indigo-700 to-blue-800 shadow-lg`}> 
             <div className="flex items-center space-x-3"> 
                 <div className="bg-white/20 p-2 rounded-xl shadow-inner">
-                    <Zap className="w-5 h-5 text-yellow-300 animate-pulse" />
+                    <Zap className="w-5 h-5 text-amber-300 animate-pulse" />
                 </div>
                 <div>
                     <span className="font-black tracking-tight block leading-none text-sm uppercase">信义智能助手</span>
@@ -1002,7 +1002,7 @@ ${ragContext}
                         msg.role === 'user' 
                           ? 'bg-blue-600 text-white rounded-tr-none' 
                           : msg.role === 'system'
-                          ? 'bg-yellow-50 text-yellow-900 border border-yellow-200 w-full text-center'
+                          ? 'bg-amber-50 text-amber-900 border border-amber-200 w-full text-center'
                           : 'bg-white text-gray-900 border border-gray-100 rounded-tl-none' 
                     }`}> 
                         {msg.attachments && (
@@ -1011,7 +1011,7 @@ ${ragContext}
                                     <div key={i} className={`flex items-center p-2 rounded-lg text-xs font-bold ${msg.role === 'user' ? 'bg-blue-500/30 border border-blue-400' : 'bg-gray-100 border border-gray-200'}`}>
                                         {file.type === 'image' ? <ImageIcon className="w-4 h-4 mr-2" /> : file.type === 'pdf' ? <FileCode className="w-4 h-4 mr-2 text-red-500" /> : file.type === 'sheet' ? <FileSpreadsheet className="w-4 h-4 mr-2" /> : <FileText className="w-4 h-4 mr-2" />}
                                         <span className="truncate">{file.name}</span>
-                                        <FileCheck className="w-3 h-3 ml-auto text-green-400" />
+                                        <FileCheck className="w-3 h-3 ml-auto text-emerald-400" />
                                     </div>
                                 ))}
                             </div>
@@ -1026,7 +1026,7 @@ ${ragContext}
                           AI 说的话可能是猜的。
                         */}
                         {msg.role === 'system' && (
-                          <div className="mb-2 text-[10px] font-bold tracking-wider text-yellow-700/70 uppercase">
+                          <div className="mb-2 text-[10px] font-bold tracking-wider text-amber-700/70 uppercase">
                             系统提示 · 不是 AI 的回答
                           </div>
                         )}
@@ -1113,7 +1113,7 @@ ${ragContext}
 
                         {/* 动作执行成功标识 */}
                         {msg.isExecuted && (
-                            <div className={`mt-4 pt-3 border-t border-gray-50 flex items-center justify-between text-[10px] font-black uppercase tracking-widest -mx-4 -mb-4 px-4 py-2 rounded-b-2xl ${msg.actionType === 'reminder' ? 'bg-indigo-50/50 text-indigo-600' : 'bg-green-50/50 text-green-600'}`}>
+                            <div className={`mt-4 pt-3 border-t border-gray-50 flex items-center justify-between text-[10px] font-black uppercase tracking-widest -mx-4 -mb-4 px-4 py-2 rounded-b-2xl ${msg.actionType === 'reminder' ? 'bg-indigo-50/50 text-indigo-600' : 'bg-emerald-50/50 text-emerald-600'}`}>
                                 {msg.actionType === 'reminder' ? (
                                     <span className="flex items-center"><BellRing className="w-3 h-3 mr-1" /> 已创建日程提醒</span>
                                 ) : msg.actionType === 'customer' ? (
@@ -1135,7 +1135,7 @@ ${ragContext}
                             </div>
                         )}
 
-                        <div className={`text-[9px] mt-2 flex items-center ${msg.role === 'user' ? 'text-blue-200 justify-end' : msg.role === 'system' ? 'text-yellow-600 justify-center' : 'text-gray-400 justify-start'}`}>
+                        <div className={`text-[9px] mt-2 flex items-center ${msg.role === 'user' ? 'text-blue-200 justify-end' : msg.role === 'system' ? 'text-amber-600 justify-center' : 'text-gray-400 justify-start'}`}>
                             {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             {msg.role === 'model' && <span className="ml-2 px-1 rounded border border-gray-100 bg-gray-50 uppercase tracking-tighter font-bold">V5.0 EXEC-CORE</span>}
                         </div>
@@ -1159,7 +1159,7 @@ ${ragContext}
                     <div className="flex items-center justify-between p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
                         <div className="flex items-center overflow-hidden">
                             <div className="p-2 bg-white rounded-lg mr-3 shadow-sm">
-                                {pendingFile.type === 'image' ? <ImageIcon className="w-5 h-5 text-indigo-600" /> : pendingFile.type === 'pdf' ? <FileCode className="w-5 h-5 text-red-500" /> : pendingFile.type === 'sheet' ? <FileSpreadsheet className="w-5 h-5 text-green-600" /> : <FileText className="w-5 h-5 text-blue-600" />}
+                                {pendingFile.type === 'image' ? <ImageIcon className="w-5 h-5 text-indigo-600" /> : pendingFile.type === 'pdf' ? <FileCode className="w-5 h-5 text-red-500" /> : pendingFile.type === 'sheet' ? <FileSpreadsheet className="w-5 h-5 text-emerald-600" /> : <FileText className="w-5 h-5 text-blue-600" />}
                             </div>
                             <div className="min-w-0">
                                 <p className="text-xs font-bold text-indigo-900 truncate">{pendingFile.name}</p>
@@ -1171,7 +1171,7 @@ ${ragContext}
                 </div>
             )}
 
-            <div className={`relative flex items-center border rounded-2xl px-2 py-1 focus-within:ring-4 transition-all ${activeContext ? 'bg-yellow-50/50 border-yellow-200 focus-within:border-yellow-400 focus-within:ring-yellow-100' : 'bg-gray-100/50 border-gray-200 focus-within:border-indigo-400 focus-within:ring-indigo-100'}`}> 
+            <div className={`relative flex items-center border rounded-2xl px-2 py-1 focus-within:ring-4 transition-all ${activeContext ? 'bg-amber-50/50 border-amber-200 focus-within:border-amber-400 focus-within:ring-amber-100' : 'bg-gray-100/50 border-gray-200 focus-within:border-indigo-400 focus-within:ring-indigo-100'}`}> 
                 <textarea 
                     rows={1}
                     value={inputValue} 

@@ -23,7 +23,7 @@ const statTone = (cardId: string) => {
   if (cardId.includes('high-risk')) return 'border-red-100 bg-red-50/70';
   if (cardId.includes('overdue-receivable')) return 'border-amber-100 bg-amber-50/70';
   if (cardId.includes('churn')) return 'border-orange-100 bg-orange-50/70';
-  return 'border-rose-100 bg-rose-50/70';
+  return 'border-red-100 bg-red-50/70';
 };
 
 const isTriggered = (card: DashboardCard) => {
@@ -113,7 +113,7 @@ const RiskPanel: React.FC<Props> = ({ statCards, alerts, onStatClick, onAlertCli
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-gray-100 bg-slate-50 px-4 py-3 text-sm text-slate-600 leading-7">
+      <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-600 leading-7">
         {narrative}
       </div>
     </div>

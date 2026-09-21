@@ -928,7 +928,7 @@ const IntelRadar = () => {
 
                         <div className="flex flex-col items-end gap-2 shrink-0">
                           {s.status === MARKET_SIGNAL_STATUS.CONVERTED ? (
-                            <span className="text-[10px] font-black px-2 py-1 rounded-full bg-green-50 text-green-700 border border-green-100 inline-flex items-center">
+                            <span className="text-[10px] font-black px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 inline-flex items-center">
                               <CheckCircle2 className="w-3 h-3 mr-1" /> 已转化
                             </span>
                           ) : s.status === MARKET_SIGNAL_STATUS.IGNORED ? (

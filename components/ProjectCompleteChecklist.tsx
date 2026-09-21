@@ -55,7 +55,7 @@ export const ProjectCompleteChecklist: React.FC<{
                 <div className="flex gap-1 shrink-0">
                   <button onClick={() => set(i, { action: 'complete' })}
                     className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all ${
-                      r.action === 'complete' ? 'bg-green-600 text-white border-green-600'
+                      r.action === 'complete' ? 'bg-emerald-600 text-white border-emerald-600'
                                               : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'}`}>
                     已完成
                   </button>

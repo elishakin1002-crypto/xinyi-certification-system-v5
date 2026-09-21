@@ -130,10 +130,10 @@ const AICenter = () => {
                   要确认模型此刻是否可用，用下方的「AI 自检」。
               </p>
               <div className="space-y-4">
-                  <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg border border-green-100">
+                  <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-lg border border-emerald-100">
                       <div>
                           <p className="font-medium text-gray-900 flex items-center">
-                              <ShieldCheck className="w-4 h-4 mr-1 text-green-600" /> 
+                              <ShieldCheck className="w-4 h-4 mr-1 text-emerald-600" /> 
                               企业级数据保护
                           </p>
                           <p className="text-xs text-gray-500">全部使用国内模型服务商，数据不出境</p>

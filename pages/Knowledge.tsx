@@ -499,7 +499,7 @@ const Knowledge = () => {
                   <p className="text-xs text-gray-400 font-bold uppercase">允许 AI 引用的文档</p>
                   <div className="flex items-center space-x-2">
                       <p className="text-2xl font-black text-gray-900">{learnedDocsCount}</p>
-                      <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">RAG Ready</span>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">RAG Ready</span>
                   </div>
               </div>
           </div>
@@ -697,7 +697,7 @@ const Knowledge = () => {
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in duration-200">
                   <div className="flex justify-between items-center mb-6">
                       <h2 className="text-xl font-bold text-gray-900 flex items-center">
-                          <Zap className="w-5 h-5 mr-2 text-yellow-500" /> 知识库注入
+                          <Zap className="w-5 h-5 mr-2 text-amber-500" /> 知识库注入
                       </h2>
                       <button onClick={() => setIsModalOpen(false)}><X className="w-6 h-6 text-gray-400" /></button>
                   </div>
@@ -1013,7 +1013,7 @@ const Knowledge = () => {
                               ) : previewDoc.summary ? (
                                   <div className="text-sm text-gray-700 leading-relaxed space-y-4">
                                       <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 text-indigo-900">
-                                          <Sparkles className="w-4 h-4 mb-2 text-yellow-500" />
+                                          <Sparkles className="w-4 h-4 mb-2 text-amber-500" />
                                           {previewDoc.summary}
                                       </div>
                                       <button

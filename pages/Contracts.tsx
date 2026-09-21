@@ -53,7 +53,7 @@ const ReceivablePlan: React.FC<{
 }> = ({ contractId, receivables, canConfirmPayment, maskAmount, claimReceivablePaid }) => (
                                     <div className="flex-1 p-6 bg-gray-50/30"> <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center"> <Wallet className="w-4 h-4 mr-2" /> 回款计划 </h4> <div className="space-y-2"> {receivables.map(r => ( <div key={r.id} className="flex justify-between text-sm border-b border-gray-100 pb-2 items-center gap-3">
                                     <div className="flex items-center min-w-0">
-                                      {r.status === 'paid' ? <CheckCircle className="w-3 h-3 text-green-500 mr-2 shrink-0" /> : <Clock className="w-3 h-3 text-yellow-500 mr-2 shrink-0" />}
+                                      {r.status === 'paid' ? <CheckCircle className="w-3 h-3 text-emerald-500 mr-2 shrink-0" /> : <Clock className="w-3 h-3 text-amber-500 mr-2 shrink-0" />}
                                       <span className="text-gray-900 font-bold text-sm truncate">{r.node}</span>
                                       {r.paymentClaim && r.status !== 'paid' && (
                                         <span className="ml-2 shrink-0"><Badge tone="amber">待财务核对</Badge></span>
@@ -1545,7 +1545,7 @@ const Contracts = () => {
                                     <span className="text-gray-900 font-mono font-black text-base" title={canSeeContractAmount ? undefined : '合同金额对当前身份不可见'}>{maskAmount(contract.amount)}</span> 
                                     <span className="font-bold text-gray-500 font-mono">{progress.toFixed(0)}%</span> 
                                 </div> 
-                                <div className="w-full bg-gray-200 rounded-full h-1.5"> <div className={`h-1.5 rounded-full ${progress === 100 ? 'bg-green-500' : 'bg-blue-600'}`} style={{width: `${progress}%`}}></div> </div> 
+                                <div className="w-full bg-gray-200 rounded-full h-1.5"> <div className={`h-1.5 rounded-full ${progress === 100 ? 'bg-emerald-500' : 'bg-blue-600'}`} style={{width: `${progress}%`}}></div> </div> 
                             </td> 
                             <td className={tdClass}> 
                                 <div className="flex space-x-2"> 
@@ -1725,7 +1725,7 @@ const Contracts = () => {
                       <div className="flex items-center gap-2 mb-3">
                           <span className="shrink-0 text-[10px] font-black tracking-widest text-gray-400">回款</span>
                           <div className="h-1.5 flex-1 rounded-full bg-gray-200">
-                              <div className={`h-1.5 rounded-full ${progress === 100 ? 'bg-green-500' : 'bg-blue-600'}`} style={{width: `${progress}%`}}></div>
+                              <div className={`h-1.5 rounded-full ${progress === 100 ? 'bg-emerald-500' : 'bg-blue-600'}`} style={{width: `${progress}%`}}></div>
                           </div>
                           <span className="shrink-0 font-mono text-[10px] font-bold text-gray-500">{progress.toFixed(0)}%</span>
                       </div>

@@ -48,7 +48,7 @@ const BossDashboard: React.FC<Props> = ({ overviewCards, teamCards }) => {
                 type="button"
                 onClick={() => openDashboardRoute(navigate, card.route)}
                 title={cardSubtitleById[card.id] || card.hint || card.title}
-                className="text-left bg-gradient-to-br from-rose-500 to-red-600 p-5 rounded-2xl shadow-lg flex items-center text-white transition-transform active:scale-[0.98]"
+                className="text-left bg-gradient-to-br from-red-500 to-red-600 p-5 rounded-2xl shadow-lg flex items-center text-white transition-transform active:scale-[0.98]"
               >
                 <div className="p-3 bg-white/20 rounded-xl mr-4"><AlertTriangle className="w-6 h-6" /></div>
                 <div className="min-w-0">

@@ -424,7 +424,7 @@ const Employees: React.FC = () => {
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1 min-w-[160px]">
                           {user.roles.map(role => (
-                            <span key={role} className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-bold">
+                            <span key={role} className="px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 text-xs font-bold">
                               {roleName(role)}
                             </span>
                           ))}
@@ -724,7 +724,7 @@ const Employees: React.FC = () => {
             <button
               onClick={handleSave}
               disabled={isSaving}
-              className="w-full inline-flex items-center justify-center px-3 py-2.5 rounded-lg bg-slate-900 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60"
+              className="w-full inline-flex items-center justify-center px-3 py-2.5 rounded-lg bg-gray-900 text-sm font-black text-white hover:bg-gray-800 disabled:opacity-60"
             >
               {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
               保存

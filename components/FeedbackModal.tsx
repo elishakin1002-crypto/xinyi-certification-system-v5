@@ -109,7 +109,7 @@ const FeedbackModal: React.FC<Props> = ({ open, onClose }) => {
 
           {done ? (
             <div className="px-5 py-10 text-center">
-              <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto" />
+              <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
               <p className="text-sm font-bold text-gray-900 mt-4">收到了，谢谢</p>
               <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
                 管理员会看到。处理完会在这里给你回复。

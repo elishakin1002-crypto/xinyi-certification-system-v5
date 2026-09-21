@@ -128,7 +128,7 @@ const Customers = () => {
     if (days < 0) return { label: '已过期', tone: 'bg-red-100 text-red-700 border-red-200', summary: `已过期 ${Math.abs(days)} 天` };
     if (days <= 30) return { label: '紧急续证', tone: 'bg-red-100 text-red-700 border-red-200', summary: `${days} 天内到期` };
     if (days <= 90) return { label: '临期', tone: 'bg-amber-100 text-amber-700 border-amber-200', summary: `${days} 天内到期` };
-    return { label: '有效', tone: 'bg-green-100 text-green-700 border-green-200', summary: `剩余 ${days} 天` };
+    return { label: '有效', tone: 'bg-emerald-100 text-emerald-700 border-emerald-200', summary: `剩余 ${days} 天` };
   };
 
   const getCustomerCertificateProject = (customerId: string, certId: string) => {
@@ -1130,7 +1130,7 @@ const Customers = () => {
                                 <div className="flex flex-wrap gap-1">
                                     {cust.existingCertifications && cust.existingCertifications.length > 0 ? 
                                         cust.existingCertifications.slice(0,2).map((c,i) => (
-                                            <span key={i} className="text-xs bg-green-50 text-green-700 px-1.5 py-0.5 rounded border border-green-100 font-bold uppercase tracking-tight">{c}</span>
+                                            <span key={i} className="text-xs bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-100 font-bold uppercase tracking-tight">{c}</span>
                                         )) : <span className="text-sm text-gray-400">-</span>
                                     }
                                 </div>
@@ -1140,7 +1140,7 @@ const Customers = () => {
                                     {cust.riskStatus === 'high' ? (
                                         <span className="flex items-center px-2 py-1 bg-red-100 text-red-800 rounded text-xs font-bold uppercase tracking-tight"> <ShieldAlert className="w-3 h-3 mr-1" /> 高风险 </span>
                                     ) : (
-                                        <span className="flex items-center px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-bold uppercase tracking-tight"> <BadgeCheck className="w-3 h-3 mr-1" /> 正常 </span>
+                                        <span className="flex items-center px-2 py-1 bg-emerald-100 text-emerald-800 rounded text-xs font-bold uppercase tracking-tight"> <BadgeCheck className="w-3 h-3 mr-1" /> 正常 </span>
                                     )}
                                 </div>
                             </td>
@@ -1182,7 +1182,7 @@ const Customers = () => {
                         {cust.riskStatus === 'high' ? (
                             <span className="flex items-center px-2 py-0.5 bg-red-100 text-red-800 rounded text-xs font-bold uppercase tracking-tight whitespace-nowrap"> <ShieldAlert className="w-3 h-3 mr-1" /> 高风险 </span>
                         ) : (
-                            <span className="flex items-center px-2 py-0.5 bg-green-100 text-green-800 rounded text-xs font-bold uppercase tracking-tight whitespace-nowrap"> <BadgeCheck className="w-3 h-3 mr-1" /> 正常 </span>
+                            <span className="flex items-center px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded text-xs font-bold uppercase tracking-tight whitespace-nowrap"> <BadgeCheck className="w-3 h-3 mr-1" /> 正常 </span>
                         )}
                     </div>
                     {(() => {
@@ -1256,14 +1256,14 @@ const Customers = () => {
                                 <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
                                     <div className="flex justify-between items-center mb-4">
                                         <h3 className="text-lg font-bold text-gray-900 flex items-center"> 
-                                            <Activity className="w-4 h-4 mr-2 text-rose-600" /> 客户关系档案 (PDCA)
+                                            <Activity className="w-4 h-4 mr-2 text-red-600" /> 客户关系档案 (PDCA)
                                         </h3>
                                     </div>
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                                        <div className="bg-rose-50 rounded-2xl p-4 border border-rose-100">
-                                            <div className="text-xs font-bold text-rose-400 uppercase mb-1">累计消费 (Total)</div>
+                                        <div className="bg-red-50 rounded-2xl p-4 border border-red-100">
+                                            <div className="text-xs font-bold text-red-400 uppercase mb-1">累计消费 (Total)</div>
                                             {isFinancialVisible(selectedCustomer) ? (
-                                                <div className="text-2xl font-black text-rose-900">¥{pdcaSummary.totalAmount.toLocaleString()}</div>
+                                                <div className="text-2xl font-black text-red-900">¥{pdcaSummary.totalAmount.toLocaleString()}</div>
                                             ) : (
                                                 <div className="text-2xl font-black text-gray-300 flex items-center"><Lock className="w-4 h-4 mr-1"/> ***</div>
                                             )}
@@ -1399,9 +1399,9 @@ const Customers = () => {
                                             <div className="text-[11px] font-bold text-gray-500 uppercase">合同总数</div>
                                             <div className="text-xl font-black text-gray-900">{contractSummary.total}</div>
                                         </div>
-                                        <div className="rounded-xl border border-green-100 bg-green-50 p-3">
-                                            <div className="text-[11px] font-bold text-green-600 uppercase">执行中</div>
-                                            <div className="text-xl font-black text-green-800">{contractSummary.active}</div>
+                                        <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+                                            <div className="text-[11px] font-bold text-emerald-600 uppercase">执行中</div>
+                                            <div className="text-xl font-black text-emerald-800">{contractSummary.active}</div>
                                         </div>
                                         <div className="rounded-xl border border-red-100 bg-red-50 p-3">
                                             <div className="text-[11px] font-bold text-red-500 uppercase">风险</div>
@@ -1441,7 +1441,7 @@ const Customers = () => {
                                                         >
                                                             去合同管理
                                                         </button>
-                                                        <button onClick={() => openContractDetail(contract)} className="text-[11px] font-bold px-2 py-1 rounded border border-green-200 bg-white text-green-700 hover:bg-green-50">回款节点</button>
+                                                        <button onClick={() => openContractDetail(contract)} className="text-[11px] font-bold px-2 py-1 rounded border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50">回款节点</button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1544,7 +1544,7 @@ const Customers = () => {
                                     <div className="flex flex-col gap-4 mb-6">
                                         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                                             <div>
-                                                <h3 className="text-lg font-bold text-gray-900 flex items-center"> <FileCheck className="w-4 h-4 mr-2 text-green-600" /> 认证证书与监管周期 </h3>
+                                                <h3 className="text-lg font-bold text-gray-900 flex items-center"> <FileCheck className="w-4 h-4 mr-2 text-emerald-600" /> 认证证书与监管周期 </h3>
                                                 <p className="text-xs text-gray-500 mt-1">证书主数据归客户、续证动作归项目、原件归档进知识中心。</p>
                                             </div>
                                             {/*
@@ -1839,10 +1839,10 @@ const Customers = () => {
                                                             <div className="mt-1 text-sm font-black text-amber-900">{linkedProject ? '已联动工作台' : '点上方「排跟进提醒」'}</div>
                                                             <div className="text-[11px] text-amber-700 mt-1">默认建议：90 / 60 / 30 / 7 天</div>
                                                         </div>
-                                                        <div className="rounded-xl border border-green-100 bg-green-50 px-3 py-3">
-                                                            <div className="text-[11px] font-bold text-green-600 uppercase">监管完成度</div>
-                                                            <div className="mt-1 text-sm font-black text-green-900">{completedAuditCount}/{sortedAuditPlan.length || 0}</div>
-                                                            <div className="text-[11px] text-green-700 mt-1">逾期节点 {overdueAuditCount} 个</div>
+                                                        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3">
+                                                            <div className="text-[11px] font-bold text-emerald-600 uppercase">监管完成度</div>
+                                                            <div className="mt-1 text-sm font-black text-emerald-900">{completedAuditCount}/{sortedAuditPlan.length || 0}</div>
+                                                            <div className="text-[11px] text-emerald-700 mt-1">逾期节点 {overdueAuditCount} 个</div>
                                                         </div>
                                                         <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-3">
                                                             <div className="text-[11px] font-bold text-gray-500 uppercase">最近提醒</div>
@@ -1856,7 +1856,7 @@ const Customers = () => {
                                                             <div className="flex items-center justify-between mb-3">
                                                                 <div className="text-xs font-bold text-gray-500 uppercase">监管时间轴</div>
                                                                 {nextAuditNode && !isEditing && (
-                                                                    <button onClick={() => handleCompleteAuditNode(cert, nextAuditNode)} className="text-xs font-bold px-3 py-1.5 rounded-lg border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 flex items-center">
+                                                                    <button onClick={() => handleCompleteAuditNode(cert, nextAuditNode)} className="text-xs font-bold px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 flex items-center">
                                                                         <CheckCircle className="w-3 h-3 mr-1" /> 完成本节点
                                                                     </button>
                                                                 )}
@@ -1868,10 +1868,10 @@ const Customers = () => {
                                                                         const nodeLate = node.status !== 'Completed' && (getDaysUntil(node.plannedDate) ?? 1) < 0;
                                                                         return (
                                                                             <div key={node.id} className="flex min-w-[92px] flex-col items-center group/node relative text-center">
-                                                                                <div className={`w-3 h-3 rounded-full border-2 mb-1.5 ${node.status === 'Completed' ? 'bg-green-500 border-green-500' : nodeLate ? 'bg-red-500 border-red-500' : 'bg-white border-gray-300'}`}></div>
+                                                                                <div className={`w-3 h-3 rounded-full border-2 mb-1.5 ${node.status === 'Completed' ? 'bg-emerald-500 border-emerald-500' : nodeLate ? 'bg-red-500 border-red-500' : 'bg-white border-gray-300'}`}></div>
                                                                                 <span className="text-xs font-bold text-gray-600 tracking-tight">{getAuditNodeLabel(node.type)}</span>
                                                                                 <span className="text-xs text-gray-400 font-mono mt-0.5">{node.plannedDate}</span>
-                                                                                <span className={`mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${node.status === 'Completed' ? 'bg-green-50 text-green-700' : nodeLate ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}>{node.status === 'Completed' ? '已完成' : nodeLate ? '已逾期' : '待执行'}</span>
+                                                                                <span className={`mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${node.status === 'Completed' ? 'bg-emerald-50 text-emerald-700' : nodeLate ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}>{node.status === 'Completed' ? '已完成' : nodeLate ? '已逾期' : '待执行'}</span>
                                                                             </div>
                                                                         );
                                                                     })}
@@ -1955,7 +1955,7 @@ const Customers = () => {
                                                             <button
                                                                 type="button"
                                                                 onClick={() => handleSetPrimaryContact(contact.id)}
-                                                                className={`text-[11px] font-bold px-2 py-1 rounded border ${contact.isPrimary ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100'}`}
+                                                                className={`text-[11px] font-bold px-2 py-1 rounded border ${contact.isPrimary ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100'}`}
                                                             >
                                                                 {contact.isPrimary ? '主联系人' : '设为主联系人'}
                                                             </button>
@@ -2016,7 +2016,7 @@ const Customers = () => {
                                                             {contact.name || '待补充联系人'}
                                                         </div>
                                                         {contact.isPrimary && (
-                                                            <span className="text-[10px] font-black text-green-700 bg-green-50 border border-green-100 px-2 py-0.5 rounded-full">
+                                                            <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
                                                                 主联系人
                                                             </span>
                                                         )}

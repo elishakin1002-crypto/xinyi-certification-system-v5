@@ -455,7 +455,7 @@ const Leads = () => {
                 disabled={isMining}
                 className={`flex items-center px-4 py-2 bg-amber-600 text-white rounded-lg shadow-md hover:bg-amber-700 transition-all active:scale-95 text-sm font-bold ${isMining ? 'opacity-80 cursor-not-allowed' : ''}`}
             >
-                {isMining ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2 text-yellow-300" />}
+                {isMining ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2 text-amber-300" />}
                 {isMining ? `处理中 ${miningProgress}%` : `筛出重点线索（90天内到期）`}
             </button>
 
@@ -471,7 +471,7 @@ const Leads = () => {
                 <button 
                     className={`flex items-center px-4 py-2 bg-white text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 shadow-sm transition-all active:scale-95 text-sm font-bold ${isImporting ? 'opacity-70' : ''}`}
                 >
-                    {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <FileSpreadsheet className="w-4 h-4 mr-2 text-green-600" />}
+                    {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" />}
                     {isImporting ? '解析中...' : '导入 Excel 表格'}
                 </button>
             </div>
@@ -863,118 +863,118 @@ const Leads = () => {
                             </div>
 
                             {/* 工商信息卡片 (Business Info) - Added for Excel Import */}
-                            <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
+                            <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100">
                                 <div className="flex items-center justify-between mb-4">
-                                    <h3 className="text-sm font-black text-slate-800 flex items-center">
-                                        <Briefcase className="w-4 h-4 mr-2 text-slate-500" />
+                                    <h3 className="text-sm font-black text-gray-800 flex items-center">
+                                        <Briefcase className="w-4 h-4 mr-2 text-gray-500" />
                                         工商注册信息
                                     </h3>
-                                    <span className="text-[10px] bg-slate-200 text-slate-500 px-2 py-1 rounded-lg font-bold">导入数据</span>
+                                    <span className="text-[10px] bg-gray-200 text-gray-500 px-2 py-1 rounded-lg font-bold">导入数据</span>
                                 </div>
                                 <div className="grid grid-cols-2 gap-4 text-xs">
                                     <div>
-                                        <label className="block text-slate-400 font-bold mb-1">法定代表人</label>
+                                        <label className="block text-gray-400 font-bold mb-1">法定代表人</label>
                                         {isEditing ? (
                                           <input
-                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none focus:ring-2 focus:ring-gray-100"
                                             value={editingLeadData.legalRepresentative || ''}
                                             onChange={e => setEditingLeadData({ ...editingLeadData, legalRepresentative: e.target.value })}
                                             placeholder="请输入法定代表人"
                                           />
                                         ) : (
-                                          <div className="text-slate-700 font-medium">{editingLeadData.legalRepresentative || '-'}</div>
+                                          <div className="text-gray-700 font-medium">{editingLeadData.legalRepresentative || '-'}</div>
                                         )}
                                     </div>
                                     <div>
-                                        <label className="block text-slate-400 font-bold mb-1">注册资本</label>
+                                        <label className="block text-gray-400 font-bold mb-1">注册资本</label>
                                         {isEditing ? (
                                           <input
-                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none focus:ring-2 focus:ring-gray-100"
                                             value={editingLeadData.registeredCapital || ''}
                                             onChange={e => setEditingLeadData({ ...editingLeadData, registeredCapital: e.target.value })}
                                             placeholder="请输入注册资本"
                                           />
                                         ) : (
-                                          <div className="text-slate-700 font-medium">{editingLeadData.registeredCapital || '-'}</div>
+                                          <div className="text-gray-700 font-medium">{editingLeadData.registeredCapital || '-'}</div>
                                         )}
                                     </div>
                                     <div className="col-span-2">
-                                        <label className="block text-slate-400 font-bold mb-1">注册地址</label>
+                                        <label className="block text-gray-400 font-bold mb-1">注册地址</label>
                                         {isEditing ? (
                                           <input
-                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none focus:ring-2 focus:ring-gray-100"
                                             value={editingLeadData.registeredAddress || ''}
                                             onChange={e => setEditingLeadData({ ...editingLeadData, registeredAddress: e.target.value })}
                                             placeholder="请输入注册地址"
                                           />
                                         ) : (
-                                          <div className="text-slate-700 font-medium truncate" title={editingLeadData.registeredAddress}>{editingLeadData.registeredAddress || '-'}</div>
+                                          <div className="text-gray-700 font-medium truncate" title={editingLeadData.registeredAddress}>{editingLeadData.registeredAddress || '-'}</div>
                                         )}
                                     </div>
                                     <div>
-                                        <label className="block text-slate-400 font-bold mb-1">成立日期</label>
+                                        <label className="block text-gray-400 font-bold mb-1">成立日期</label>
                                         {isEditing ? (
                                           <input
                                             type="date"
-                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none focus:ring-2 focus:ring-gray-100"
                                             value={editingLeadData.foundingDate || ''}
                                             onChange={e => setEditingLeadData({ ...editingLeadData, foundingDate: e.target.value })}
                                           />
                                         ) : (
-                                          <div className="text-slate-700 font-medium">{editingLeadData.foundingDate || '-'}</div>
+                                          <div className="text-gray-700 font-medium">{editingLeadData.foundingDate || '-'}</div>
                                         )}
                                     </div>
                                     <div>
-                                        <label className="block text-slate-400 font-bold mb-1">经营状态</label>
+                                        <label className="block text-gray-400 font-bold mb-1">经营状态</label>
                                         {isEditing ? (
                                           <input
-                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none focus:ring-2 focus:ring-gray-100"
                                             value={editingLeadData.operationStatus || ''}
                                             onChange={e => setEditingLeadData({ ...editingLeadData, operationStatus: e.target.value })}
                                             placeholder="请输入经营状态"
                                           />
                                         ) : (
-                                          <div className="text-slate-700 font-medium">{editingLeadData.operationStatus || '-'}</div>
+                                          <div className="text-gray-700 font-medium">{editingLeadData.operationStatus || '-'}</div>
                                         )}
                                     </div>
                                     <div>
-                                        <label className="block text-slate-400 font-bold mb-1">企业类型</label>
+                                        <label className="block text-gray-400 font-bold mb-1">企业类型</label>
                                         {isEditing ? (
                                           <input
-                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none focus:ring-2 focus:ring-gray-100"
                                             value={editingLeadData.companyType || ''}
                                             onChange={e => setEditingLeadData({ ...editingLeadData, companyType: e.target.value })}
                                             placeholder="请输入企业类型"
                                           />
                                         ) : (
-                                          <div className="text-slate-700 font-medium truncate" title={editingLeadData.companyType}>{editingLeadData.companyType || '-'}</div>
+                                          <div className="text-gray-700 font-medium truncate" title={editingLeadData.companyType}>{editingLeadData.companyType || '-'}</div>
                                         )}
                                     </div>
                                     <div>
-                                        <label className="block text-slate-400 font-bold mb-1">发证机构</label>
+                                        <label className="block text-gray-400 font-bold mb-1">发证机构</label>
                                         {isEditing ? (
                                           <input
-                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                                            className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none focus:ring-2 focus:ring-gray-100"
                                             value={editingLeadData.issuingBody || ''}
                                             onChange={e => setEditingLeadData({ ...editingLeadData, issuingBody: e.target.value })}
                                             placeholder="请输入发证机构"
                                           />
                                         ) : (
-                                          <div className="text-slate-700 font-medium truncate" title={editingLeadData.issuingBody}>{editingLeadData.issuingBody || '-'}</div>
+                                          <div className="text-gray-700 font-medium truncate" title={editingLeadData.issuingBody}>{editingLeadData.issuingBody || '-'}</div>
                                         )}
                                     </div>
                                     <div className="col-span-2">
-                                        <label className="block text-slate-400 font-bold mb-1">经营范围</label>
+                                        <label className="block text-gray-400 font-bold mb-1">经营范围</label>
                                         {isEditing ? (
                                           <textarea
                                             rows={3}
-                                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-slate-100 resize-none"
+                                            className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none focus:ring-2 focus:ring-gray-100 resize-none"
                                             value={editingLeadData.businessScope || ''}
                                             onChange={e => setEditingLeadData({ ...editingLeadData, businessScope: e.target.value })}
                                             placeholder="请输入经营范围"
                                           />
                                         ) : (
-                                          <div className="text-slate-600 leading-relaxed line-clamp-3" title={editingLeadData.businessScope}>{editingLeadData.businessScope || '-'}</div>
+                                          <div className="text-gray-600 leading-relaxed line-clamp-3" title={editingLeadData.businessScope}>{editingLeadData.businessScope || '-'}</div>
                                         )}
                                     </div>
                                 </div>

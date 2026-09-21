@@ -86,7 +86,7 @@ const PersonaDashboard: React.FC<Props> = ({ metrics, headline, emphasisId, sect
                     onClick={() => openDashboardRoute(navigate, card.route)}
                     title={card.hint || card.title}
                     className={`min-w-0 w-full text-left p-5 rounded-2xl shadow-lg flex items-center text-white transition-transform active:scale-[0.98] bg-gradient-to-br ${
-                      alert ? 'from-rose-500 to-red-600' : 'from-indigo-600 to-blue-700'
+                      alert ? 'from-red-500 to-red-600' : 'from-indigo-600 to-blue-700'
                     }`}
                   >
                     <div className="p-3 bg-white/20 rounded-xl mr-4">{cardIcon(card.id)}</div>

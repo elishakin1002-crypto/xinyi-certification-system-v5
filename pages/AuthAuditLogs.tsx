@@ -21,7 +21,7 @@ const actionTone = (action: string) => {
   if (action === 'USER_DISABLE') return 'bg-red-50 text-red-700 border-red-100';
   if (action === 'PASSWORD_RESET' || action === 'PASSWORD_CHANGE') return 'bg-amber-50 text-amber-700 border-amber-100';
   if (action === 'USER_CREATE' || action === 'USER_ENABLE') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
-  return 'bg-slate-50 text-slate-700 border-slate-100';
+  return 'bg-gray-50 text-gray-700 border-gray-100';
 };
 
 const formatTime = (value: string) => {

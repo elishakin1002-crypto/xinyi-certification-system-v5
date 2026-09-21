@@ -102,7 +102,7 @@ const TaskCard: React.FC<{ task: StrategicTask; sample?: boolean }> = ({ task, s
                   <button onClick={()=>updateStrategicTaskStatus(task.id, 'In Progress')} className="flex-1 py-1 bg-blue-50 hover:bg-blue-100 rounded text-[10px] text-blue-600 font-bold">进行中</button>
               )}
               {task.status !== 'Completed' && (
-                  <button onClick={()=>updateStrategicTaskStatus(task.id, 'Completed')} className="flex-1 py-1 bg-green-50 hover:bg-green-100 rounded text-[10px] text-green-600 font-bold">完成</button>
+                  <button onClick={()=>updateStrategicTaskStatus(task.id, 'Completed')} className="flex-1 py-1 bg-emerald-50 hover:bg-emerald-100 rounded text-[10px] text-emerald-600 font-bold">完成</button>
               )}
           </div>
       </div>
@@ -261,7 +261,7 @@ const Strategy = () => {
                 disabled={isAnalyzingStrategy || !strategicInsight}
                 className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center shadow-sm transition-all active:scale-95 ${isAnalyzingStrategy ? 'bg-indigo-50 text-indigo-400 cursor-wait' : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-lg'}`}
               >
-                {isAnalyzingStrategy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2 text-yellow-300" />}
+                {isAnalyzingStrategy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2 text-amber-300" />}
                 {isAnalyzingStrategy ? '正在拆解战役...' : 'AI 自动生成必赢战役'}
               </button>
           )}
@@ -346,9 +346,9 @@ const Strategy = () => {
                 <div className="flex items-center mb-4 text-orange-700 font-bold"> <ShieldAlert className="w-5 h-5 mr-2" /> 劣势 (Weaknesses) </div>
                 <ul className="space-y-2"> {swotData.weaknesses.map((item, idx) => ( <li key={idx} className="flex items-start text-sm text-gray-700"> <span className="mr-2 text-orange-400">•</span> {item} </li> ))} </ul>
               </div>
-              <div className="p-6 bg-green-50/30 border-t border-gray-100">
-                <div className="flex items-center mb-4 text-green-700 font-bold"> <Zap className="w-5 h-5 mr-2" /> 机会 (Opportunities) </div>
-                <ul className="space-y-2"> {swotData.opportunities.map((item, idx) => ( <li key={idx} className="flex items-start text-sm text-gray-700"> <span className="mr-2 text-green-400">•</span> {item} </li> ))} </ul>
+              <div className="p-6 bg-emerald-50/30 border-t border-gray-100">
+                <div className="flex items-center mb-4 text-emerald-700 font-bold"> <Zap className="w-5 h-5 mr-2" /> 机会 (Opportunities) </div>
+                <ul className="space-y-2"> {swotData.opportunities.map((item, idx) => ( <li key={idx} className="flex items-start text-sm text-gray-700"> <span className="mr-2 text-emerald-400">•</span> {item} </li> ))} </ul>
               </div>
               <div className="p-6 bg-red-50/30 border-t border-gray-100">
                 <div className="flex items-center mb-4 text-red-700 font-bold"> <ShieldAlert className="w-5 h-5 mr-2" /> 威胁 (Threats) </div>
@@ -444,12 +444,12 @@ const Strategy = () => {
                       </div>
 
                       {/* Column 3: Completed */}
-                      <div className={`flex-1 flex flex-col bg-green-50/30 rounded-2xl border border-green-100 transition-all ${getColumnFocusClass('Completed')}`}>
-                          <div className="p-4 flex justify-between items-center border-b border-green-100">
-                              <h3 className="font-black text-green-600 uppercase text-xs tracking-widest flex items-center">
+                      <div className={`flex-1 flex flex-col bg-emerald-50/30 rounded-2xl border border-emerald-100 transition-all ${getColumnFocusClass('Completed')}`}>
+                          <div className="p-4 flex justify-between items-center border-b border-emerald-100">
+                              <h3 className="font-black text-emerald-600 uppercase text-xs tracking-widest flex items-center">
                                   <CheckCircle2 className="w-3 h-3 mr-2" /> 已达成 (Completed)
                               </h3>
-                              <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">{completedTasks.length}</span>
+                              <span className="bg-emerald-100 text-emerald-700 text-[10px] px-2 py-0.5 rounded-full font-bold">{completedTasks.length}</span>
                           </div>
                           <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
                               {completedTasks.map(task => <TaskCard key={task.id} task={task} />)}

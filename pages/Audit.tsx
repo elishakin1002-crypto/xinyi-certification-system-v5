@@ -1210,7 +1210,7 @@ const Audit = () => {
   */
   const STATUS_TONE: Record<string, string> = {
     Open: 'text-red-600', Rectifying: 'text-orange-600',
-    Verifying: 'text-blue-600', Closed: 'text-green-600'
+    Verifying: 'text-blue-600', Closed: 'text-emerald-600'
   };
   const getStatusBadge = (status: string) => (
     <span className={`text-sm font-medium ${STATUS_TONE[status] || 'text-gray-500'} ${status === 'Closed' ? 'flex items-center' : ''}`}>
@@ -1325,7 +1325,7 @@ const Audit = () => {
               </div>
             ))}
           </div>
-          <div className="mt-4 rounded-2xl border border-gray-100 bg-slate-50 px-4 py-3 text-sm text-slate-600 leading-7">
+          <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-600 leading-7">
             {trendNarrative}
           </div>
         </div>

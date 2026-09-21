@@ -151,7 +151,7 @@ const PERSONA_PLAN: Record<DashboardPersona, PersonaPlan> = {
 };
 
 const TONE_CLASS: Record<KpiCard['tone'], { icon: string; value: string; bg: string }> = {
-  green: { icon: 'text-green-600', value: 'text-green-600', bg: 'bg-green-50' },
+  green: { icon: 'text-emerald-600', value: 'text-emerald-600', bg: 'bg-emerald-50' },
   red: { icon: 'text-red-600', value: 'text-red-600', bg: 'bg-red-50' },
   amber: { icon: 'text-amber-600', value: 'text-amber-600', bg: 'bg-amber-50' },
   indigo: { icon: 'text-indigo-600', value: 'text-indigo-600', bg: 'bg-indigo-50' },
@@ -1356,7 +1356,7 @@ const Dashboard = () => {
             </div>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-indigo-900 flex items-center">
-                <Zap className="w-5 h-5 mr-2 text-yellow-500 animate-pulse" />
+                <Zap className="w-5 h-5 mr-2 text-amber-500 animate-pulse" />
                 今日全域简报
               </h3>
               {/*
@@ -1654,7 +1654,7 @@ const Dashboard = () => {
                                       event.stopPropagation();
                                       dismissReminder(reminder.id);
                                     }}
-                                    className="p-1.5 bg-white rounded-lg shadow-sm text-gray-400 hover:text-green-600 hover:bg-green-50 transition-all"
+                                    className="p-1.5 bg-white rounded-lg shadow-sm text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all"
                                     title="标记完成"
                                   >
                                     <Check className="w-4 h-4" />
@@ -1710,7 +1710,7 @@ const Dashboard = () => {
                           event.stopPropagation();
                           dismissReminder(reminder.id);
                         }}
-                        className="opacity-0 group-hover:opacity-100 p-1.5 bg-gray-50 rounded-lg shadow-sm text-gray-400 hover:text-green-600 hover:bg-green-50 transition-all ml-2"
+                        className="opacity-0 group-hover:opacity-100 p-1.5 bg-gray-50 rounded-lg shadow-sm text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all ml-2"
                         title="标记完成"
                       >
                         <Check className="w-4 h-4" />
@@ -1769,7 +1769,7 @@ const Dashboard = () => {
                                   event.stopPropagation();
                                   dismissReminder(reminder.id);
                                 }}
-                                className="opacity-0 group-hover:opacity-100 p-1.5 bg-gray-50 rounded-lg shadow-sm text-gray-400 hover:text-green-600 hover:bg-green-50 transition-all ml-2"
+                                className="opacity-0 group-hover:opacity-100 p-1.5 bg-gray-50 rounded-lg shadow-sm text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all ml-2"
                                 title="标记完成"
                               >
                                 <Check className="w-4 h-4" />

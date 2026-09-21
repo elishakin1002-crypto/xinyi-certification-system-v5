@@ -1437,7 +1437,7 @@ const Projects = () => {
                             <span className={`px-3 py-1 rounded-lg text-xs font-black uppercase ${
                                 project.aiInsight.riskLevel === 'High' ? 'bg-red-100 text-red-700' :
                                 project.aiInsight.riskLevel === 'Medium' ? 'bg-amber-100 text-amber-700' :
-                                'bg-green-100 text-green-700'
+                                'bg-emerald-100 text-emerald-700'
                             }`}>
                                 风险等级: {project.aiInsight.riskLevel}
                             </span>
@@ -1603,7 +1603,7 @@ const Projects = () => {
                             <Wallet className="w-5 h-5 text-amber-600" />
                             项目合同金额
                             <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wider ${
-                                project.costStatus === '已确认' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                project.costStatus === '已确认' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
                             }`}>
                                 {/* 「已确认」在财务那边指结算审核完成（还能点"标记支付"）。
                                     这里指的是**项目金额**确认，是结项的前置条件。
@@ -1690,7 +1690,7 @@ const Projects = () => {
                   type="button"
                   onClick={() => navigate('/finance/settlements')}
                   title="本系统的结算通过 Excel 批量导入，点此前往结算页"
-                  className="w-full md:w-auto border border-green-600 text-green-700 bg-white px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center hover:bg-green-50 transition-all active:scale-95"
+                  className="w-full md:w-auto border border-emerald-600 text-emerald-700 bg-white px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center hover:bg-emerald-50 transition-all active:scale-95"
                 >
                   <PlayCircle className="w-4 h-4 mr-1.5" /> 结算从 Excel 导入
                 </button>
@@ -1731,11 +1731,11 @@ const Projects = () => {
                  </div>
                  <div>
                    <p className="text-gray-400 text-xs font-bold mb-1">一次通过</p>
-                   <p className={`font-bold ${project.completionRecord.passRate ? 'text-green-600' : 'text-amber-600'}`}>{project.completionRecord.passRate ? '是' : '否'}</p>
+                   <p className={`font-bold ${project.completionRecord.passRate ? 'text-emerald-600' : 'text-amber-600'}`}>{project.completionRecord.passRate ? '是' : '否'}</p>
                  </div>
                  <div>
                    <p className="text-gray-400 text-xs font-bold mb-1">延期任务</p>
-                   <p className={`font-mono font-bold ${project.completionRecord.delayedTasksCount === 0 ? 'text-green-600' : 'text-red-600'}`}>{project.completionRecord.delayedTasksCount}</p>
+                   <p className={`font-mono font-bold ${project.completionRecord.delayedTasksCount === 0 ? 'text-emerald-600' : 'text-red-600'}`}>{project.completionRecord.delayedTasksCount}</p>
                  </div>
                </div>
             </div>
@@ -1825,7 +1825,7 @@ const Projects = () => {
                           现在：只有有 PAYMENT_CONFIRM 的人能确认；其他人只能「报备已收款」推给财务核对。
                         */}
                         {r.status === 'paid' ? (
-                          <span className="text-[10px] font-black text-green-600 bg-green-50 px-2 py-1 rounded-full uppercase">已到账</span>
+                          <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full uppercase">已到账</span>
                         ) : canConfirmPayment ? (
                           <button
                             disabled={!contractIdForReceivables}
@@ -1974,11 +1974,11 @@ const Projects = () => {
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div className="flex items-center gap-2 text-xs font-bold">
                   {matchedService ? (
-                    <span className="px-2 py-1 rounded-full bg-green-50 text-green-700">
+                    <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700">
                       已识别：{matchedService.name}（{resolvedDelivery === 'Self' ? '自营' : '合作'}）
                     </span>
                   ) : (
-                    <span className="px-2 py-1 rounded-full bg-yellow-50 text-yellow-700">
+                    <span className="px-2 py-1 rounded-full bg-amber-50 text-amber-700">
                       未命中标准项，将按输入创建
                     </span>
                   )}
@@ -2063,7 +2063,7 @@ const Projects = () => {
                     />
                     <div className="flex flex-wrap gap-2 text-[10px] font-bold">
                       {si.deliveryMode && (
-                        <span className={`px-2 py-0.5 rounded-full ${si.deliveryMode === 'Self' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                        <span className={`px-2 py-0.5 rounded-full ${si.deliveryMode === 'Self' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
                           {si.deliveryMode === 'Self' ? '自营' : '合作'}
                         </span>
                       )}
@@ -2267,7 +2267,7 @@ const Projects = () => {
                        <div className="flex items-center gap-2">
                          <span className="font-black text-gray-900">{group.service.name}</span>
                          {group.service.deliveryMode && (
-                           <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${group.service.deliveryMode === 'Self' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                           <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${group.service.deliveryMode === 'Self' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
                              {group.service.deliveryMode === 'Self' ? '自营' : '合作'}
                            </span>
                          )}
@@ -2727,11 +2727,11 @@ const Projects = () => {
                       <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">{log.logDate}</span>
                       <span className="px-2 py-0.5 rounded-full bg-gray-50 text-gray-600">{log.operatorName}</span>
                       <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{Number(log.actualHours || 0).toFixed(1)}h</span>
-                      <span className={`px-2 py-0.5 rounded-full ${log.source === WORK_LOG_SOURCE.TASK_TRANSITION ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                      <span className={`px-2 py-0.5 rounded-full ${log.source === WORK_LOG_SOURCE.TASK_TRANSITION ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
                         {log.source === WORK_LOG_SOURCE.TASK_TRANSITION ? '任务自动记录' : '手工记录'}
                       </span>
                       {taskName && <span className="px-2 py-0.5 rounded-full bg-purple-50 text-purple-700">任务：{taskName}</span>}
-                      {serviceName && <span className="px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700">服务：{serviceName}</span>}
+                      {serviceName && <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">服务：{serviceName}</span>}
                     </div>
                     {canDelete && (
                       <button
@@ -3337,7 +3337,7 @@ const Projects = () => {
                               </span>
                             </label>
 
-                            <label className={`flex items-start gap-3 rounded-2xl border-2 p-3 cursor-pointer transition-colors ${!hasCustomer ? 'border-slate-500 bg-slate-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                            <label className={`flex items-start gap-3 rounded-2xl border-2 p-3 cursor-pointer transition-colors ${!hasCustomer ? 'border-gray-500 bg-gray-50' : 'border-gray-200 hover:border-gray-300'}`}>
                               <input
                                 type="radio" name="who" className="mt-1 accent-slate-600"
                                 checked={!hasCustomer}
@@ -3883,7 +3883,7 @@ const Projects = () => {
                             {isBuiltIn && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-gray-100 text-gray-600">内置</span>}
                             {tpl.archived && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-700">已归档</span>}
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-50 text-indigo-700">任务 {tpl.tasks?.length || 0}</span>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-green-50 text-green-700">使用 {usageCount}</span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-700">使用 {usageCount}</span>
                           </div>
                           <p className="text-[11px] text-gray-400 mt-1">
                             {[ownerLabel, usedLabel].filter(Boolean).join(' · ')}
@@ -3897,7 +3897,7 @@ const Projects = () => {
                                 applyTemplateToProject(templateModalProject.id, tpl.id);
                                 alert(`已将模板「${tpl.name}」应用到项目「${templateModalProject.name}」`);
                               }}
-                              className="px-3 py-2 bg-green-50 text-green-700 rounded-xl text-xs font-black hover:bg-green-100"
+                              className="px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-black hover:bg-emerald-100"
                             >
                               应用到当前项目
                             </button>

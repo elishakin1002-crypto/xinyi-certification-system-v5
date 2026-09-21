@@ -72,7 +72,7 @@ export const TaskStatusControl: React.FC<{
         className={disabled ? 'cursor-not-allowed opacity-50' : ''}
       >
         {done
-          ? <CheckCircle2 className={`${size} text-green-500`} />
+          ? <CheckCircle2 className={`${size} text-emerald-500`} />
           : <span className={`block ${size} rounded-full border-2 ${overdue ? 'border-red-300' : 'border-gray-200'} hover:border-indigo-400`} />}
       </button>
 

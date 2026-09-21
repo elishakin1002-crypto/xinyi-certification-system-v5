@@ -89,15 +89,15 @@ const ChangePassword: React.FC<ChangePasswordProps> = ({ user, onChanged, varian
   return (
     <div className={isSelf
       ? 'px-4 md:px-6 py-6 flex justify-center'
-      : 'min-h-screen bg-slate-950 text-slate-900 flex items-center justify-center px-6 py-10'}>
+      : 'min-h-screen bg-gray-950 text-gray-900 flex items-center justify-center px-6 py-10'}>
       <div className={isSelf
         ? 'w-full max-w-md bg-white rounded-3xl shadow-sm border border-gray-200 p-8'
         : 'w-full max-w-md bg-white rounded-3xl shadow-2xl border border-white/10 p-8'}>
         <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center mb-6">
           <ShieldCheck className="w-6 h-6" />
         </div>
-        <h1 className="text-2xl font-black text-slate-900">{isSelf ? '修改密码' : '首次登录修改密码'}</h1>
-        <p className="text-sm text-slate-500 mt-2">
+        <h1 className="text-2xl font-black text-gray-900">{isSelf ? '修改密码' : '首次登录修改密码'}</h1>
+        <p className="text-sm text-gray-500 mt-2">
           {isSelf
             ? `${user.name}，改完之后请用新密码登录；其他设备上已登录的会话不受影响，要踢掉去「我的登录设备」。`
             : `${user.name}，请先修改临时密码后进入系统。`}
@@ -119,20 +119,20 @@ const ChangePassword: React.FC<ChangePasswordProps> = ({ user, onChanged, varian
             <button
               type="button"
               onClick={() => setShowPasswords((v) => !v)}
-              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100"
             >
               {showPasswords ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               {showPasswords ? '隐藏密码' : '显示密码'}
             </button>
           </div>
           <label className="block">
-            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">当前密码</span>
+            <span className="text-xs font-black text-gray-500 uppercase tracking-wider">当前密码</span>
             <div className="mt-2 relative">
-              <KeyRound className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
+              <KeyRound className="w-5 h-5 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
               <input
                 autoComplete="current-password"
                 type={showPasswords ? 'text' : 'password'}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-12 pr-4 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50 py-3.5 pl-12 pr-4 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
                 value={currentPassword}
                 onChange={(event) => setCurrentPassword(event.target.value)}
                 placeholder="请输入当前密码"
@@ -140,22 +140,22 @@ const ChangePassword: React.FC<ChangePasswordProps> = ({ user, onChanged, varian
             </div>
           </label>
           <label className="block">
-            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">新密码</span>
+            <span className="text-xs font-black text-gray-500 uppercase tracking-wider">新密码</span>
             <input
               autoComplete="new-password"
               type={showPasswords ? 'text' : 'password'}
-              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 px-4 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+              className="mt-2 w-full rounded-2xl border border-gray-200 bg-gray-50 py-3.5 px-4 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
               value={newPassword}
               onChange={(event) => setNewPassword(event.target.value)}
               placeholder="至少 8 位"
             />
           </label>
           <label className="block">
-            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">确认新密码</span>
+            <span className="text-xs font-black text-gray-500 uppercase tracking-wider">确认新密码</span>
             <input
               autoComplete="new-password"
               type={showPasswords ? 'text' : 'password'}
-              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 px-4 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+              className="mt-2 w-full rounded-2xl border border-gray-200 bg-gray-50 py-3.5 px-4 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
               value={confirmPassword}
               onChange={(event) => setConfirmPassword(event.target.value)}
               placeholder="再次输入新密码"

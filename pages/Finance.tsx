@@ -475,7 +475,7 @@ const Finance = () => {
                         <div className="text-xs text-gray-400 font-bold uppercase tracking-tight">待收余额</div>
                     </div>
                 </div>
-                <div className="bg-gradient-to-br from-rose-500 to-red-600 p-5 rounded-2xl shadow-lg flex items-center text-white">
+                <div className="bg-gradient-to-br from-red-500 to-red-600 p-5 rounded-2xl shadow-lg flex items-center text-white">
                     <div className="p-3 bg-white/20 rounded-xl mr-4"><AlertTriangle className="w-6 h-6" /></div>
                     <div className="min-w-0">
                         <div className="text-2xl font-black">{allReceivables.filter(r => r.displayStatus === 'overdue').length} <span className="text-base font-bold opacity-80">笔</span></div>
@@ -555,7 +555,7 @@ const Finance = () => {
                                 <td className={`${tdClass} text-right font-mono font-black text-gray-900 text-base`}>¥{r.amount.toLocaleString()}</td>
                                 <td className={`${tdClass} text-center`}>
                                   {r.displayStatus === 'paid' ? (
-                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-green-100 text-green-800"><CheckCircle className="w-3 h-3 mr-1" /> {receivableStatusLabel(r)}</span>
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-emerald-100 text-emerald-800"><CheckCircle className="w-3 h-3 mr-1" /> {receivableStatusLabel(r)}</span>
                                   ) : r.displayStatus === 'overdue' ? (
                                     <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-red-100 text-red-800"><AlertCircle className="w-3 h-3 mr-1" /> {receivableStatusLabel(r)}</span>
                                   ) : r.rejectionReason ? (
@@ -564,7 +564,7 @@ const Finance = () => {
                                     /*
                                       「待确认」名副其实的那一种：有人报备了已收款，等财务核对到账。
                                     */
-                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-yellow-100 text-yellow-800"><Clock className="w-3 h-3 mr-1" /> {receivableStatusLabel(r)}</span>
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase bg-amber-100 text-amber-800"><Clock className="w-3 h-3 mr-1" /> {receivableStatusLabel(r)}</span>
                                   ) : (
                                     /*
                                       ── 没人报备的就叫「待回款」（2026-09-16 修）──────────────
@@ -622,7 +622,7 @@ const Finance = () => {
                             <div className="flex justify-between items-center">
                                 <div>
                                     {/* 文案走 receivableStatusLabel，和桌面表格、导出文件同一份 */}
-                                    {r.displayStatus === 'paid' ? <span className="text-green-600 text-xs flex items-center"><CheckCircle className="w-3 h-3 mr-1"/>{receivableStatusLabel(r)}</span> : 
+                                    {r.displayStatus === 'paid' ? <span className="text-emerald-600 text-xs flex items-center"><CheckCircle className="w-3 h-3 mr-1"/>{receivableStatusLabel(r)}</span> : 
                                      r.displayStatus === 'overdue' ? <span className="text-red-600 text-xs flex items-center"><AlertCircle className="w-3 h-3 mr-1"/>{receivableStatusLabel(r)}</span> : 
                                      <span className="text-gray-600 text-xs flex items-center"><Clock className="w-3 h-3 mr-1"/>{receivableStatusLabel(r)}</span>}
                                 </div>
@@ -731,9 +731,9 @@ const Finance = () => {
                                 <td className={`${tdClass} text-gray-500 text-sm`}>{s.notes || '-'}</td>
                                 <td className={`${tdClass} text-right font-black font-mono text-gray-900 text-base`}>¥{s.amount.toLocaleString()}</td>
                                 <td className={`${tdClass} text-center`}>
-                                  {s.status === 'paid' && <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold uppercase">{settlementStatusLabel('paid')}</span>}
+                                  {s.status === 'paid' && <span className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded text-xs font-bold uppercase">{settlementStatusLabel('paid')}</span>}
                                   {s.status === 'confirmed' && <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold uppercase">{settlementStatusLabel('confirmed')}</span>}
-                                  {s.status === 'draft' && <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold uppercase">{settlementStatusLabel('draft')}</span>}
+                                  {s.status === 'draft' && <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded text-xs font-bold uppercase">{settlementStatusLabel('draft')}</span>}
                                 </td>
                                 <td className={`${tdClass} text-right`}>
                                   <div className="inline-flex items-center gap-2">
@@ -781,7 +781,7 @@ const Finance = () => {
                             <div className="flex justify-between items-center">
                                 <div className="text-xs text-gray-400">{s.month}</div>
                                 <div className="flex items-center gap-2">
-                                    <span className={`px-2 py-0.5 rounded text-xs ${s.status === 'paid' ? 'bg-green-100 text-green-700' : s.status === 'confirmed' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-800'}`}>
+                                    <span className={`px-2 py-0.5 rounded text-xs ${s.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : s.status === 'confirmed' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-800'}`}>
                                       {getSettlementStatusText(s.status)}
                                     </span>
                                     {s.status !== 'paid' && (
